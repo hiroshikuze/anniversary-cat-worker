@@ -4,7 +4,7 @@ compatibility_date = "2024-01-01"
 
 [vars]
 # GitHub Pages の URL を設定（デプロイ後に実際の URL に変更してください）
-# ALLOWED_ORIGIN = "https://hiroshikuze.github.io"
+ALLOWED_ORIGIN = "https://hiroshikuze.github.io"
 
 # GEMINI_API_KEY は以下のコマンドで登録（コードには書かない）:
 #   wrangler secret put GEMINI_API_KEY
