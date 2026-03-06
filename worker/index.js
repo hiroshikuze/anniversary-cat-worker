@@ -194,7 +194,38 @@ async function selectImageModel(apiKey) {
 }
 
 // ---------------------------------------------------------------------------
-// /generate  ― Gemini で猫イラストを生成（base64 画像データを返す）
+// Pollinations.ai フォールバック（base64 画像を返す）
+// ---------------------------------------------------------------------------
+function arrayBufferToBase64(buffer) {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+async function generateViaPollinationsBase64(theme, description) {
+  const prompt =
+    `kawaii watercolor cat illustration, ${theme} theme, ` +
+    (description ? `${description}, ` : "") +
+    `soft pastel colors, pink beige, white background, Japanese kawaii style`;
+  const seed = Math.floor(Math.random() * 1_000_000);
+  const url =
+    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
+    `?model=flux&width=1024&height=1024&seed=${seed}&nologo=true`;
+
+  console.log("[pollinations] generating image, seed:", seed);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Pollinations エラー (${res.status})`);
+
+  const mimeType = res.headers.get("Content-Type") || "image/jpeg";
+  const imageData = arrayBufferToBase64(await res.arrayBuffer());
+  return { imageData, mimeType, source: "pollinations" };
+}
+
+// ---------------------------------------------------------------------------
+// /generate  ― Gemini で猫イラストを生成、失敗時は Pollinations.ai にフォールバック
 // ---------------------------------------------------------------------------
 async function handleGenerate(body, apiKey) {
   const { theme, description } = body;
@@ -211,34 +242,42 @@ async function handleGenerate(body, apiKey) {
     `The cat is holding or surrounded by items related to the theme. ` +
     `High quality charming illustration.`;
 
-  const res = await fetchWithRetry(
-    `${GEMINI_BASE}/${imageModel}:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
-      }),
+  let geminiError = null;
+  try {
+    const res = await fetchWithRetry(
+      `${GEMINI_BASE}/${imageModel}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
+        }),
+      }
+    );
+
+    const data = await res.json();
+    if (res.ok) {
+      const parts = data.candidates?.[0]?.content?.parts ?? [];
+      const imagePart = parts.find((p) => p.inlineData);
+      if (imagePart) {
+        return {
+          imageData: imagePart.inlineData.data,
+          mimeType: imagePart.inlineData.mimeType || "image/png",
+          source: "gemini",
+        };
+      }
+      const msg = parts.find((p) => p.text)?.text ?? "";
+      geminiError = "Gemini: 画像パートなし" + (msg ? `: ${msg.slice(0, 80)}` : "");
+    } else {
+      geminiError = data.error?.message || `Gemini エラー (${res.status})`;
     }
-  );
-
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error?.message || `Gemini 画像生成エラー (${res.status}) model=${imageModel}`);
+  } catch (e) {
+    geminiError = e.message;
   }
 
-  const parts = data.candidates?.[0]?.content?.parts ?? [];
-  const imagePart = parts.find((p) => p.inlineData);
-  if (!imagePart) {
-    const msg = parts.find((p) => p.text)?.text ?? "";
-    throw new Error("画像の生成に失敗しました" + (msg ? `: ${msg.slice(0, 80)}` : ""));
-  }
-
-  return {
-    imageData: imagePart.inlineData.data,
-    mimeType: imagePart.inlineData.mimeType || "image/png",
-  };
+  console.warn("[generate] Gemini failed, falling back to Pollinations:", geminiError);
+  return generateViaPollinationsBase64(theme, description);
 }
 
 // ---------------------------------------------------------------------------
