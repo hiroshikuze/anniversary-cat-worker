@@ -157,23 +157,49 @@ async function handleResearch(body, apiKey) {
 }
 
 // ---------------------------------------------------------------------------
-// /generate  ― Pollinations.ai で猫イラストの URL を生成
+// /generate  ― Gemini で猫イラストを生成（base64 画像データを返す）
 // ---------------------------------------------------------------------------
-async function handleGenerate(body) {
+async function handleGenerate(body, apiKey) {
   const { theme, description } = body;
   if (!theme) throw new Error("theme フィールドが必要です");
 
   const prompt =
-    `watercolor style cute kawaii cat character illustration, theme: ${theme}, ` +
-    (description ? `${description}, ` : "") +
-    `soft pastel colors, light pink and beige tones, gentle brushstrokes, white background, ` +
-    `Japanese kawaii style, cat holding or surrounded by theme-related items, high quality illustration`;
+    `Create a cute kawaii watercolor style cat character illustration. ` +
+    `Theme: ${theme}. ` +
+    (description ? `Background: ${description}. ` : "") +
+    `Style: soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ` +
+    `white background, Japanese kawaii style. ` +
+    `The cat is holding or surrounded by items related to the theme. ` +
+    `High quality charming illustration.`;
 
-  const imageUrl =
-    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
-    `?width=512&height=512&nologo=true&model=flux&seed=${Date.now()}`;
+  const res = await fetchWithRetry(
+    `${GEMINI_BASE}/gemini-2.0-flash-preview-image-generation:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
+      }),
+    }
+  );
 
-  return { imageUrl };
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error?.message || `Gemini 画像生成エラー (${res.status})`);
+  }
+
+  const parts = data.candidates?.[0]?.content?.parts ?? [];
+  const imagePart = parts.find((p) => p.inlineData);
+  if (!imagePart) {
+    const msg = parts.find((p) => p.text)?.text ?? "";
+    throw new Error("画像の生成に失敗しました" + (msg ? `: ${msg.slice(0, 80)}` : ""));
+  }
+
+  return {
+    imageData: imagePart.inlineData.data,
+    mimeType: imagePart.inlineData.mimeType || "image/png",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +263,7 @@ export default {
       if (url.pathname === "/research") {
         result = await handleResearch(body, apiKey);
       } else if (url.pathname === "/generate") {
-        result = await handleGenerate(body);
+        result = await handleGenerate(body, apiKey);
       } else {
         return new Response("Not Found", { status: 404, headers: corsH });
       }
