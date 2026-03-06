@@ -350,8 +350,9 @@
           description: researchData.description,
         });
 
-        lastImageUrl = data.imageUrl;
-        document.getElementById("g-image").src = data.imageUrl;
+        const proxyUrl = WORKER_URL + "/proxy-image?url=" + encodeURIComponent(data.imageUrl);
+        lastImageUrl = proxyUrl;
+        document.getElementById("g-image").src = proxyUrl;
         document.getElementById("g-result-label").textContent = researchData.theme;
         showGenerate("result");
 
@@ -364,14 +365,17 @@
     // ----------------------------------------------------------
     // 画像ダウンロード
     // ----------------------------------------------------------
-    function downloadImage() {
+    async function downloadImage() {
       if (!lastImageUrl) return;
+      const res = await fetch(lastImageUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = lastImageUrl;
-      a.target = "_blank";
+      a.href = blobUrl;
       const safeName = (researchData?.theme ?? "cat").replace(/[\\/:*?"<>|]/g, "_");
       a.download = `anniversary-cat-${safeName}.png`;
       a.click();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
     }
   </script>
 </body>
