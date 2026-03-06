@@ -350,6 +350,14 @@
           description: researchData.description,
         });
 
+        // レスポンス内容をコンソールに出力（デバッグ用）
+        console.log("[generate] response keys:", Object.keys(data));
+        console.log("[generate] mimeType:", data.mimeType, "/ imageData length:", data.imageData?.length ?? "undefined");
+
+        if (!data.imageData) {
+          throw new Error(`画像データなし。返却フィールド: ${JSON.stringify(Object.keys(data))}`);
+        }
+
         // Gemini から返ってきた base64 データを data URL に変換して表示
         const dataUrl = `data:${data.mimeType};base64,${data.imageData}`;
         document.getElementById("g-image").src = dataUrl;
@@ -358,6 +366,7 @@
         showGenerate("result");
 
       } catch (err) {
+        console.error("[generate] error:", err.message);
         document.getElementById("g-error-text").textContent = err.message;
         showGenerate("error");
       }
