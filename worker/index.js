@@ -78,7 +78,9 @@ function makeCorsHeaders(origin, allowedOrigin) {
 async function fetchWithRetry(url, options, maxRetries = 3) {
   for (let i = 0; i < maxRetries; i++) {
     const res = await fetch(url, options);
-    if ((res.status === 429 || res.status >= 500) && i < maxRetries - 1) {
+    // 429 quota exceeded はリトライしても無駄なので即リターン
+    if (res.status === 429) return res;
+    if (res.status >= 500 && i < maxRetries - 1) {
       await new Promise((r) =>
         setTimeout(r, Math.pow(2, i) * 1000 + Math.random() * 500)
       );
@@ -272,7 +274,9 @@ async function handleGenerate(body, apiKey) {
   console.warn("[generate] Gemini failed, falling back to Pollinations:", geminiError);
 
   // Worker で Pollinations をプロキシ（ブラウザに 530 が届かないようにする）
-  const POLLINATIONS_MODELS = ["flux", "turbo"];
+  // 複数モデルを試行し、Worker でも取得できない場合は URL をフロントエンドに渡す（ラストリゾート）
+  const POLLINATIONS_MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
+  let lastPollinationsError = "";
   for (let attempt = 0; attempt < POLLINATIONS_MODELS.length; attempt++) {
     const model = POLLINATIONS_MODELS[attempt];
     const pollinationsUrl = buildPollinationsUrl(theme, description, model);
@@ -286,13 +290,18 @@ async function handleGenerate(body, apiKey) {
         console.log(`[pollinations] success model=${model} size=${buffer.byteLength}`);
         return { imageData: base64, mimeType, source: "pollinations" };
       }
-      console.warn(`[pollinations] attempt ${attempt + 1} failed: status=${imgRes.status}`);
+      lastPollinationsError = `status=${imgRes.status}`;
+      console.warn(`[pollinations] attempt ${attempt + 1} failed: ${lastPollinationsError}`);
     } catch (e) {
+      lastPollinationsError = e.message;
       console.warn(`[pollinations] attempt ${attempt + 1} error:`, e.message);
     }
   }
 
-  throw new Error(`画像生成失敗: Gemini(${geminiError}) / Pollinations(複数モデルで失敗)`);
+  // ラストリゾート: URL をフロントエンドに返してブラウザに直接取得させる
+  const fallbackUrl = buildPollinationsUrl(theme, description, "flux");
+  console.warn("[pollinations] all Worker attempts failed, returning URL as last resort:", lastPollinationsError);
+  return { pollinationsUrl: fallbackUrl, source: "pollinations-fallback" };
 }
 
 // ---------------------------------------------------------------------------

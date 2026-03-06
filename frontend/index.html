@@ -355,16 +355,21 @@
 
         let displayUrl;
         if (data.imageData) {
-          // Gemini: base64 データを data URL に変換
           displayUrl = `data:${data.mimeType};base64,${data.imageData}`;
         } else if (data.pollinationsUrl) {
-          // Pollinations.ai フォールバック: 直接 URL を使用
+          // Worker でのプロキシが全て失敗した場合のラストリゾート: ブラウザが直接取得
           displayUrl = data.pollinationsUrl;
         } else {
           throw new Error(`画像データなし。返却フィールド: ${JSON.stringify(Object.keys(data))}`);
         }
 
-        document.getElementById("g-image").src = displayUrl;
+        const imgEl = document.getElementById("g-image");
+        imgEl.onerror = () => {
+          document.getElementById("g-error-text").textContent =
+            "画像の読み込みに失敗しました。しばらく待ってから再度お試しください。";
+          showGenerate("error");
+        };
+        imgEl.src = displayUrl;
         lastImageUrl = displayUrl;
         document.getElementById("g-result-label").textContent = researchData.theme;
         showGenerate("result");
