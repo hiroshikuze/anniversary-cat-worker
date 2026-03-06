@@ -157,11 +157,50 @@ async function handleResearch(body, apiKey) {
 }
 
 // ---------------------------------------------------------------------------
+// 画像生成モデルを動的に選択（キャッシュなし・毎回確認）
+// ---------------------------------------------------------------------------
+async function selectImageModel(apiKey) {
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}&pageSize=100`
+    );
+    const data = await res.json();
+    const models = data.models ?? [];
+
+    // "image-generation" または "imagen" を含み generateContent をサポートするモデル
+    const found = models
+      .filter((m) => {
+        const methods = m.supportedGenerationMethods ?? [];
+        return (
+          methods.includes("generateContent") &&
+          (m.name.includes("image-generation") || m.name.includes("imagen"))
+        );
+      })
+      .map((m) => m.name.replace("models/", ""))[0];
+
+    if (found) {
+      console.log("[image-model] selected:", found);
+      return found;
+    }
+
+    console.warn("[image-model] no image model found, available models:",
+      models.map((m) => m.name.replace("models/", "")).join(", "));
+  } catch (e) {
+    console.warn("[image-model] discovery failed:", e.message);
+  }
+
+  // フォールバック（実験的モデル名）
+  return "gemini-2.0-flash-exp-image-generation";
+}
+
+// ---------------------------------------------------------------------------
 // /generate  ― Gemini で猫イラストを生成（base64 画像データを返す）
 // ---------------------------------------------------------------------------
 async function handleGenerate(body, apiKey) {
   const { theme, description } = body;
   if (!theme) throw new Error("theme フィールドが必要です");
+
+  const imageModel = await selectImageModel(apiKey);
 
   const prompt =
     `Create a cute kawaii watercolor style cat character illustration. ` +
@@ -173,7 +212,7 @@ async function handleGenerate(body, apiKey) {
     `High quality charming illustration.`;
 
   const res = await fetchWithRetry(
-    `${GEMINI_BASE}/gemini-2.0-flash-preview-image-generation:generateContent?key=${apiKey}`,
+    `${GEMINI_BASE}/${imageModel}:generateContent?key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -186,7 +225,7 @@ async function handleGenerate(body, apiKey) {
 
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.error?.message || `Gemini 画像生成エラー (${res.status})`);
+    throw new Error(data.error?.message || `Gemini 画像生成エラー (${res.status}) model=${imageModel}`);
   }
 
   const parts = data.candidates?.[0]?.content?.parts ?? [];
