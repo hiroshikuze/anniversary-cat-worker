@@ -205,7 +205,7 @@ function arrayBufferToBase64(buffer) {
   return btoa(binary);
 }
 
-function buildPollinationsUrl(theme, description) {
+function buildPollinationsUrl(theme, description, model = "flux") {
   const prompt =
     `kawaii watercolor cat illustration, ${theme} theme, ` +
     (description ? `${description}, ` : "") +
@@ -213,7 +213,7 @@ function buildPollinationsUrl(theme, description) {
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
-    `?model=flux&width=1024&height=1024&seed=${seed}&nologo=true`
+    `?model=${model}&width=1024&height=1024&seed=${seed}&nologo=true`
   );
 }
 
@@ -270,9 +270,29 @@ async function handleGenerate(body, apiKey) {
   }
 
   console.warn("[generate] Gemini failed, falling back to Pollinations:", geminiError);
-  const pollinationsUrl = buildPollinationsUrl(theme, description);
-  console.log("[pollinations] returning URL to frontend:", pollinationsUrl.slice(0, 100));
-  return { pollinationsUrl, source: "pollinations" };
+
+  // Worker で Pollinations をプロキシ（ブラウザに 530 が届かないようにする）
+  const POLLINATIONS_MODELS = ["flux", "turbo"];
+  for (let attempt = 0; attempt < POLLINATIONS_MODELS.length; attempt++) {
+    const model = POLLINATIONS_MODELS[attempt];
+    const pollinationsUrl = buildPollinationsUrl(theme, description, model);
+    try {
+      console.log(`[pollinations] attempt ${attempt + 1} model=${model}:`, pollinationsUrl.slice(0, 100));
+      const imgRes = await fetch(pollinationsUrl);
+      if (imgRes.ok) {
+        const buffer = await imgRes.arrayBuffer();
+        const base64 = arrayBufferToBase64(buffer);
+        const mimeType = imgRes.headers.get("Content-Type") || "image/jpeg";
+        console.log(`[pollinations] success model=${model} size=${buffer.byteLength}`);
+        return { imageData: base64, mimeType, source: "pollinations" };
+      }
+      console.warn(`[pollinations] attempt ${attempt + 1} failed: status=${imgRes.status}`);
+    } catch (e) {
+      console.warn(`[pollinations] attempt ${attempt + 1} error:`, e.message);
+    }
+  }
+
+  throw new Error(`画像生成失敗: Gemini(${geminiError}) / Pollinations(複数モデルで失敗)`);
 }
 
 // ---------------------------------------------------------------------------
