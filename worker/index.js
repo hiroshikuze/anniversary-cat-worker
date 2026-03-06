@@ -205,23 +205,16 @@ function arrayBufferToBase64(buffer) {
   return btoa(binary);
 }
 
-async function generateViaPollinationsBase64(theme, description) {
+function buildPollinationsUrl(theme, description, model = "flux") {
   const prompt =
     `kawaii watercolor cat illustration, ${theme} theme, ` +
     (description ? `${description}, ` : "") +
     `soft pastel colors, pink beige, white background, Japanese kawaii style`;
   const seed = Math.floor(Math.random() * 1_000_000);
-  const url =
+  return (
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
-    `?model=flux&width=1024&height=1024&seed=${seed}&nologo=true`;
-
-  console.log("[pollinations] generating image, seed:", seed);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Pollinations エラー (${res.status})`);
-
-  const mimeType = res.headers.get("Content-Type") || "image/jpeg";
-  const imageData = arrayBufferToBase64(await res.arrayBuffer());
-  return { imageData, mimeType, source: "pollinations" };
+    `?model=${model}&width=1024&height=1024&seed=${seed}&nologo=true`
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +270,29 @@ async function handleGenerate(body, apiKey) {
   }
 
   console.warn("[generate] Gemini failed, falling back to Pollinations:", geminiError);
-  return generateViaPollinationsBase64(theme, description);
+
+  // Worker で Pollinations をプロキシ（ブラウザに 530 が届かないようにする）
+  const POLLINATIONS_MODELS = ["flux", "turbo"];
+  for (let attempt = 0; attempt < POLLINATIONS_MODELS.length; attempt++) {
+    const model = POLLINATIONS_MODELS[attempt];
+    const pollinationsUrl = buildPollinationsUrl(theme, description, model);
+    try {
+      console.log(`[pollinations] attempt ${attempt + 1} model=${model}:`, pollinationsUrl.slice(0, 100));
+      const imgRes = await fetch(pollinationsUrl);
+      if (imgRes.ok) {
+        const buffer = await imgRes.arrayBuffer();
+        const base64 = arrayBufferToBase64(buffer);
+        const mimeType = imgRes.headers.get("Content-Type") || "image/jpeg";
+        console.log(`[pollinations] success model=${model} size=${buffer.byteLength}`);
+        return { imageData: base64, mimeType, source: "pollinations" };
+      }
+      console.warn(`[pollinations] attempt ${attempt + 1} failed: status=${imgRes.status}`);
+    } catch (e) {
+      console.warn(`[pollinations] attempt ${attempt + 1} error:`, e.message);
+    }
+  }
+
+  throw new Error(`画像生成失敗: Gemini(${geminiError}) / Pollinations(複数モデルで失敗)`);
 }
 
 // ---------------------------------------------------------------------------
