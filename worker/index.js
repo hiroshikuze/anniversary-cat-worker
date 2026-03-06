@@ -30,7 +30,9 @@ async function selectBestModel(apiKey) {
     const candidates = (data.models ?? [])
       .filter(m => (m.supportedGenerationMethods ?? []).includes("generateContent"))
       .filter(m => m.name.includes("gemini"))
-      .filter(m => !m.name.includes("embedding") && !m.name.includes("aqa"));
+      .filter(m => !m.name.includes("embedding") && !m.name.includes("aqa"))
+      // -exp 単体モデルは無料枠クォータが0のため除外（-exp-image-generation は別途扱う）
+      .filter(m => !/models\/.*-exp$/.test(m.name));
 
     const scored = candidates.map(m => {
       let score = 0;
@@ -42,7 +44,7 @@ async function selectBestModel(apiKey) {
     });
 
     scored.sort((a, b) => b.score - a.score);
-    const selected = scored[0]?.shortName ?? "gemini-2.0-flash";
+    const selected = scored[0]?.shortName ?? "gemini-1.5-flash";
 
     console.log("[model-select] selected:", selected,
       "| candidates:", scored.slice(0, 3).map(s => `${s.shortName}(${s.score})`).join(", "));
@@ -51,7 +53,7 @@ async function selectBestModel(apiKey) {
     return selected;
   } catch (e) {
     console.warn("[model-select] fallback due to:", e.message);
-    return _modelCache.name ?? "gemini-2.0-flash";
+    return _modelCache.name ?? "gemini-1.5-flash";
   }
 }
 
@@ -78,7 +80,9 @@ function makeCorsHeaders(origin, allowedOrigin) {
 async function fetchWithRetry(url, options, maxRetries = 3) {
   for (let i = 0; i < maxRetries; i++) {
     const res = await fetch(url, options);
-    if ((res.status === 429 || res.status >= 500) && i < maxRetries - 1) {
+    // 429 quota exceeded はリトライしても無駄なので即リターン
+    if (res.status === 429) return res;
+    if (res.status >= 500 && i < maxRetries - 1) {
       await new Promise((r) =>
         setTimeout(r, Math.pow(2, i) * 1000 + Math.random() * 500)
       );
@@ -189,8 +193,8 @@ async function selectImageModel(apiKey) {
     console.warn("[image-model] discovery failed:", e.message);
   }
 
-  // フォールバック（実験的モデル名）
-  return "gemini-2.0-flash-exp-image-generation";
+  // フォールバック（preview モデル）
+  return "gemini-2.0-flash-preview-image-generation";
 }
 
 // ---------------------------------------------------------------------------
@@ -272,7 +276,9 @@ async function handleGenerate(body, apiKey) {
   console.warn("[generate] Gemini failed, falling back to Pollinations:", geminiError);
 
   // Worker で Pollinations をプロキシ（ブラウザに 530 が届かないようにする）
-  const POLLINATIONS_MODELS = ["flux", "turbo"];
+  // 複数モデルを試行し、Worker でも取得できない場合は URL をフロントエンドに渡す（ラストリゾート）
+  const POLLINATIONS_MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
+  let lastPollinationsError = "";
   for (let attempt = 0; attempt < POLLINATIONS_MODELS.length; attempt++) {
     const model = POLLINATIONS_MODELS[attempt];
     const pollinationsUrl = buildPollinationsUrl(theme, description, model);
@@ -286,13 +292,18 @@ async function handleGenerate(body, apiKey) {
         console.log(`[pollinations] success model=${model} size=${buffer.byteLength}`);
         return { imageData: base64, mimeType, source: "pollinations" };
       }
-      console.warn(`[pollinations] attempt ${attempt + 1} failed: status=${imgRes.status}`);
+      lastPollinationsError = `status=${imgRes.status}`;
+      console.warn(`[pollinations] attempt ${attempt + 1} failed: ${lastPollinationsError}`);
     } catch (e) {
+      lastPollinationsError = e.message;
       console.warn(`[pollinations] attempt ${attempt + 1} error:`, e.message);
     }
   }
 
-  throw new Error(`画像生成失敗: Gemini(${geminiError}) / Pollinations(複数モデルで失敗)`);
+  // ラストリゾート: URL をフロントエンドに返してブラウザに直接取得させる
+  const fallbackUrl = buildPollinationsUrl(theme, description, "flux");
+  console.warn("[pollinations] all Worker attempts failed, returning URL as last resort:", lastPollinationsError);
+  return { pollinationsUrl: fallbackUrl, source: "pollinations-fallback" };
 }
 
 // ---------------------------------------------------------------------------
