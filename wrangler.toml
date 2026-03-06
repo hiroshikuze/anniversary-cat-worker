@@ -8,3 +8,8 @@ ALLOWED_ORIGIN = "https://hiroshikuze.github.io"
 
 # GEMINI_API_KEY は以下のコマンドで登録（コードには書かない）:
 #   wrangler secret put GEMINI_API_KEY
+
+[observability]
+[observability.logs]
+enabled = false
+invocation_logs = true
