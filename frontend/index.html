@@ -203,7 +203,7 @@
 
     <!-- フッター -->
     <p class="text-center text-xs text-pink-300">
-      Powered by Gemini & Imagen API ／ 画像はAIが生成します
+      Powered by Gemini & Pollinations.ai ／ 画像はAIが生成します
     </p>
 
   </div><!-- /container -->
@@ -218,7 +218,7 @@
     // 状態
     // ----------------------------------------------------------
     let researchData = null;
-    let lastImageBase64 = null;
+    let lastImageUrl = null;
 
     // ----------------------------------------------------------
     // 初期化
@@ -300,7 +300,7 @@
     // ----------------------------------------------------------
     async function startResearch() {
       researchData = null;
-      lastImageBase64 = null;
+      lastImageUrl = null;
       showResearch("loading");
       showGenerate("waiting");
 
@@ -341,7 +341,7 @@
     // ----------------------------------------------------------
     async function startGenerate() {
       if (!researchData) return;
-      lastImageBase64 = null;
+      lastImageUrl = null;
       showGenerate("loading");
 
       try {
@@ -350,8 +350,9 @@
           description: researchData.description,
         });
 
-        lastImageBase64 = data.imageBase64;
-        document.getElementById("g-image").src = `data:image/png;base64,${data.imageBase64}`;
+        const proxyUrl = WORKER_URL + "/proxy-image?url=" + encodeURIComponent(data.imageUrl);
+        lastImageUrl = proxyUrl;
+        document.getElementById("g-image").src = proxyUrl;
         document.getElementById("g-result-label").textContent = researchData.theme;
         showGenerate("result");
 
@@ -364,13 +365,17 @@
     // ----------------------------------------------------------
     // 画像ダウンロード
     // ----------------------------------------------------------
-    function downloadImage() {
-      if (!lastImageBase64) return;
+    async function downloadImage() {
+      if (!lastImageUrl) return;
+      const res = await fetch(lastImageUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = `data:image/png;base64,${lastImageBase64}`;
+      a.href = blobUrl;
       const safeName = (researchData?.theme ?? "cat").replace(/[\\/:*?"<>|]/g, "_");
       a.download = `anniversary-cat-${safeName}.png`;
       a.click();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
     }
   </script>
 </body>
