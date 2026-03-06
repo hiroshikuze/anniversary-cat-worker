@@ -205,23 +205,16 @@ function arrayBufferToBase64(buffer) {
   return btoa(binary);
 }
 
-async function generateViaPollinationsBase64(theme, description) {
+function buildPollinationsUrl(theme, description) {
   const prompt =
     `kawaii watercolor cat illustration, ${theme} theme, ` +
     (description ? `${description}, ` : "") +
     `soft pastel colors, pink beige, white background, Japanese kawaii style`;
   const seed = Math.floor(Math.random() * 1_000_000);
-  const url =
+  return (
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
-    `?model=flux&width=1024&height=1024&seed=${seed}&nologo=true`;
-
-  console.log("[pollinations] generating image, seed:", seed);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Pollinations エラー (${res.status})`);
-
-  const mimeType = res.headers.get("Content-Type") || "image/jpeg";
-  const imageData = arrayBufferToBase64(await res.arrayBuffer());
-  return { imageData, mimeType, source: "pollinations" };
+    `?model=flux&width=1024&height=1024&seed=${seed}&nologo=true`
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +270,9 @@ async function handleGenerate(body, apiKey) {
   }
 
   console.warn("[generate] Gemini failed, falling back to Pollinations:", geminiError);
-  return generateViaPollinationsBase64(theme, description);
+  const pollinationsUrl = buildPollinationsUrl(theme, description);
+  console.log("[pollinations] returning URL to frontend:", pollinationsUrl.slice(0, 100));
+  return { pollinationsUrl, source: "pollinations" };
 }
 
 // ---------------------------------------------------------------------------
