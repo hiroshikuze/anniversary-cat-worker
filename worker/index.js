@@ -30,7 +30,9 @@ async function selectBestModel(apiKey) {
     const candidates = (data.models ?? [])
       .filter(m => (m.supportedGenerationMethods ?? []).includes("generateContent"))
       .filter(m => m.name.includes("gemini"))
-      .filter(m => !m.name.includes("embedding") && !m.name.includes("aqa"));
+      .filter(m => !m.name.includes("embedding") && !m.name.includes("aqa"))
+      // -exp 単体モデルは無料枠クォータが0のため除外（-exp-image-generation は別途扱う）
+      .filter(m => !/models\/.*-exp$/.test(m.name));
 
     const scored = candidates.map(m => {
       let score = 0;
@@ -42,7 +44,7 @@ async function selectBestModel(apiKey) {
     });
 
     scored.sort((a, b) => b.score - a.score);
-    const selected = scored[0]?.shortName ?? "gemini-2.0-flash";
+    const selected = scored[0]?.shortName ?? "gemini-1.5-flash";
 
     console.log("[model-select] selected:", selected,
       "| candidates:", scored.slice(0, 3).map(s => `${s.shortName}(${s.score})`).join(", "));
@@ -51,7 +53,7 @@ async function selectBestModel(apiKey) {
     return selected;
   } catch (e) {
     console.warn("[model-select] fallback due to:", e.message);
-    return _modelCache.name ?? "gemini-2.0-flash";
+    return _modelCache.name ?? "gemini-1.5-flash";
   }
 }
 
@@ -191,8 +193,8 @@ async function selectImageModel(apiKey) {
     console.warn("[image-model] discovery failed:", e.message);
   }
 
-  // フォールバック（実験的モデル名）
-  return "gemini-2.0-flash-exp-image-generation";
+  // フォールバック（preview モデル）
+  return "gemini-2.0-flash-preview-image-generation";
 }
 
 // ---------------------------------------------------------------------------
