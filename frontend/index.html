@@ -477,11 +477,13 @@
         }
 
         const imgEl = document.getElementById("g-image");
-        imgEl.onerror = () => {
-          document.getElementById("g-error-text").textContent = t("imageLoadError");
-          showGenerate("error");
-        };
-        imgEl.src = displayUrl;
+        await new Promise((resolve, reject) => {
+          imgEl.onload = resolve;
+          imgEl.onerror = reject;
+          imgEl.src = displayUrl;
+        }).catch(() => {
+          throw new Error(t("imageLoadError"));
+        });
         lastImageUrl = displayUrl;
         document.getElementById("g-result-label").textContent = researchData.theme ?? "";
         document.getElementById("g-result-description").textContent = researchData.description ?? "";
