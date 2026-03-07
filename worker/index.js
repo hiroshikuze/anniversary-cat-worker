@@ -1,8 +1,9 @@
 /**
  * Cloudflare Worker - Anniversary Cat API Proxy
+ * @updated 2026-03-07
  *
  * 環境変数（secrets）:
- *   GEMINI_API_KEY  ... wrangler secret put GEMINI_API_KEY で設定
+ *   GEMINI_API_KEY  ... Cloudflare ダッシュボード > Settings > Variables and Secrets で設定
  *
  * 環境変数（vars / wrangler.toml）:
  *   ALLOWED_ORIGIN  ... GitHub Pages の URL（例: https://hiroshikuze.github.io）
