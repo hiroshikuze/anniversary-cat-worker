@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>今日の記念日 × 猫イラスト</title>
+  <meta name="description" content="今日の記念日をAIが調べて、水彩画風の猫イラストを生成します。Gemini × Pollinations.ai を使った無料Webアプリ。">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Kiwi+Maru:wght@300;400;500&display=swap" rel="stylesheet">
@@ -53,6 +55,24 @@
       transition: all 0.2s;
     }
     .btn-secondary:hover { background: #fbcfe8; }
+
+    .lang-toggle {
+      display: inline-flex;
+      align-items: center;
+      background: white;
+      border: 1px solid #fbcfe8;
+      border-radius: 9999px;
+      padding: 4px 12px;
+      gap: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      box-shadow: 0 1px 4px rgba(244,114,182,0.1);
+      transition: box-shadow 0.2s;
+    }
+    .lang-toggle:hover { box-shadow: 0 2px 8px rgba(244,114,182,0.2); }
+    .lang-active   { color: #be185d; font-weight: 600; }
+    .lang-inactive { color: #f9a8d4; }
+    .lang-sep      { color: #fbcfe8; }
   </style>
 </head>
 
@@ -60,13 +80,22 @@
 
   <div class="max-w-md mx-auto px-4 py-10">
 
+    <!-- 言語切り替え -->
+    <div class="flex justify-end mb-3">
+      <button class="lang-toggle" onclick="toggleLang()" aria-label="言語切り替え / Language toggle">
+        <span id="lang-btn-ja" class="lang-active">JP</span>
+        <span class="lang-sep">|</span>
+        <span id="lang-btn-en" class="lang-inactive">EN</span>
+      </button>
+    </div>
+
     <!-- ヘッダー -->
     <div class="text-center mb-8">
       <div class="text-6xl mb-3">🐱</div>
       <h1 class="text-2xl font-medium text-pink-700 leading-snug mb-1">
-        今日の記念日<span class="text-rose-400">×</span>猫イラスト
+        <span data-i18n="titlePre">今日の記念日</span><span class="text-rose-400">×</span><span data-i18n="titlePost">猫イラスト</span>
       </h1>
-      <p class="text-sm text-pink-400 mb-4">
+      <p class="text-sm text-pink-400 mb-4" data-i18n="subtitle">
         今日の記念日を調べて、水彩画風の猫を生成します
       </p>
       <div class="inline-block bg-white border border-pink-200 text-pink-600 px-5 py-2 rounded-full text-sm shadow-sm">
@@ -82,13 +111,13 @@
       <!-- ステップラベル -->
       <div class="flex items-center gap-2 mb-5">
         <span class="bg-pink-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0">1</span>
-        <h2 class="text-base font-medium text-gray-700">今日の記念日をリサーチ</h2>
+        <h2 class="text-base font-medium text-gray-700" data-i18n="step1Label">今日の記念日をリサーチ</h2>
       </div>
 
       <!-- 初期ボタン -->
       <div id="r-initial">
         <button onclick="startResearch()"
-          class="btn-primary w-full text-white font-medium py-3 px-6 rounded-2xl text-sm">
+          class="btn-primary w-full text-white font-medium py-3 px-6 rounded-2xl text-sm" data-i18n="researchBtn">
           🔍 今日の記念日を調べる
         </button>
       </div>
@@ -100,13 +129,13 @@
           <span class="paw2 text-2xl">🐾</span>
           <span class="paw3 text-2xl">🐾</span>
         </div>
-        <p class="text-sm text-pink-400">Googleで記念日を検索中です・・・</p>
+        <p class="text-sm text-pink-400" data-i18n="researchLoading">Googleで記念日を検索中です・・・</p>
       </div>
 
       <!-- 結果 -->
       <div id="r-result" class="hidden fade-in">
         <div class="bg-gradient-to-br from-pink-50 to-rose-50 rounded-2xl p-5 mb-4 border border-pink-100">
-          <p class="text-xs text-pink-400 mb-1 tracking-wide">今日のテーマ</p>
+          <p class="text-xs text-pink-400 mb-1 tracking-wide" data-i18n="todayTheme">今日のテーマ</p>
           <p class="text-xl font-medium text-pink-700 mb-2" id="r-theme"></p>
           <p class="text-sm text-gray-600 leading-relaxed mb-3" id="r-description"></p>
           <a id="r-url" href="#" target="_blank" rel="noopener noreferrer"
@@ -115,7 +144,7 @@
           </a>
         </div>
         <button onclick="startResearch()"
-          class="w-full btn-secondary py-2 px-4 rounded-xl text-sm font-medium">
+          class="w-full btn-secondary py-2 px-4 rounded-xl text-sm font-medium" data-i18n="researchRetry">
           🔄 もう一度調べる
         </button>
       </div>
@@ -126,7 +155,7 @@
           <p class="text-sm text-red-500" id="r-error-text"></p>
         </div>
         <button onclick="startResearch()"
-          class="w-full btn-secondary py-2 px-4 rounded-xl text-sm font-medium">
+          class="w-full btn-secondary py-2 px-4 rounded-xl text-sm font-medium" data-i18n="retryBtn">
           🔄 再試行する
         </button>
       </div>
@@ -140,22 +169,24 @@
       <div class="flex items-center gap-2 mb-5">
         <span id="step2-badge"
           class="bg-pink-200 text-pink-500 text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0">2</span>
-        <h2 class="text-base font-medium text-gray-700">猫イラストを生成</h2>
+        <h2 class="text-base font-medium text-gray-700" data-i18n="step2Label">猫イラストを生成</h2>
       </div>
 
       <!-- 待機中（リサーチ前） -->
       <div id="g-waiting" class="text-center py-6 text-gray-400">
         <div class="text-4xl mb-2">🐈</div>
-        <p class="text-sm">先に記念日を調べてください</p>
+        <p class="text-sm" data-i18n="waitingText">先に記念日を調べてください</p>
       </div>
 
       <!-- 準備完了 -->
       <div id="g-ready" class="hidden fade-in">
         <div class="bg-pink-50 rounded-2xl p-4 mb-4 text-center">
-          <p class="text-sm text-gray-500">「<span id="g-theme-label" class="text-pink-600 font-medium"></span>」をテーマに猫を描きます</p>
+          <p class="text-sm text-gray-500">
+            <span data-i18n="generatePreviewPre">「</span><span id="g-theme-label" class="text-pink-600 font-medium"></span><span data-i18n="generatePreviewPost">」をテーマに猫を描きます</span>
+          </p>
         </div>
         <button onclick="startGenerate()"
-          class="btn-primary w-full text-white font-medium py-3 px-6 rounded-2xl text-sm">
+          class="btn-primary w-full text-white font-medium py-3 px-6 rounded-2xl text-sm" data-i18n="generateBtn">
           🎨 猫イラストを生成する
         </button>
       </div>
@@ -163,8 +194,8 @@
       <!-- ローディング -->
       <div id="g-loading" class="hidden text-center py-6">
         <div class="spin-slow text-5xl mb-4 inline-block">🎨</div>
-        <p class="text-sm text-pink-500 font-medium">水彩画風の猫を描いています。...</p>
-        <p class="text-xs text-gray-400 mt-1">少し時間がかかります（30秒ほど）</p>
+        <p class="text-sm text-pink-500 font-medium" data-i18n="generateLoading">水彩画風の猫を描いています。...</p>
+        <p class="text-xs text-gray-400 mt-1" data-i18n="generateTimeEst">少し時間がかかります（30秒ほど）</p>
       </div>
 
       <!-- 結果 -->
@@ -174,16 +205,16 @@
         </div>
         <div class="bg-pink-50 rounded-xl px-4 py-2 mb-4 text-center">
           <p class="text-xs text-pink-400">
-            テーマ: <span id="g-result-label" class="font-medium text-pink-600"></span>
+            <span data-i18n="themeLabel">テーマ: </span><span id="g-result-label" class="font-medium text-pink-600"></span>
           </p>
         </div>
         <div class="flex gap-2">
           <button onclick="startGenerate()"
-            class="flex-1 btn-secondary py-2.5 rounded-xl text-sm font-medium">
+            class="flex-1 btn-secondary py-2.5 rounded-xl text-sm font-medium" data-i18n="regenerateBtn">
             🔄 もう一度生成
           </button>
           <button onclick="downloadImage()"
-            class="flex-1 btn-primary text-white py-2.5 rounded-xl text-sm font-medium">
+            class="flex-1 btn-primary text-white py-2.5 rounded-xl text-sm font-medium" data-i18n="saveBtn">
             💾 保存する
           </button>
         </div>
@@ -195,15 +226,15 @@
           <p class="text-sm text-red-500" id="g-error-text"></p>
         </div>
         <button onclick="startGenerate()"
-          class="w-full btn-secondary py-2 px-4 rounded-xl text-sm font-medium">
+          class="w-full btn-secondary py-2 px-4 rounded-xl text-sm font-medium" data-i18n="retryBtn">
           🔄 再試行する
         </button>
       </div>
     </div>
 
     <!-- フッター -->
-    <p class="text-center text-xs text-pink-300">
-      Powered by Gemini & Pollinations.ai ／ 画像はAIが生成します
+    <p class="text-center text-xs text-pink-300" data-i18n="footer">
+      Powered by Gemini &amp; Pollinations.ai ／ 画像はAIが生成します
     </p>
 
   </div><!-- /container -->
@@ -215,6 +246,97 @@
     const WORKER_URL = "https://anniversary-cat-worker.hiroshikuze.workers.dev";
 
     // ----------------------------------------------------------
+    // i18n
+    // ----------------------------------------------------------
+    const translations = {
+      ja: {
+        pageTitle:          "今日の記念日 × 猫イラスト",
+        titlePre:           "今日の記念日",
+        titlePost:          "猫イラスト",
+        subtitle:           "今日の記念日を調べて、水彩画風の猫を生成します",
+        step1Label:         "今日の記念日をリサーチ",
+        researchBtn:        "🔍 今日の記念日を調べる",
+        researchLoading:    "Googleで記念日を検索中です・・・",
+        todayTheme:         "今日のテーマ",
+        researchRetry:      "🔄 もう一度調べる",
+        retryBtn:           "🔄 再試行する",
+        step2Label:         "猫イラストを生成",
+        waitingText:        "先に記念日を調べてください",
+        generatePreviewPre: "「",
+        generatePreviewPost:"」をテーマに猫を描きます",
+        generateBtn:        "🎨 猫イラストを生成する",
+        generateLoading:    "水彩画風の猫を描いています。...",
+        generateTimeEst:    "少し時間がかかります（30秒ほど）",
+        themeLabel:         "テーマ: ",
+        regenerateBtn:      "🔄 もう一度生成",
+        saveBtn:            "💾 保存する",
+        footer:             "Powered by Gemini & Pollinations.ai ／ 画像はAIが生成します",
+        networkError:       "ネットワークエラー: ",
+        httpError:          "エラー (HTTP ",
+        imageLoadError:     "画像の読み込みに失敗しました。しばらく待ってから再度お試しください。",
+        noImageError:       "画像データなし。返却フィールド: ",
+        dateLocale:         "ja-JP",
+      },
+      en: {
+        pageTitle:          "Today's Anniversary × Cat Art",
+        titlePre:           "Today's Anniversary\u00a0",
+        titlePost:          "\u00a0Cat Art",
+        subtitle:           "Find today's anniversary and generate a watercolor-style cat",
+        step1Label:         "Research Today's Anniversary",
+        researchBtn:        "🔍 Find Today's Anniversary",
+        researchLoading:    "Searching for anniversaries on Google...",
+        todayTheme:         "Today's Theme",
+        researchRetry:      "🔄 Try Again",
+        retryBtn:           "🔄 Retry",
+        step2Label:         "Generate Cat Illustration",
+        waitingText:        "Please research the anniversary first",
+        generatePreviewPre: "Drawing a cat with theme \u201c",
+        generatePreviewPost:"\u201d",
+        generateBtn:        "🎨 Generate Cat Illustration",
+        generateLoading:    "Drawing a watercolor-style cat...",
+        generateTimeEst:    "This may take a moment (~30 seconds)",
+        themeLabel:         "Theme: ",
+        regenerateBtn:      "🔄 Generate Again",
+        saveBtn:            "💾 Save",
+        footer:             "Powered by Gemini & Pollinations.ai / Images are AI-generated",
+        networkError:       "Network error: ",
+        httpError:          "Error (HTTP ",
+        imageLoadError:     "Failed to load the image. Please try again later.",
+        noImageError:       "No image data. Returned fields: ",
+        dateLocale:         "en-US",
+      },
+    };
+
+    let currentLang = "ja";
+
+    function t(key) {
+      return translations[currentLang][key] ?? translations.ja[key] ?? key;
+    }
+
+    function applyLang() {
+      document.documentElement.lang = currentLang;
+      document.title = t("pageTitle");
+
+      // テキストノードを更新
+      document.querySelectorAll("[data-i18n]").forEach((el) => {
+        const key = el.getAttribute("data-i18n");
+        el.textContent = t(key);
+      });
+
+      // 言語トグルボタンの見た目
+      document.getElementById("lang-btn-ja").className = currentLang === "ja" ? "lang-active" : "lang-inactive";
+      document.getElementById("lang-btn-en").className = currentLang === "en" ? "lang-active" : "lang-inactive";
+
+      // 日付表示を更新
+      updateDateDisplay();
+    }
+
+    function toggleLang() {
+      currentLang = currentLang === "ja" ? "en" : "ja";
+      applyLang();
+    }
+
+    // ----------------------------------------------------------
     // 状態
     // ----------------------------------------------------------
     let researchData = null;
@@ -223,12 +345,17 @@
     // ----------------------------------------------------------
     // 初期化
     // ----------------------------------------------------------
-    (function init() {
+    function updateDateDisplay() {
       const now = new Date();
+      const locale = t("dateLocale");
       document.getElementById("today-date").textContent =
-        now.toLocaleDateString("ja-JP", {
+        now.toLocaleDateString(locale, {
           year: "numeric", month: "long", day: "numeric", weekday: "long",
         });
+    }
+
+    (function init() {
+      updateDateDisplay();
     })();
 
     function getApiDate() {
@@ -252,12 +379,12 @@
         try {
           res = await fetch(url, options);
         } catch (networkErr) {
-          if (attempt === maxRetries - 1) throw new Error("ネットワークエラー: " + networkErr.message);
+          if (attempt === maxRetries - 1) throw new Error(t("networkError") + networkErr.message);
           await wait(Math.pow(2, attempt) * 1000 + Math.random() * 500);
           continue;
         }
 
-        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        const data = await res.json().catch(() => ({ error: `${t("httpError")}${res.status})` }));
 
         if (res.ok) return data;
 
@@ -267,7 +394,7 @@
           continue;
         }
 
-        throw new Error(data.error || `エラー (HTTP ${res.status})`);
+        throw new Error(data.error || `${t("httpError")}${res.status})`);
       }
     }
 
@@ -360,13 +487,12 @@
           // Worker でのプロキシが全て失敗した場合のラストリゾート: ブラウザが直接取得
           displayUrl = data.pollinationsUrl;
         } else {
-          throw new Error(`画像データなし。返却フィールド: ${JSON.stringify(Object.keys(data))}`);
+          throw new Error(t("noImageError") + JSON.stringify(Object.keys(data)));
         }
 
         const imgEl = document.getElementById("g-image");
         imgEl.onerror = () => {
-          document.getElementById("g-error-text").textContent =
-            "画像の読み込みに失敗しました。しばらく待ってから再度お試しください。";
+          document.getElementById("g-error-text").textContent = t("imageLoadError");
           showGenerate("error");
         };
         imgEl.src = displayUrl;
