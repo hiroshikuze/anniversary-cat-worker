@@ -310,9 +310,12 @@
     // ----------------------------------------------------------
     async function apiFetch(path, body, maxRetries = 3) {
       const url = WORKER_URL + path;
+      const headers = { "Content-Type": "application/json" };
+      const bypassToken = localStorage.getItem("bypassToken");
+      if (bypassToken) headers["X-Bypass-Token"] = bypassToken;
       const options = {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(body),
       };
 
@@ -330,8 +333,11 @@
 
         if (res.ok) return data;
 
-        // リトライ対象: レート制限・サーバーエラー
-        if ((res.status === 429 || res.status >= 500) && attempt < maxRetries - 1) {
+        // 429（レート制限）はリトライしない
+        if (res.status === 429) throw new Error(data.error || `${t("httpError")}429)`);
+
+        // リトライ対象: サーバーエラー
+        if (res.status >= 500 && attempt < maxRetries - 1) {
           await wait(Math.pow(2, attempt) * 1000 + Math.random() * 500);
           continue;
         }
