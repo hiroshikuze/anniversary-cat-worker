@@ -17,7 +17,7 @@ ALLOWED_ORIGIN = "https://hiroshikuze.github.io"
 # 作成後、下記の id を出力された ID に書き換えてください
 [[kv_namespaces]]
 binding = "RATE_KV"
-id = "ここにKV_IDを入力"
+id = "531244f9f904493d93c3a418b9765df8"
 
 [observability]
 [observability.logs]
