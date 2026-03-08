@@ -14,6 +14,8 @@ AI-powered daily cat illustration generator inspired by today's anniversary.
 
 [![Demo](https://img.shields.io/badge/Demo-Open%20App-22c55e?style=for-the-badge&logo=html5&logoColor=white)](https://hiroshikuze.github.io/anniversary-cat-worker/)
 
+> **利用制限**: 無料公開のため、記念日リサーチは1日10回、イラスト生成は1日3回までご利用いただけます（1IPアドレスあたり、毎日リセット）。
+
 ## 特徴
 
 - 今日の日付をもとにAIが記念日を自動リサーチ
