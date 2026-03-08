@@ -12,6 +12,58 @@
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 // ---------------------------------------------------------------------------
+// レート制限設定
+// ---------------------------------------------------------------------------
+const RATE_LIMITS = {
+  generate: { perIp: 3,  global: 50  },
+  research: { perIp: 10, global: null },
+};
+
+/**
+ * バイパストークンが有効かチェック
+ * ブラウザのコンソールで localStorage.setItem('bypassToken', '<値>') を実行しておくと
+ * フロントエンドがこのヘッダーを付与し、レート制限をスキップします
+ */
+function isBypassed(request, env) {
+  if (!env.BYPASS_TOKEN) return false;
+  return request.headers.get("X-Bypass-Token") === env.BYPASS_TOKEN;
+}
+
+/**
+ * レート制限チェック＆カウント更新
+ * 上限超過時は { limited: true, message } を返す。問題なければ { limited: false }
+ */
+async function checkRateLimit(kv, ip, endpoint) {
+  const limits = RATE_LIMITS[endpoint];
+  if (!limits || !kv) return { limited: false };
+
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+  const TTL   = 25 * 60 * 60; // 25時間（日付をまたいでも翌日リセットされる）
+
+  // --- IP別チェック ---
+  const ipKey   = `ip:${ip}:${today}:${endpoint}`;
+  const ipCount = parseInt((await kv.get(ipKey)) ?? "0");
+  if (ipCount >= limits.perIp) {
+    return { limited: true, message: `本日の利用上限（${limits.perIp}回）に達しました。明日またお試しください。` };
+  }
+
+  // --- グローバルチェック ---
+  if (limits.global !== null) {
+    const globalKey   = `global:${today}:${endpoint}`;
+    const globalCount = parseInt((await kv.get(globalKey)) ?? "0");
+    if (globalCount >= limits.global) {
+      return { limited: true, message: "本日のサービス全体の利用上限に達しました。明日またお試しください。" };
+    }
+    await kv.put(globalKey, String(globalCount + 1), { expirationTtl: TTL });
+  }
+
+  // --- カウント更新 ---
+  await kv.put(ipKey, String(ipCount + 1), { expirationTtl: TTL });
+
+  return { limited: false };
+}
+
+// ---------------------------------------------------------------------------
 // モデル自動選択（1時間キャッシュ）
 // ---------------------------------------------------------------------------
 let _modelCache = { name: null, expiry: 0 };
@@ -70,7 +122,7 @@ function makeCorsHeaders(origin, allowedOrigin) {
   return {
     "Access-Control-Allow-Origin": isAllowed ? origin : (allowedOrigin || "*"),
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, X-Bypass-Token",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -371,8 +423,22 @@ export default {
       let result;
 
       if (url.pathname === "/research") {
+        if (!isBypassed(request, env)) {
+          const clientIp = request.headers.get("CF-Connecting-IP") ?? "unknown";
+          const rl = await checkRateLimit(env.RATE_KV, clientIp, "research");
+          if (rl.limited) {
+            return Response.json({ error: rl.message }, { status: 429, headers: corsH });
+          }
+        }
         result = await handleResearch(body, apiKey);
       } else if (url.pathname === "/generate") {
+        if (!isBypassed(request, env)) {
+          const clientIp = request.headers.get("CF-Connecting-IP") ?? "unknown";
+          const rl = await checkRateLimit(env.RATE_KV, clientIp, "generate");
+          if (rl.limited) {
+            return Response.json({ error: rl.message }, { status: 429, headers: corsH });
+          }
+        }
         result = await handleGenerate(body, apiKey);
       } else {
         return new Response("Not Found", { status: 404, headers: corsH });

@@ -3,8 +3,27 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>今日の記念日 × 猫イラスト</title>
-  <meta name="description" content="今日の記念日をAIが調べて、水彩画風の猫イラストを生成します。Gemini × Pollinations.ai を使った無料Webアプリ。">
+  <title>にゃんバーサリー</title>
+  <meta name="description" content="今日の記念日をAIが調べて、水彩画風の猫イラストを生成します。にゃんバーサリー（Nyaniversary）- Gemini × Pollinations.ai を使った無料Webアプリ。">
+
+  <!-- canonical -->
+  <link rel="canonical" href="https://hiroshikuze.github.io/anniversary-cat-worker/">
+
+  <!-- Open Graph -->
+  <meta property="og:type"        content="website">
+  <meta property="og:url"         content="https://hiroshikuze.github.io/anniversary-cat-worker/">
+  <meta property="og:title"       content="にゃんバーサリー">
+  <meta property="og:description" content="今日の記念日をAIが調べて、水彩画風の猫イラストを生成します。">
+  <meta property="og:locale"      content="ja_JP">
+  <meta property="og:locale:alternate" content="en_US">
+  <meta property="og:image"        content="https://hiroshikuze.github.io/anniversary-cat-worker/og-image.png">
+
+  <!-- X (Twitter) Card -->
+  <meta name="twitter:card"        content="summary_large_image">
+  <meta name="twitter:title"       content="にゃんバーサリー">
+  <meta name="twitter:description" content="今日の記念日をAIが調べて、水彩画風の猫イラストを生成します。">
+  <meta name="twitter:image"       content="https://hiroshikuze.github.io/anniversary-cat-worker/og-image.png">
+
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -92,9 +111,7 @@
     <!-- ヘッダー -->
     <div class="text-center mb-8">
       <div class="text-6xl mb-3">🐱</div>
-      <h1 class="text-2xl font-medium text-pink-700 leading-snug mb-1">
-        <span data-i18n="titlePre">今日の記念日</span><span class="text-rose-400">×</span><span data-i18n="titlePost">猫イラスト</span>
-      </h1>
+      <h1 class="text-2xl font-medium text-pink-700 leading-snug mb-1" data-i18n="pageTitle">にゃんバーサリー</h1>
       <p class="text-sm text-pink-400 mb-4" data-i18n="subtitle">
         今日の記念日を調べて、水彩画風の猫を生成します
       </p>
@@ -175,9 +192,7 @@
     // ----------------------------------------------------------
     const translations = {
       ja: {
-        pageTitle:          "今日の記念日 × 猫イラスト",
-        titlePre:           "今日の記念日",
-        titlePost:          "猫イラスト",
+        pageTitle:          "にゃんバーサリー",
         subtitle:           "今日の記念日を調べて、水彩画風の猫を生成します",
         step1Label:         "今日の記念日をリサーチ",
         researchBtn:        "🔍 今日の記念日を調べる",
@@ -195,7 +210,7 @@
         themeLabel:         "テーマ: ",
         regenerateBtn:      "🔄 もう一度生成",
         saveBtn:            "💾 保存する",
-        footer:             "Powered by Gemini & Pollinations.ai ／ 画像はAIが生成します",
+        footer:             "Powered by Gemini &amp; Pollinations.ai ／ 画像はAIが生成します ｜ <a href=\"https://github.com/hiroshikuze/anniversary-cat-worker#readme\" target=\"_blank\" rel=\"noopener\" class=\"underline hover:text-pink-100\">このサービスについて</a>",
         networkError:       "ネットワークエラー: ",
         httpError:          "エラー (HTTP ",
         imageLoadError:     "画像の読み込みに失敗しました。しばらく待ってから再度お試しください。",
@@ -203,9 +218,7 @@
         dateLocale:         "ja-JP",
       },
       en: {
-        pageTitle:          "Today's Anniversary × Cat Art",
-        titlePre:           "Today's Anniversary\u00a0",
-        titlePost:          "\u00a0Cat Art",
+        pageTitle:          "Nyaniversary",
         subtitle:           "Find today's anniversary and generate a watercolor-style cat",
         step1Label:         "Research Today's Anniversary",
         researchBtn:        "🔍 Find Today's Anniversary",
@@ -223,7 +236,7 @@
         themeLabel:         "Theme: ",
         regenerateBtn:      "🔄 Generate Again",
         saveBtn:            "💾 Save",
-        footer:             "Powered by Gemini & Pollinations.ai / Images are AI-generated",
+        footer:             "Powered by Gemini &amp; Pollinations.ai / Images are AI-generated | <a href=\"https://github.com/hiroshikuze/anniversary-cat-worker#readme\" target=\"_blank\" rel=\"noopener\" class=\"underline hover:text-pink-100\">About this service</a>",
         networkError:       "Network error: ",
         httpError:          "Error (HTTP ",
         imageLoadError:     "Failed to load the image. Please try again later.",
@@ -245,7 +258,11 @@
       // テキストノードを更新
       document.querySelectorAll("[data-i18n]").forEach((el) => {
         const key = el.getAttribute("data-i18n");
-        el.textContent = t(key);
+        if (key === "footer") {
+          el.innerHTML = t(key);
+        } else {
+          el.textContent = t(key);
+        }
       });
 
       // 言語トグルボタンの見た目
@@ -293,9 +310,12 @@
     // ----------------------------------------------------------
     async function apiFetch(path, body, maxRetries = 3) {
       const url = WORKER_URL + path;
+      const headers = { "Content-Type": "application/json" };
+      const bypassToken = localStorage.getItem("bypassToken");
+      if (bypassToken) headers["X-Bypass-Token"] = bypassToken;
       const options = {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(body),
       };
 
@@ -313,8 +333,11 @@
 
         if (res.ok) return data;
 
-        // リトライ対象: レート制限・サーバーエラー
-        if ((res.status === 429 || res.status >= 500) && attempt < maxRetries - 1) {
+        // 429（レート制限）はリトライしない
+        if (res.status === 429) throw new Error(data.error || `${t("httpError")}429)`);
+
+        // リトライ対象: サーバーエラー
+        if (res.status >= 500 && attempt < maxRetries - 1) {
           await wait(Math.pow(2, attempt) * 1000 + Math.random() * 500);
           continue;
         }
