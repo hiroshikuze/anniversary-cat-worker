@@ -292,7 +292,8 @@ async function handleGenerate(body, apiKey) {
     `Style: soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ` +
     `white background, Japanese kawaii style. ` +
     `The cat is holding or surrounded by items related to the theme. ` +
-    `High quality charming illustration.`;
+    `High quality charming illustration. ` +
+    `IMPORTANT: Do not include any text, letters, words, titles, captions, or typography in the image.`;
 
   let geminiError = null;
   try {
