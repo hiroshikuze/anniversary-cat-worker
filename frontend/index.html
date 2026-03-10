@@ -25,6 +25,7 @@
   <meta name="twitter:image"       content="https://hiroshikuze.github.io/anniversary-cat-worker/og-image.png">
 
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="manifest" href="manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Kiwi+Maru:wght@300;400;500&display=swap" rel="stylesheet">
@@ -298,6 +299,11 @@
 
     (function init() {
       applyLang();
+      // Service Worker の登録
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/anniversary-cat-worker/sw.js')
+          .catch((err) => console.warn('SW registration failed:', err));
+      }
     })();
 
     function getApiDate() {
