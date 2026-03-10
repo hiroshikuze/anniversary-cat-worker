@@ -8,7 +8,7 @@ AI-powered daily cat illustration generator inspired by today's anniversary.
 
 ボタンひとつで、今日だけの特別な猫イラストと記念日のエピソードをお届けします。
 
-![にゃんバーサリー イメージイラスト](https://hiroshikuze.github.io/anniversary-cat-worker/og-image.png)
+![にゃんバーサリー イメージイラスト](https://hiroshikuze.github.io/anniversary-cat-worker/images/og-image.png)
 
 ## デモ
 
