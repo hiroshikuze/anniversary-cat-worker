@@ -1,0 +1,18 @@
+{
+  "name": "にゃんバーサリー",
+  "short_name": "にゃんバーサリー",
+  "description": "今日の記念日をAIが調べて、水彩画風の猫イラストを生成します。",
+  "start_url": "/anniversary-cat-worker/",
+  "display": "standalone",
+  "background_color": "#fdf2f8",
+  "theme_color": "#f472b6",
+  "lang": "ja",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
