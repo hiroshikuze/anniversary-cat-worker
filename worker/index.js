@@ -199,16 +199,31 @@ async function handleResearch(body, apiKey) {
   const queries =
     data.candidates?.[0]?.groundingMetadata?.webSearchQueries ?? [];
 
+  let sourceUrlKind = "none";
   if (!result.sourceUrl) {
     const uri = groundingChunks[0]?.web?.uri ?? "";
-    if (uri && !uri.includes("<vertexaisearch.cloud.google.com>")) {
+    if (uri && !uri.includes("vertexaisearch.cloud.google.com")) {
       result.sourceUrl = uri;
+      sourceUrlKind = "grounding";
+    } else if (uri) {
+      sourceUrlKind = "vertexaisearch-skipped";
     }
+  } else {
+    sourceUrlKind = "json";
   }
   if (!result.sourceUrl && queries.length > 0) {
     result.sourceUrl =
       `https://www.google.com/search?q=${encodeURIComponent(queries[0])}`;
+    sourceUrlKind = "google-search-fallback";
   }
+
+  console.log(
+    `[research] model=${model}` +
+    ` theme="${result.theme}"` +
+    ` descLen=${result.description?.length ?? 0}` +
+    ` sourceUrlKind=${sourceUrlKind}` +
+    ` sourceUrl=${result.sourceUrl ? result.sourceUrl.slice(0, 80) : "(none)"}`
+  );
 
   return result;
 }
@@ -329,9 +344,13 @@ async function handleGenerate(body, apiKey) {
         const msg = data.error?.message ?? `Gemini エラー (${res.status})`;
         // モデルが存在しない / API バージョン非対応 → 次の候補へ
         if (res.status === 404 || msg.includes("not found") || msg.includes("not supported")) {
-          console.warn(`[gemini] model ${model} unavailable, trying next:`, msg.slice(0, 80));
+          console.warn(`[generate] model=${model} unavailable(${res.status}): ${msg.slice(0, 100)}`);
           lastError = new Error(msg);
           continue;
+        }
+        // クォータ超過
+        if (res.status === 429) {
+          console.warn(`[generate] model=${model} quota exceeded: ${msg.slice(0, 100)}`);
         }
         // その他のエラー（クォータ超過・安全フィルタ等）は即座に失敗
         throw new Error(msg);
@@ -340,9 +359,10 @@ async function handleGenerate(body, apiKey) {
       const imagePart = parts.find((p) => p.inlineData);
       if (!imagePart) {
         const msg = parts.find((p) => p.text)?.text ?? "";
+        console.warn(`[generate] model=${model} no image part. text="${msg.slice(0, 80)}"`);
         throw new Error("Gemini: 画像パートなし" + (msg ? `: ${msg.slice(0, 80)}` : ""));
       }
-      console.log(`[generate] Gemini success model=${model}`);
+      console.log(`[generate] Gemini success model=${model} mimeType=${imagePart.inlineData.mimeType}`);
       return { imageData: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType || "image/png", source: "gemini" };
     }
     throw lastError ?? new Error("Gemini: 利用可能な画像モデルが見つかりませんでした");
@@ -368,13 +388,15 @@ async function handleGenerate(body, apiKey) {
   }
 
   try {
-    return await Promise.any([tryGemini(), tryPollinations()]);
+    const result = await Promise.any([tryGemini(), tryPollinations()]);
+    console.log(`[generate] final source=${result.source}`);
+    return result;
   } catch (err) {
     // AggregateError から各失敗理由を取り出してログ・レスポンスに含める
     const reasons = err instanceof AggregateError
       ? err.errors.map((e) => e?.message ?? String(e))
       : [err?.message ?? String(err)];
-    console.error("[generate] all sources failed:", reasons.join(" | "));
+    console.error("[generate] ALL SOURCES FAILED:", reasons.join(" | "));
     throw new Error(`画像生成に失敗しました（${reasons.join(" / ")}）`);
   }
 }
