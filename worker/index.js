@@ -201,7 +201,7 @@ async function handleResearch(body, apiKey) {
 
   if (!result.sourceUrl) {
     const uri = groundingChunks[0]?.web?.uri ?? "";
-    if (uri && !uri.includes("<vertexaisearch.cloud.google.com>")) {
+    if (uri && !uri.includes("vertexaisearch.cloud.google.com")) {
       result.sourceUrl = uri;
     }
   }
