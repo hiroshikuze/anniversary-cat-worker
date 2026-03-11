@@ -263,12 +263,14 @@ function arrayBufferToBase64(buffer) {
 }
 
 function buildPollinationsUrl(theme, description, model = "flux") {
-  // プロンプトは短めに（URL長制限対策）
-  const desc = description ? description.slice(0, 40) : "";
+  // Pollinations API のプロンプトは ASCII のみ使用
+  // 日本語等の非ASCII文字はURLパス内でサーバー側エラー(500)の原因になるためフィルタリング
+  const toAscii = (s) => (s ?? "").replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
+  const themeAscii = toAscii(theme);
+  const descAscii  = toAscii(description).slice(0, 30);
+  const subject    = themeAscii || descAscii || "anniversary";
   const prompt =
-    `kawaii watercolor cat, ${theme}, ` +
-    (desc ? `${desc}, ` : "") +
-    `pastel colors, white background, kawaii style`;
+    `kawaii watercolor cat, ${subject}, pastel colors, white background, kawaii style`;
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
