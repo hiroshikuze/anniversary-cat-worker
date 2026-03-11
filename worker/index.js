@@ -279,13 +279,11 @@ function buildPollinationsUrl(theme, description, model = "flux") {
 }
 
 // ---------------------------------------------------------------------------
-// /generate  ― Gemini で猫イラストを生成、失敗時は Pollinations.ai にフォールバック
+// /generate  ― Gemini と Pollinations を並列実行し、先に成功した方を返す
 // ---------------------------------------------------------------------------
 async function handleGenerate(body, apiKey) {
   const { theme, description } = body;
   if (!theme) throw new Error("theme フィールドが必要です");
-
-  const imageModel = await selectImageModel(apiKey);
 
   const prompt =
     `Create a cute kawaii watercolor style cat character illustration. ` +
@@ -297,8 +295,8 @@ async function handleGenerate(body, apiKey) {
     `High quality charming illustration. ` +
     `IMPORTANT: Do not include any text, letters, words, titles, captions, or typography in the image.`;
 
-  let geminiError = null;
-  try {
+  async function tryGemini() {
+    const imageModel = await selectImageModel(apiKey);
     const res = await fetchWithRetry(
       `${GEMINI_BASE}/${imageModel}:generateContent?key=${apiKey}`,
       {
@@ -310,62 +308,40 @@ async function handleGenerate(body, apiKey) {
         }),
       }
     );
-
     const data = await res.json();
-    if (res.ok) {
-      const parts = data.candidates?.[0]?.content?.parts ?? [];
-      const imagePart = parts.find((p) => p.inlineData);
-      if (imagePart) {
-        return {
-          imageData: imagePart.inlineData.data,
-          mimeType: imagePart.inlineData.mimeType || "image/png",
-          source: "gemini",
-        };
-      }
+    if (!res.ok) throw new Error(data.error?.message || `Gemini エラー (${res.status})`);
+    const parts = data.candidates?.[0]?.content?.parts ?? [];
+    const imagePart = parts.find((p) => p.inlineData);
+    if (!imagePart) {
       const msg = parts.find((p) => p.text)?.text ?? "";
-      geminiError = "Gemini: 画像パートなし" + (msg ? `: ${msg.slice(0, 80)}` : "");
-    } else {
-      geminiError = data.error?.message || `Gemini エラー (${res.status})`;
+      throw new Error("Gemini: 画像パートなし" + (msg ? `: ${msg.slice(0, 80)}` : ""));
     }
-  } catch (e) {
-    geminiError = e.message;
+    console.log("[generate] Gemini success");
+    return { imageData: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType || "image/png", source: "gemini" };
   }
 
-  console.warn("[generate] Gemini failed, falling back to Pollinations:", geminiError);
-
-  // Worker で Pollinations をプロキシ（ブラウザに 530 が届かないようにする）
-  // 複数モデルを試行し、Worker でも取得できない場合は URL をフロントエンドに渡す（ラストリゾート）
-  const POLLINATIONS_MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
-  let lastPollinationsError = "";
-  for (let attempt = 0; attempt < POLLINATIONS_MODELS.length; attempt++) {
-    const model = POLLINATIONS_MODELS[attempt];
-    const pollinationsUrl = buildPollinationsUrl(theme, description, model);
-    try {
-      console.log(`[pollinations] attempt ${attempt + 1} model=${model}:`, pollinationsUrl.slice(0, 100));
-      const imgRes = await fetch(pollinationsUrl);
-      if (imgRes.ok) {
+  async function tryPollinations() {
+    const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
+    return Promise.any(
+      MODELS.map(async (model) => {
+        const url = buildPollinationsUrl(theme, description, model);
+        console.log(`[pollinations] trying model=${model}`);
+        const imgRes = await fetch(url);
+        if (!imgRes.ok) throw new Error(`status=${imgRes.status}`);
         const buffer = await imgRes.arrayBuffer();
         const base64 = arrayBufferToBase64(buffer);
         const mimeType = imgRes.headers.get("Content-Type") || "image/jpeg";
         console.log(`[pollinations] success model=${model} size=${buffer.byteLength}`);
         return { imageData: base64, mimeType, source: "pollinations" };
-      }
-      lastPollinationsError = `status=${imgRes.status}`;
-      console.warn(`[pollinations] attempt ${attempt + 1} failed: ${lastPollinationsError}`);
-    } catch (e) {
-      lastPollinationsError = e.message;
-      console.warn(`[pollinations] attempt ${attempt + 1} error:`, e.message);
-    }
+      })
+    );
   }
 
-  // ラストリゾート: URL をフロントエンドに返してブラウザに直接取得させる
-  const fallbackUrl = buildPollinationsUrl(theme, description, "flux");
-  console.warn("[pollinations] all Worker attempts failed, returning URL as last resort:", lastPollinationsError);
-  return {
-    pollinationsUrl: fallbackUrl,
-    source: "pollinations-fallback",
-    _debug: { geminiError, pollinationsError: lastPollinationsError },
-  };
+  try {
+    return await Promise.any([tryGemini(), tryPollinations()]);
+  } catch {
+    throw new Error("画像生成に失敗しました。しばらく待ってから再度お試しください。");
+  }
 }
 
 // ---------------------------------------------------------------------------
