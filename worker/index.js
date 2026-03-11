@@ -309,6 +309,7 @@ async function handleGenerate(body, apiKey) {
     const MAX_TRIES = 4;
     let lastError;
     for (const model of candidates.slice(0, MAX_TRIES)) {
+      // 1モデルあたり最大 25 秒
       const res = await fetchWithRetry(
         `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
         {
@@ -318,6 +319,7 @@ async function handleGenerate(body, apiKey) {
             contents: [{ parts: [{ text: prompt }] }],
             generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
           }),
+          signal: AbortSignal.timeout(25_000),
         }
       );
       const data = await res.json();
@@ -345,12 +347,14 @@ async function handleGenerate(body, apiKey) {
   }
 
   async function tryPollinations() {
+    // 1モデルあたり最大 20 秒。4モデル並列なので全体も最大 20 秒で完結する
+    const POLLINATIONS_TIMEOUT_MS = 20_000;
     const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
     return Promise.any(
       MODELS.map(async (model) => {
         const url = buildPollinationsUrl(theme, description, model);
         console.log(`[pollinations] trying model=${model}`);
-        const imgRes = await fetch(url);
+        const imgRes = await fetch(url, { signal: AbortSignal.timeout(POLLINATIONS_TIMEOUT_MS) });
         if (!imgRes.ok) throw new Error(`status=${imgRes.status}`);
         const buffer = await imgRes.arrayBuffer();
         const base64 = arrayBufferToBase64(buffer);
