@@ -433,23 +433,10 @@
           description: researchData.description,
         });
 
-        // レスポンス内容をコンソールに出力（デバッグ用）
         console.log("[generate] source:", data.source);
-        if (data._debug) {
-          console.warn("[generate] Gemini error:", data._debug.geminiError);
-          console.warn("[generate] Pollinations error:", data._debug.pollinationsError);
-          if (data.pollinationsUrl) console.log("[generate] last-resort URL:", data.pollinationsUrl);
-        }
 
-        let displayUrl;
-        if (data.imageData) {
-          displayUrl = `data:${data.mimeType};base64,${data.imageData}`;
-        } else if (data.pollinationsUrl) {
-          // Worker でのプロキシが全て失敗した場合のラストリゾート: ブラウザが直接取得
-          displayUrl = data.pollinationsUrl;
-        } else {
-          throw new Error(t("noImageError") + JSON.stringify(Object.keys(data)));
-        }
+        if (!data.imageData) throw new Error(t("noImageError"));
+        const displayUrl = `data:${data.mimeType};base64,${data.imageData}`;
 
         const imgEl = document.getElementById("g-image");
         await new Promise((resolve, reject) => {

@@ -216,7 +216,16 @@ async function handleResearch(body, apiKey) {
 // ---------------------------------------------------------------------------
 // 画像生成モデルを動的に選択（キャッシュなし・毎回確認）
 // ---------------------------------------------------------------------------
-async function selectImageModel(apiKey) {
+// 画像生成に使える Gemini モデルの候補リストを返す（優先度順）
+// 動的に発見したモデルを先頭に置き、既知の候補をフォールバックとして追加する
+async function listImageModelCandidates(apiKey) {
+  // コスパ重視の既知候補（新しい/安価なものを先に）
+  const KNOWN_CANDIDATES = [
+    "gemini-2.0-flash-exp",
+    "gemini-2.0-flash-preview-image-generation",
+  ];
+
+  let discovered = [];
   try {
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}&pageSize=100`
@@ -224,30 +233,29 @@ async function selectImageModel(apiKey) {
     const data = await res.json();
     const models = data.models ?? [];
 
-    // "image-generation" または "imagen" を含み generateContent をサポートするモデル
-    const found = models
+    // generateContent をサポートし、画像生成関連の名前を持つモデルを収集
+    discovered = models
       .filter((m) => {
         const methods = m.supportedGenerationMethods ?? [];
+        const name = m.name;
         return (
           methods.includes("generateContent") &&
-          (m.name.includes("image-generation") || m.name.includes("imagen"))
+          (name.includes("image-generation") || name.includes("imagen") || name.includes("flash-exp"))
         );
       })
-      .map((m) => m.name.replace("models/", ""))[0];
+      .map((m) => m.name.replace("models/", ""));
 
-    if (found) {
-      console.log("[image-model] selected:", found);
-      return found;
+    if (discovered.length > 0) {
+      console.log("[image-model] discovered:", discovered.join(", "));
+    } else {
+      console.warn("[image-model] discovery found no image models");
     }
-
-    console.warn("[image-model] no image model found, available models:",
-      models.map((m) => m.name.replace("models/", "")).join(", "));
   } catch (e) {
     console.warn("[image-model] discovery failed:", e.message);
   }
 
-  // フォールバック（preview モデル）
-  return "gemini-2.0-flash-preview-image-generation";
+  // 発見済みを先頭に、既知候補を後ろに（重複排除）
+  return [...new Set([...discovered, ...KNOWN_CANDIDATES])];
 }
 
 // ---------------------------------------------------------------------------
@@ -279,13 +287,11 @@ function buildPollinationsUrl(theme, description, model = "flux") {
 }
 
 // ---------------------------------------------------------------------------
-// /generate  ― Gemini で猫イラストを生成、失敗時は Pollinations.ai にフォールバック
+// /generate  ― Gemini と Pollinations を並列実行し、先に成功した方を返す
 // ---------------------------------------------------------------------------
 async function handleGenerate(body, apiKey) {
   const { theme, description } = body;
   if (!theme) throw new Error("theme フィールドが必要です");
-
-  const imageModel = await selectImageModel(apiKey);
 
   const prompt =
     `Create a cute kawaii watercolor style cat character illustration. ` +
@@ -297,75 +303,69 @@ async function handleGenerate(body, apiKey) {
     `High quality charming illustration. ` +
     `IMPORTANT: Do not include any text, letters, words, titles, captions, or typography in the image.`;
 
-  let geminiError = null;
-  try {
-    const res = await fetchWithRetry(
-      `${GEMINI_BASE}/${imageModel}:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
-        }),
+  async function tryGemini() {
+    const candidates = await listImageModelCandidates(apiKey);
+    // 無限ループ防止: 最大 4 候補まで
+    const MAX_TRIES = 4;
+    let lastError;
+    for (const model of candidates.slice(0, MAX_TRIES)) {
+      const res = await fetchWithRetry(
+        `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
+          }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        const msg = data.error?.message ?? `Gemini エラー (${res.status})`;
+        // モデルが存在しない / API バージョン非対応 → 次の候補へ
+        if (res.status === 404 || msg.includes("not found") || msg.includes("not supported")) {
+          console.warn(`[gemini] model ${model} unavailable, trying next:`, msg.slice(0, 80));
+          lastError = new Error(msg);
+          continue;
+        }
+        // その他のエラー（クォータ超過・安全フィルタ等）は即座に失敗
+        throw new Error(msg);
       }
-    );
-
-    const data = await res.json();
-    if (res.ok) {
       const parts = data.candidates?.[0]?.content?.parts ?? [];
       const imagePart = parts.find((p) => p.inlineData);
-      if (imagePart) {
-        return {
-          imageData: imagePart.inlineData.data,
-          mimeType: imagePart.inlineData.mimeType || "image/png",
-          source: "gemini",
-        };
+      if (!imagePart) {
+        const msg = parts.find((p) => p.text)?.text ?? "";
+        throw new Error("Gemini: 画像パートなし" + (msg ? `: ${msg.slice(0, 80)}` : ""));
       }
-      const msg = parts.find((p) => p.text)?.text ?? "";
-      geminiError = "Gemini: 画像パートなし" + (msg ? `: ${msg.slice(0, 80)}` : "");
-    } else {
-      geminiError = data.error?.message || `Gemini エラー (${res.status})`;
+      console.log(`[generate] Gemini success model=${model}`);
+      return { imageData: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType || "image/png", source: "gemini" };
     }
-  } catch (e) {
-    geminiError = e.message;
+    throw lastError ?? new Error("Gemini: 利用可能な画像モデルが見つかりませんでした");
   }
 
-  console.warn("[generate] Gemini failed, falling back to Pollinations:", geminiError);
-
-  // Worker で Pollinations をプロキシ（ブラウザに 530 が届かないようにする）
-  // 複数モデルを試行し、Worker でも取得できない場合は URL をフロントエンドに渡す（ラストリゾート）
-  const POLLINATIONS_MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
-  let lastPollinationsError = "";
-  for (let attempt = 0; attempt < POLLINATIONS_MODELS.length; attempt++) {
-    const model = POLLINATIONS_MODELS[attempt];
-    const pollinationsUrl = buildPollinationsUrl(theme, description, model);
-    try {
-      console.log(`[pollinations] attempt ${attempt + 1} model=${model}:`, pollinationsUrl.slice(0, 100));
-      const imgRes = await fetch(pollinationsUrl);
-      if (imgRes.ok) {
+  async function tryPollinations() {
+    const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
+    return Promise.any(
+      MODELS.map(async (model) => {
+        const url = buildPollinationsUrl(theme, description, model);
+        console.log(`[pollinations] trying model=${model}`);
+        const imgRes = await fetch(url);
+        if (!imgRes.ok) throw new Error(`status=${imgRes.status}`);
         const buffer = await imgRes.arrayBuffer();
         const base64 = arrayBufferToBase64(buffer);
         const mimeType = imgRes.headers.get("Content-Type") || "image/jpeg";
         console.log(`[pollinations] success model=${model} size=${buffer.byteLength}`);
         return { imageData: base64, mimeType, source: "pollinations" };
-      }
-      lastPollinationsError = `status=${imgRes.status}`;
-      console.warn(`[pollinations] attempt ${attempt + 1} failed: ${lastPollinationsError}`);
-    } catch (e) {
-      lastPollinationsError = e.message;
-      console.warn(`[pollinations] attempt ${attempt + 1} error:`, e.message);
-    }
+      })
+    );
   }
 
-  // ラストリゾート: URL をフロントエンドに返してブラウザに直接取得させる
-  const fallbackUrl = buildPollinationsUrl(theme, description, "flux");
-  console.warn("[pollinations] all Worker attempts failed, returning URL as last resort:", lastPollinationsError);
-  return {
-    pollinationsUrl: fallbackUrl,
-    source: "pollinations-fallback",
-    _debug: { geminiError, pollinationsError: lastPollinationsError },
-  };
+  try {
+    return await Promise.any([tryGemini(), tryPollinations()]);
+  } catch {
+    throw new Error("画像生成に失敗しました。しばらく待ってから再度お試しください。");
+  }
 }
 
 // ---------------------------------------------------------------------------
