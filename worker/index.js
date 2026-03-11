@@ -361,7 +361,11 @@ async function handleGenerate(body, apiKey) {
   // ラストリゾート: URL をフロントエンドに返してブラウザに直接取得させる
   const fallbackUrl = buildPollinationsUrl(theme, description, "flux");
   console.warn("[pollinations] all Worker attempts failed, returning URL as last resort:", lastPollinationsError);
-  return { pollinationsUrl: fallbackUrl, source: "pollinations-fallback" };
+  return {
+    pollinationsUrl: fallbackUrl,
+    source: "pollinations-fallback",
+    _debug: { geminiError, pollinationsError: lastPollinationsError },
+  };
 }
 
 // ---------------------------------------------------------------------------

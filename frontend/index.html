@@ -434,7 +434,12 @@
         });
 
         // レスポンス内容をコンソールに出力（デバッグ用）
-        console.log("[generate] response keys:", Object.keys(data), "source:", data.source);
+        console.log("[generate] source:", data.source);
+        if (data._debug) {
+          console.warn("[generate] Gemini error:", data._debug.geminiError);
+          console.warn("[generate] Pollinations error:", data._debug.pollinationsError);
+          if (data.pollinationsUrl) console.log("[generate] last-resort URL:", data.pollinationsUrl);
+        }
 
         let displayUrl;
         if (data.imageData) {
