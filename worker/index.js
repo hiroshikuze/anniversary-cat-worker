@@ -271,7 +271,7 @@ function buildPollinationsUrl(theme, description, model = "flux") {
     `pastel colors, white background, kawaii style`;
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
-    `https://gen.pollinations.ai/image/${encodeURIComponent(prompt)}` +
+    `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
     `?model=${model}&width=1024&height=1024&seed=${seed}&nologo=true`
   );
 }
@@ -370,10 +370,7 @@ async function handleProxyImage(request, corsH) {
   const targetUrl = url.searchParams.get("url");
 
   // Pollinations.ai 以外は拒否（オープンプロキシ化を防止）
-  if (!targetUrl || !(
-    targetUrl.startsWith("https://image.pollinations.ai/") ||
-    targetUrl.startsWith("https://gen.pollinations.ai/")
-  )) {
+  if (!targetUrl || !targetUrl.startsWith("https://image.pollinations.ai/")) {
     return new Response("Invalid URL", { status: 403, headers: corsH });
   }
 
