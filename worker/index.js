@@ -363,8 +363,13 @@ async function handleGenerate(body, apiKey) {
 
   try {
     return await Promise.any([tryGemini(), tryPollinations()]);
-  } catch {
-    throw new Error("画像生成に失敗しました。しばらく待ってから再度お試しください。");
+  } catch (err) {
+    // AggregateError から各失敗理由を取り出してログ・レスポンスに含める
+    const reasons = err instanceof AggregateError
+      ? err.errors.map((e) => e?.message ?? String(e))
+      : [err?.message ?? String(err)];
+    console.error("[generate] all sources failed:", reasons.join(" | "));
+    throw new Error(`画像生成に失敗しました（${reasons.join(" / ")}）`);
   }
 }
 
