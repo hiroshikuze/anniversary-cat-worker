@@ -219,6 +219,7 @@
         httpError:          "エラー (HTTP ",
         imageLoadError:     "画像の読み込みに失敗しました。しばらく待ってから再度お試しください。",
         noImageError:       "画像データなし。返却フィールド: ",
+        rateLimitError:     "本日の利用上限に達しました。明日またお試しください。",
         dateLocale:         "ja-JP",
       },
       en: {
@@ -245,6 +246,7 @@
         httpError:          "Error (HTTP ",
         imageLoadError:     "Failed to load the image. Please try again later.",
         noImageError:       "No image data. Returned fields: ",
+        rateLimitError:     "You have reached today's usage limit. Please try again tomorrow.",
         dateLocale:         "en-US",
       },
     };
@@ -280,6 +282,24 @@
     function toggleLang() {
       currentLang = currentLang === "ja" ? "en" : "ja";
       applyLang();
+    }
+
+    // ----------------------------------------------------------
+    // クライアントサイドのレート制限キャッシュ
+    // ----------------------------------------------------------
+    function isRateLimited() {
+      const today = new Date().toISOString().slice(0, 10);
+      return localStorage.getItem("generateRateLimitDate") === today;
+    }
+
+    function setRateLimited(message) {
+      const today = new Date().toISOString().slice(0, 10);
+      localStorage.setItem("generateRateLimitDate", today);
+      if (message) localStorage.setItem("generateRateLimitMsg", message);
+    }
+
+    function getRateLimitMessage() {
+      return localStorage.getItem("generateRateLimitMsg") || t("rateLimitError");
     }
 
     // ----------------------------------------------------------
@@ -343,7 +363,11 @@
         if (res.ok) return data;
 
         // 429（レート制限）はリトライしない
-        if (res.status === 429) throw new Error(data.error || `${t("httpError")}429)`);
+        if (res.status === 429) {
+          const msg = data.error || `${t("httpError")}429)`;
+          if (path === "/generate") setRateLimited(msg);
+          throw new Error(msg);
+        }
 
         // リトライ対象: サーバーエラー
         if (res.status >= 500 && attempt < maxRetries - 1) {
@@ -370,6 +394,11 @@
     // リサーチ → 画像生成
     // ----------------------------------------------------------
     async function startResearch() {
+      if (isRateLimited()) {
+        document.getElementById("g-error-text").textContent = getRateLimitMessage();
+        showGenerate("error");
+        return;
+      }
       researchData = null;
       lastImageUrl = null;
       showGenerate("loading");
@@ -390,6 +419,11 @@
     // ----------------------------------------------------------
     async function startGenerate() {
       if (!researchData) return;
+      if (isRateLimited()) {
+        document.getElementById("g-error-text").textContent = getRateLimitMessage();
+        showGenerate("error");
+        return;
+      }
       lastImageUrl = null;
       showGenerate("loading");
 
