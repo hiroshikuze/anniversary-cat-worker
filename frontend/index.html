@@ -152,7 +152,7 @@
         <!-- キャプション（絵の下） -->
         <div class="bg-pink-50 rounded-2xl px-5 py-4 mb-4 text-center">
           <p class="text-base font-medium text-pink-700 mb-1" id="g-result-label"></p>
-          <p class="text-sm text-gray-500 leading-relaxed" id="g-result-description"></p>
+          <a id="g-result-description" href="#" target="_blank" rel="noopener" class="text-sm text-gray-500 leading-relaxed hover:text-pink-500 underline-offset-2"></a>
         </div>
         <div class="flex gap-2">
           <button onclick="startGenerate()"
@@ -448,7 +448,15 @@
         });
         lastImageUrl = displayUrl;
         document.getElementById("g-result-label").textContent = researchData.theme ?? "";
-        document.getElementById("g-result-description").textContent = researchData.description ?? "";
+        const descEl = document.getElementById("g-result-description");
+        descEl.textContent = researchData.description ?? "";
+        if (researchData.sourceUrl) {
+          descEl.href = researchData.sourceUrl;
+          descEl.classList.add("underline");
+        } else {
+          descEl.removeAttribute("href");
+          descEl.classList.remove("underline");
+        }
         showGenerate("result");
 
       } catch (err) {
