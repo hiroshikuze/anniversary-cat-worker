@@ -220,7 +220,9 @@ async function handleResearch(body, apiKey) {
 // 動的に発見したモデルを先頭に置き、既知の候補をフォールバックとして追加する
 async function listImageModelCandidates(apiKey) {
   // コスパ重視の既知候補（新しい/安価なものを先に）
+  // 2026-03 時点の有効モデル: gemini-2.5-flash-image が現行 stable
   const KNOWN_CANDIDATES = [
+    "gemini-2.5-flash-image",
     "gemini-2.0-flash-exp",
     "gemini-2.0-flash-preview-image-generation",
   ];
@@ -309,6 +311,7 @@ async function handleGenerate(body, apiKey) {
     const MAX_TRIES = 4;
     let lastError;
     for (const model of candidates.slice(0, MAX_TRIES)) {
+      // 1モデルあたり最大 25 秒
       const res = await fetchWithRetry(
         `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
         {
@@ -318,6 +321,7 @@ async function handleGenerate(body, apiKey) {
             contents: [{ parts: [{ text: prompt }] }],
             generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
           }),
+          signal: AbortSignal.timeout(25_000),
         }
       );
       const data = await res.json();
@@ -345,12 +349,14 @@ async function handleGenerate(body, apiKey) {
   }
 
   async function tryPollinations() {
+    // 1モデルあたり最大 20 秒。4モデル並列なので全体も最大 20 秒で完結する
+    const POLLINATIONS_TIMEOUT_MS = 20_000;
     const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
     return Promise.any(
       MODELS.map(async (model) => {
         const url = buildPollinationsUrl(theme, description, model);
         console.log(`[pollinations] trying model=${model}`);
-        const imgRes = await fetch(url);
+        const imgRes = await fetch(url, { signal: AbortSignal.timeout(POLLINATIONS_TIMEOUT_MS) });
         if (!imgRes.ok) throw new Error(`status=${imgRes.status}`);
         const buffer = await imgRes.arrayBuffer();
         const base64 = arrayBufferToBase64(buffer);
@@ -363,8 +369,13 @@ async function handleGenerate(body, apiKey) {
 
   try {
     return await Promise.any([tryGemini(), tryPollinations()]);
-  } catch {
-    throw new Error("画像生成に失敗しました。しばらく待ってから再度お試しください。");
+  } catch (err) {
+    // AggregateError から各失敗理由を取り出してログ・レスポンスに含める
+    const reasons = err instanceof AggregateError
+      ? err.errors.map((e) => e?.message ?? String(e))
+      : [err?.message ?? String(err)];
+    console.error("[generate] all sources failed:", reasons.join(" | "));
+    throw new Error(`画像生成に失敗しました（${reasons.join(" / ")}）`);
   }
 }
 
