@@ -220,7 +220,9 @@ async function handleResearch(body, apiKey) {
 // 動的に発見したモデルを先頭に置き、既知の候補をフォールバックとして追加する
 async function listImageModelCandidates(apiKey) {
   // コスパ重視の既知候補（新しい/安価なものを先に）
+  // 2026-03 時点の有効モデル: gemini-2.5-flash-image が現行 stable
   const KNOWN_CANDIDATES = [
+    "gemini-2.5-flash-image",
     "gemini-2.0-flash-exp",
     "gemini-2.0-flash-preview-image-generation",
   ];
