@@ -23,21 +23,21 @@ Claude Code がこのリポジトリを扱う際の引き継ぎ情報。
 
 ---
 
-## 問題発生時の診断手順
+## テスト・診断
 
-**まず health-check.js を実行する:**
+### 自動テスト（GitHub Actions）
 
-```bash
-# Gemini API を直接チェック（最短で全項目を確認できる）
-GEMINI_API_KEY=xxx node scripts/health-check.js
+`main` および `claude/**` への push のたびに `scripts/health-check.js` が自動実行される。
+結果は GitHub の **Actions タブ** で確認（✅/❌）。
 
-# デプロイ済み Worker をエンドツーエンドでチェック
-WORKER_URL=https://anniversary-cat-worker.xxx.workers.dev \
-BYPASS_TOKEN=xxx \
-node scripts/health-check.js
-```
+> **Claude はサンドボックス制限で外部 API に接続できないため、health-check.js を直接実行できない。**
+> テスト結果が必要な場合はユーザーに Actions タブの確認を依頼すること。
 
-終了コード 0 = 正常、1 = 失敗あり（失敗箇所と理由が出力される）
+### 問題発生時に Claude がやること
+
+1. **Cloudflare Workers ログ**（下記参照）をユーザーに確認してもらい内容を共有してもらう
+2. ログのパターンから原因を特定してコードを修正
+3. push → Actions の結果でテストを確認
 
 ---
 
@@ -70,10 +70,9 @@ const KNOWN_CANDIDATES = [
 ```
 
 **モデルが 404 になったら:**
-1. `node scripts/health-check.js` で確認
-2. `[2]` セクションの出力で「API のモデル一覧に見当たらない」が出たら廃止確定
-3. [Google AI for Developers](https://ai.google.dev/gemini-api/docs/models) で現行モデルを確認
-4. `KNOWN_CANDIDATES` の先頭を新しいモデルに更新
+1. Actions タブで health-check の失敗を確認（または Cloudflare ログで `unavailable(404)` を確認）
+2. [Google AI for Developers](https://ai.google.dev/gemini-api/docs/models) で現行モデルを確認
+3. `KNOWN_CANDIDATES` の先頭を新しいモデルに更新して push → Actions で確認
 
 ### Research モデル（テキスト用）
 
@@ -111,7 +110,7 @@ anniversary-cat-worker/
 ├── frontend/
 │   └── index.html          ← フロントエンド（GitHub Pages）
 ├── scripts/
-│   └── health-check.js     ← 診断スクリプト（問題発生時に実行）
+│   └── health-check.js     ← 診断スクリプト（GitHub Actions で自動実行）
 └── wrangler.toml           ← Cloudflare デプロイ設定
 ```
 
