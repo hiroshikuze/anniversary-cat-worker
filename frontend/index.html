@@ -159,7 +159,7 @@
             class="flex-1 btn-secondary py-2.5 rounded-xl text-sm font-medium" data-i18n="regenerateBtn">
             🔄 もう一度生成
           </button>
-          <button onclick="downloadImage()"
+          <button onclick="shareOrSaveImage()"
             class="flex-1 btn-primary text-white py-2.5 rounded-xl text-sm font-medium" data-i18n="saveBtn">
             💾 保存する
           </button>
@@ -214,6 +214,7 @@
         themeLabel:         "テーマ: ",
         regenerateBtn:      "🔄 もう一度生成",
         saveBtn:            "💾 保存する",
+        shareBtn:           "🔗 共有する",
         footer:             "Powered by Gemini &amp; Pollinations.ai ／ 画像はAIが生成します<br><a href=\"https://github.com/hiroshikuze/anniversary-cat-worker#readme\" target=\"_blank\" rel=\"noopener\" class=\"underline hover:text-pink-100\">このサービスについて</a>",
         networkError:       "ネットワークエラー: ",
         httpError:          "エラー (HTTP ",
@@ -241,6 +242,7 @@
         themeLabel:         "Theme: ",
         regenerateBtn:      "🔄 Generate Again",
         saveBtn:            "💾 Save",
+        shareBtn:           "🔗 Share",
         footer:             "Powered by Gemini &amp; Pollinations.ai / Images are AI-generated<br><a href=\"https://github.com/hiroshikuze/anniversary-cat-worker#readme\" target=\"_blank\" rel=\"noopener\" class=\"underline hover:text-pink-100\">About this service</a>",
         networkError:       "Network error: ",
         httpError:          "Error (HTTP ",
@@ -321,6 +323,11 @@
     }
 
     (function init() {
+      // Web Share API（ファイル共有）が使える環境ではボタンを「共有」に変更
+      const _testFile = new File([""], "t.png", { type: "image/png" });
+      if (typeof navigator.canShare === "function" && navigator.canShare({ files: [_testFile] })) {
+        document.querySelector('[data-i18n="saveBtn"]').setAttribute("data-i18n", "shareBtn");
+      }
       applyLang();
       // Service Worker の登録
       if ('serviceWorker' in navigator) {
@@ -467,37 +474,56 @@
     }
 
     // ----------------------------------------------------------
-    // 画像ダウンロード
+    // 画像共有 / ダウンロード
     // ----------------------------------------------------------
-    async function downloadImage() {
+    async function shareOrSaveImage() {
       if (!lastImageUrl) return;
       const safeName = (researchData?.theme ?? "cat").replace(/[\\/:*?"<>|]/g, "_");
+      const fileName = `anniversary-cat-${safeName}.png`;
 
-      // Pollinations URL の場合は /proxy-image 経由で blob を取得してダウンロード
-      if (lastImageUrl.startsWith("https://")) {
-        try {
+      // blob 取得（Pollinations URL はプロキシ経由、data URL は直接 fetch）
+      let blob = null;
+      try {
+        if (lastImageUrl.startsWith("https://")) {
           const proxyUrl = WORKER_URL + "/proxy-image?url=" + encodeURIComponent(lastImageUrl);
           const res = await fetch(proxyUrl);
-          if (!res.ok) throw new Error(`proxy ${res.status}`);
-          const blob = await res.blob();
-          const blobUrl = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = blobUrl;
-          a.download = `anniversary-cat-${safeName}.png`;
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+          if (res.ok) blob = await res.blob();
+        } else {
+          const res = await fetch(lastImageUrl);
+          if (res.ok) blob = await res.blob();
+        }
+      } catch (e) {
+        console.warn("blob fetch failed:", e.message);
+      }
+
+      if (!blob) {
+        window.open(lastImageUrl, "_blank");
+        return;
+      }
+
+      // Web Share API with files（iOS Safari / Android Chrome / PC Safari）
+      const file = new File([blob], fileName, { type: "image/png" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: currentLang === "ja" ? "にゃんバーサリー" : "Nyaniversary",
+            text: researchData?.description ?? "",
+          });
           return;
         } catch (e) {
-          console.warn("proxy download failed, opening direct URL:", e.message);
-          window.open(lastImageUrl, "_blank");
-          return;
+          if (e.name === "AbortError") return; // ユーザーがキャンセル
+          console.warn("share failed, falling back to download:", e.message);
         }
       }
 
+      // fallback: 通常ダウンロード（PC Chrome / Firefox 等）
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = lastImageUrl;
-      a.download = `anniversary-cat-${safeName}.png`;
+      a.href = blobUrl;
+      a.download = fileName;
       a.click();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
     }
   </script>
 </body>
