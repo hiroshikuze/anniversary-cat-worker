@@ -187,17 +187,31 @@ async function checkResearch(apiKey, allModels) {
   check("theme あり",       !!result.theme,       result.theme ?? "(空)");
   check("description あり", !!result.description, result.description?.slice(0, 50) ?? "(空)");
 
+  // worker/index.js と同じ sourceUrl 解決ロジック
+  // 1) JSON内がvertexaisearchなら除去
+  if (result.sourceUrl?.includes("vertexaisearch.cloud.google.com")) {
+    warn(`JSON内のsourceUrlがvertexaisearch → worker同様に除去してフォールバックへ`);
+    result.sourceUrl = "";
+  }
+  // 2) groundingChunksから非vertexaisearch URLを探す
+  const groundingChunks = data.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
+  if (!result.sourceUrl) {
+    const uri = groundingChunks[0]?.web?.uri ?? "";
+    if (uri && !uri.includes("vertexaisearch.cloud.google.com")) {
+      result.sourceUrl = uri;
+    }
+  }
+  // 3) Google Search クエリでフォールバック
+  const queries = data.candidates?.[0]?.groundingMetadata?.webSearchQueries ?? [];
+  if (!result.sourceUrl && queries.length > 0) {
+    result.sourceUrl = `https://www.google.com/search?q=${encodeURIComponent(queries[0])}`;
+  }
+
   if (result.sourceUrl) {
     check("sourceUrl あり", true, result.sourceUrl.slice(0, 80));
     await checkSourceUrl(result.sourceUrl);
   } else {
-    // Google Search フォールバックを確認
-    const queries = data.candidates?.[0]?.groundingMetadata?.webSearchQueries ?? [];
-    if (queries.length > 0) {
-      warn(`sourceUrl なし → フォールバック: Google 検索 URL になります (query="${queries[0]}")`);
-    } else {
-      check("sourceUrl あり", false, "sourceUrl もフォールバック用クエリも取得できませんでした");
-    }
+    check("sourceUrl あり", false, "sourceUrl もフォールバック用クエリも取得できませんでした");
   }
 }
 
@@ -231,13 +245,15 @@ async function checkSourceUrl(url) {
 async function checkPollinations() {
   console.log("\n[4] Pollinations.ai 到達確認");
   const url =
-    "https://image.pollinations.ai/prompt/cat?model=turbo&width=64&height=64&seed=1&nologo=true";
+    "https://image.pollinations.ai/prompt/cat?model=flux&width=64&height=64&seed=1&nologo=true";
 
   const { ok: reached, res, error } = await safeFetch(url);
   if (!check("Pollinations API へ到達できる", reached, error)) return;
-  check(`HTTP ${res.status}`, res.ok, `status=${res.status}`);
+  // フォールバックサービスのため HTTP 異常・非画像レスポンスは警告扱い（CI 失敗にしない）
+  if (!res.ok) { warn(`HTTP ${res.status}: Pollinations が一時的に利用不可の可能性あり`); return; }
   const ct = res.headers.get("Content-Type") ?? "";
-  check("画像 (image/*) を返す", ct.startsWith("image/"), `Content-Type=${ct}`);
+  if (!ct.startsWith("image/")) warn(`画像でないレスポンス: Content-Type=${ct}（一時障害の可能性）`);
+  else pass(`画像 (image/*) を返す: Content-Type=${ct}`);
 }
 
 // ─── Worker エンドツーエンドチェック ─────────────────────────────────────────

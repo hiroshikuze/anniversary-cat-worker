@@ -199,6 +199,11 @@ async function handleResearch(body, apiKey) {
   const queries =
     data.candidates?.[0]?.groundingMetadata?.webSearchQueries ?? [];
 
+  // JSON内のsourceUrlがvertexaisearchリダイレクトの場合は除去してフォールバックへ
+  if (result.sourceUrl?.includes("vertexaisearch.cloud.google.com")) {
+    result.sourceUrl = "";
+  }
+
   let sourceUrlKind = "none";
   if (!result.sourceUrl) {
     const uri = groundingChunks[0]?.web?.uri ?? "";
