@@ -235,9 +235,11 @@ async function checkPollinations() {
 
   const { ok: reached, res, error } = await safeFetch(url);
   if (!check("Pollinations API へ到達できる", reached, error)) return;
-  check(`HTTP ${res.status}`, res.ok, `status=${res.status}`);
+  // フォールバックサービスのため HTTP 異常・非画像レスポンスは警告扱い（CI 失敗にしない）
+  if (!res.ok) { warn(`HTTP ${res.status}: Pollinations が一時的に利用不可の可能性あり`); return; }
   const ct = res.headers.get("Content-Type") ?? "";
-  check("画像 (image/*) を返す", ct.startsWith("image/"), `Content-Type=${ct}`);
+  if (!ct.startsWith("image/")) warn(`画像でないレスポンス: Content-Type=${ct}（一時障害の可能性）`);
+  else pass(`画像 (image/*) を返す: Content-Type=${ct}`);
 }
 
 // ─── Worker エンドツーエンドチェック ─────────────────────────────────────────
