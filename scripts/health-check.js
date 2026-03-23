@@ -256,6 +256,117 @@ async function checkPollinations() {
   else pass(`画像 (image/*) を返す: Content-Type=${ct}`);
 }
 
+// ─── チェック B1: Bluesky 認証確認 ───────────────────────────────────────────
+async function checkBlueskyAuth(identifier, appPassword) {
+  console.log("\n[B1] Bluesky 認証確認");
+  const { ok, res, error } = await safeFetch(
+    "https://bsky.social/xrpc/com.atproto.server.createSession",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, password: appPassword }),
+    }
+  );
+  if (!check("Bluesky API へ到達できる", ok, error)) return false;
+  const data = await res.json();
+  if (!check("HTTP 200", res.ok, `status=${res.status} ${data.error ?? ""} ${data.message ?? ""}`)) return false;
+  check("accessJwt あり", !!data.accessJwt);
+  check("did あり",       !!data.did, data.did ?? "(空)");
+  check("handle あり",    !!data.handle, data.handle ?? "(空)");
+  return !!data.accessJwt;
+}
+
+// ─── チェック D1: Discord Webhook 確認 ───────────────────────────────────────
+async function checkDiscordWebhook(webhookUrl) {
+  console.log("\n[D1] Discord Webhook 確認");
+  // GET リクエストはメッセージ送信なしで Webhook の情報のみ返す
+  const { ok, res, error } = await safeFetch(webhookUrl);
+  if (!check("Discord Webhook URL へ到達できる", ok, error)) return;
+  const data = await res.json().catch(() => ({}));
+  if (!check("HTTP 200", res.ok, `status=${res.status}`)) return;
+  check("Webhook 名あり",  !!data.name,       `name=${data.name ?? "(空)"}`);
+  check("channel_id あり", !!data.channel_id, `channel_id=${data.channel_id ?? "(空)"}`);
+}
+
+// ─── チェック Bot: 投稿テキスト生成確認（外部通信なし）─────────────────────
+function checkBotPostText() {
+  console.log("\n[Bot] 投稿テキスト生成確認");
+
+  const SITE_URL     = "https://hiroshikuze.github.io/anniversary-cat-worker/";
+  const HASHTAG_LIST = ["#AIart", "#cat", "#kitten", "#ほのぼの", "#猫"];
+  const HASHTAGS     = HASHTAG_LIST.join(" ");
+
+  // worker/bluesky-bot.js の buildPostText と同一ロジック
+  function buildPostText(theme, description) {
+    const header = `今日は「${theme}」の日！🐱`;
+    const body   = description ? `\n${description}` : "";
+    const cta    = `\n\nあなたも今日のにゃんバーサリーを作ってみませんか？\n${SITE_URL}`;
+    const tags   = `\n\n${HASHTAGS}`;
+    return header + body + cta + tags;
+  }
+
+  // worker/bluesky-bot.js の buildHashtagFacets と同一ロジック
+  function buildHashtagFacets(text) {
+    const encoder = new TextEncoder();
+    const facets  = [];
+    for (const tag of HASHTAG_LIST) {
+      let searchFrom = 0;
+      while (true) {
+        const idx = text.indexOf(tag, searchFrom);
+        if (idx === -1) break;
+        const byteStart = encoder.encode(text.slice(0, idx)).length;
+        const byteEnd   = byteStart + encoder.encode(tag).length;
+        facets.push({
+          index:    { byteStart, byteEnd },
+          features: [{ $type: "app.bsky.richtext.facet#tag", tag: tag.slice(1) }],
+        });
+        searchFrom = idx + tag.length;
+      }
+    }
+    return facets;
+  }
+
+  const theme       = "猫の日";
+  const description = "日本の記念日。猫の鳴き声「ニャン（2）ニャン（2）ニャン（2）」にちなむ。";
+  const text        = buildPostText(theme, description);
+
+  // --- テキスト内容チェック ---
+  const segmenter = new Intl.Segmenter();
+  const graphemes = [...segmenter.segment(text)].length;
+  check("テキスト生成成功",   text.length > 0,                    `${graphemes} grapheme`);
+  check("300 grapheme 以内",  graphemes <= 300,                   `${graphemes}/300`);
+  check("テーマ含む",         text.includes(theme));
+  check("説明文含む",         text.includes(description));
+  check("サイト URL 含む",    text.includes(SITE_URL));
+  check("全ハッシュタグ含む", HASHTAG_LIST.every(t => text.includes(t)), HASHTAG_LIST.join(" "));
+
+  // --- ファセットチェック ---
+  const facets = buildHashtagFacets(text);
+  check(`ファセット数 ${HASHTAG_LIST.length} 件`, facets.length === HASHTAG_LIST.length, `${facets.length} 件`);
+
+  // 各ファセットのバイト位置が UTF-8 エンコード上で正確か検証
+  const encoder   = new TextEncoder();
+  const decoder   = new TextDecoder();
+  const fullBytes = encoder.encode(text);
+  let allOk = true;
+  for (const facet of facets) {
+    const { byteStart, byteEnd } = facet.index;
+    const extracted = decoder.decode(fullBytes.slice(byteStart, byteEnd));
+    const expected  = `#${facet.features[0].tag}`;
+    if (extracted !== expected) {
+      allOk = false;
+      fail(`バイト位置ずれ: expected="${expected}" got="${extracted}"`);
+    }
+  }
+  if (allOk) check("ファセットのバイト位置が正確（UTF-8）", true);
+
+  // --- エッジケース: 説明文なし ---
+  const textNoDesc      = buildPostText("海の日", "");
+  const graphemesNoDesc = [...segmenter.segment(textNoDesc)].length;
+  check("説明文なしでも生成できる",        textNoDesc.includes("海の日"));
+  check("説明文なしでも 300 grapheme 以内", graphemesNoDesc <= 300, `${graphemesNoDesc}/300`);
+}
+
 // ─── Worker エンドツーエンドチェック ─────────────────────────────────────────
 async function checkWorker(workerUrl, bypassToken) {
   const headers = {
@@ -302,15 +413,20 @@ async function main() {
   console.log("=== Anniversary Cat Worker ヘルスチェック ===");
   console.log(`実行日時: ${new Date().toLocaleString("ja-JP")}\n`);
 
-  const apiKey    = process.env.GEMINI_API_KEY;
-  const workerUrl = process.env.WORKER_URL?.replace(/\/$/, "");
-  const bypass    = process.env.BYPASS_TOKEN;
+  const apiKey        = process.env.GEMINI_API_KEY;
+  const workerUrl     = process.env.WORKER_URL?.replace(/\/$/, "");
+  const bypass        = process.env.BYPASS_TOKEN;
+  const bskyId        = process.env.BLUESKY_IDENTIFIER;
+  const bskyPass      = process.env.BLUESKY_APP_PASSWORD;
+  const discordUrl    = process.env.DISCORD_WEBHOOK_URL;
 
-  if (!apiKey && !workerUrl) {
+  if (!apiKey && !workerUrl && !bskyId && !discordUrl) {
     console.error("エラー: 環境変数が設定されていません\n");
     console.error("使い方:");
     console.error("  GEMINI_API_KEY=xxx node scripts/health-check.js");
     console.error("  WORKER_URL=https://... BYPASS_TOKEN=xxx node scripts/health-check.js");
+    console.error("  BLUESKY_IDENTIFIER=xxx BLUESKY_APP_PASSWORD=xxx node scripts/health-check.js");
+    console.error("  DISCORD_WEBHOOK_URL=https://... node scripts/health-check.js");
     process.exit(1);
   }
 
@@ -326,6 +442,19 @@ async function main() {
   if (workerUrl) {
     await checkWorker(workerUrl, bypass);
   }
+
+  if (bskyId && bskyPass) {
+    await checkBlueskyAuth(bskyId, bskyPass);
+  } else if (bskyId || bskyPass) {
+    warn("BLUESKY_IDENTIFIER と BLUESKY_APP_PASSWORD の両方が必要です（スキップ）");
+  }
+
+  if (discordUrl) {
+    await checkDiscordWebhook(discordUrl);
+  }
+
+  // Bot 投稿テキスト生成は常に実行（外部通信なし）
+  checkBotPostText();
 
   console.log(`\n${"─".repeat(50)}`);
   if (failures === 0) {

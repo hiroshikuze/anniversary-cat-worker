@@ -3,6 +3,10 @@ main = "worker/index.js"
 compatibility_date = "2024-01-01"
 preview_urls = false
 
+[triggers]
+# 月〜金 10:00 UTC（= 19:00 JST）に Bluesky 営業 Bot を実行
+crons = ["0 10 * * 1-5"]
+
 [vars]
 # GitHub Pages の URL を設定（デプロイ後に実際の URL に変更してください）
 ALLOWED_ORIGIN = "https://hiroshikuze.github.io"
@@ -12,6 +16,11 @@ ALLOWED_ORIGIN = "https://hiroshikuze.github.io"
 #
 # BYPASS_TOKEN（レート制限をスキップするシークレット）は以下で登録:
 #   wrangler secret put BYPASS_TOKEN
+#
+# Bluesky Bot 用シークレット（以下で登録）:
+#   wrangler secret put BLUESKY_IDENTIFIER    （例: nyanmusu.bsky.social）
+#   wrangler secret put BLUESKY_APP_PASSWORD  （Bluesky の App Password）
+#   wrangler secret put DISCORD_WEBHOOK_URL   （エラー通知用 Discord Webhook URL）
 
 # レート制限用 KV namespace
 # 作成コマンド: wrangler kv namespace create RATE_KV

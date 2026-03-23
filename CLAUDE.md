@@ -48,46 +48,79 @@ Claude Codeがこのリポジトリを扱う際の引き継ぎ情報。
 | リアルタイム通知 | Discord Webhook（`DISCORD_WEBHOOK_URL`シークレット） |
 | 成功ログ | `console.log()` → 同上 |
 
-### 必要なシークレット（未設定）
+### 必要なシークレット
 
 ```bash
 wrangler secret put BLUESKY_IDENTIFIER      # nyanmusu.bsky.social
-wrangler secret put BLUESKY_APP_PASSWORD    # BlueskyのApp Password（DM許可不要）
-wrangler secret put DISCORD_WEBHOOK_URL     # Discord通知用Webhook URL
+wrangler secret put BLUESKY_APP_PASSWORD    # BlueskyのApp Password（手順は下記）
+wrangler secret put DISCORD_WEBHOOK_URL     # Discord通知用Webhook URL（手順は下記）
 ```
 
-### Bluesky App Password の取得方法
+GitHub Actionsにも同名のシークレットを登録する。
+（リポジトリ → Settings → Secrets and variables → Actions → New repository secret）
 
-Bluesky → 設定 → プライバシーとセキュリティ → App Passwords → Add App Password
+### Bluesky App Password の取得手順
 
-### Discord Webhook の取得方法
+1. `@nyanmusu.bsky.social`でBlueskyにログイン
+2. 設定 → プライバシーとセキュリティ → App Passwords → Add App Password
+3. 名前は任意（例: `nyanversary-bot`）、DM権限は不要
+4. 表示されたパスワードをコピー（**一度しか表示されない**）
+5. `wrangler secret put BLUESKY_APP_PASSWORD`で登録
 
-1. Discordでプライベートサーバーを新規作成（自分専用のエラー通知用）
-2. チャンネル設定 → 連携サービス → Webhookを作成してURLをコピー
-3. `wrangler secret put DISCORD_WEBHOOK_URL`でWorkerにセット
+### Discord Webhook の取得手順
 
-### 実装予定ファイル
+1. Discordアカウントを作成（discord.com、メールアドレスのみでOK）
+2. 「+」→「自分のため」でプライベートサーバーを作成（例: `にゃんバーサリー通知`）
+3. チャンネル（例: `#エラー通知`）の歯車アイコン → 連携サービス → ウェブフック → 新しいウェブフック
+4. URLをコピー
+5. `wrangler secret put DISCORD_WEBHOOK_URL`で登録
+
+### 実装済みファイル
 
 ```text
 worker/
-└── bluesky-bot.js    ← Cron Trigger で動く新規Worker（未作成）
-wrangler.toml         ← Cron Trigger の設定追加が必要
+└── bluesky-bot.js    ← Cron Trigger で動くBotロジック（index.jsからimport）
+wrangler.toml         ← [triggers] crons = ["0 10 * * 1-5"] を追加済み
 ```
 
 ### 実装フロー
 
 ```text
-Cron Trigger（月〜金 10:00 UTC）
-  └→ /research 呼び出し（記念日テキスト生成）
+Cron Trigger（月〜金 10:00 UTC = 19:00 JST）
+  └→ /research 呼び出し（既存エンドポイント・BYPASS_TOKENでレート制限スキップ）
       ├→ 失敗 → console.error + Discord通知 → 終了
       └→ 成功
-          └→ /generate 呼び出し（画像生成）
+          └→ /generate 呼び出し（既存エンドポイント・同上）
               ├→ 失敗 → console.error + Discord通知 → 終了
               └→ 成功
-                  └→ Bluesky投稿（画像＋テキスト＋ハッシュタグ）
+                  └→ Bluesky投稿（画像blob upload → createRecord）
                       ├→ 失敗 → console.error + Discord通知 → 終了
                       └→ 成功 → console.log
+
 ```
+
+### 投稿テキスト形式
+
+```text
+今日は「{theme}」の日！🐱
+{description}
+
+あなたも今日のにゃんバーサリーを作ってみませんか？
+https://hiroshikuze.github.io/anniversary-cat-worker/
+
+#AIart #cat #kitten #ほのぼの #猫
+```
+
+- 300 grapheme以内に収まる設計（実測 ~200 grapheme）
+- ハッシュタグはAT Protocolのfacets形式（UTF-8バイト位置）で付与
+
+### Bluesky AT Protocol エンドポイント
+
+| 用途 | エンドポイント |
+| --- | --- |
+| 認証 | `POST https://bsky.social/xrpc/com.atproto.server.createSession` |
+| 画像アップロード | `POST https://bsky.social/xrpc/com.atproto.repo.uploadBlob` |
+| 投稿作成 | `POST https://bsky.social/xrpc/com.atproto.repo.createRecord` |
 
 ---
 
@@ -244,12 +277,13 @@ const KNOWN_CANDIDATES = [
 anniversary-cat-worker/
 ├── CLAUDE.md               ← このファイル（引き継ぎ情報）
 ├── worker/
-│   └── index.js            ← Cloudflare Worker 本体
+│   ├── index.js            ← Cloudflare Worker 本体（fetch + scheduled ハンドラ）
+│   └── bluesky-bot.js      ← Bluesky Bot ロジック（index.jsからimport）
 ├── frontend/
 │   └── index.html          ← フロントエンド（GitHub Pages）
 ├── scripts/
 │   └── health-check.js     ← 診断スクリプト（GitHub Actions で自動実行）
-└── wrangler.toml           ← Cloudflare デプロイ設定
+└── wrangler.toml           ← Cloudflare デプロイ設定（Cron Trigger 含む）
 ```
 
 ---
@@ -263,12 +297,17 @@ wrangler kv namespace create RATE_KV
 # シークレットを設定（初回のみ）
 wrangler secret put GEMINI_API_KEY
 wrangler secret put BYPASS_TOKEN
+wrangler secret put BLUESKY_IDENTIFIER      # nyanmusu.bsky.social
+wrangler secret put BLUESKY_APP_PASSWORD    # BlueskyのApp Password
+wrangler secret put DISCORD_WEBHOOK_URL     # Discord Webhook URL
 
 # Worker をデプロイ
 wrangler deploy
 ```
 
 KV namespaceのIDは`wrangler.toml`の`[[kv_namespaces]]`に記載済み（`id = "531244f9f904493d93c3a418b9765df8"`）。
+
+Cron Trigger（`0 10 * * 1-5`）は`wrangler.toml`に設定済み。デプロイ後はCloudflareダッシュボードの「Triggers」タブで確認できる。
 
 フロントエンドはGitHub Pagesで自動デプロイ（`frontend/`ディレクトリ）。
 
