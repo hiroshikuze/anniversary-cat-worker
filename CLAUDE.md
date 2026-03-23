@@ -23,6 +23,74 @@ Claude Codeがこのリポジトリを扱う際の引き継ぎ情報。
 
 ---
 
+## Bluesky営業Botプロジェクト（未実装・実装予定）
+
+### 概要
+
+毎平日19時台に記念日画像を自動生成してBlueskyに投稿する営業Bot。
+
+### 決定済み方針
+
+- **Botアカウント**: `@nyanmusu.bsky.social`（既存の休眠アカウントを再活用）
+- **投稿内容**: `/research` → `/generate` で当日の記念日コンテンツを生成し、締めの宣伝文＋ハッシュタグを付けて投稿
+- **投稿スケジュール**: 月〜金 19時台（UTC 10:00）、祝日判定なし
+  - Cron式: `0 10 * * 1-5`
+- **ハッシュタグ**: `#AIart #cat #kitten #ほのぼの #猫`
+- **言語**: 日本語のみ（まずは様子を見る）
+- **リプライ対応**: 手動（hiroshikuze本人が対応）
+- **エラー時**: リトライなし（`/generate`内部にPollinationsフォールバックあり）
+
+### 通知・ログ設計
+
+| 役割 | 手段 |
+| --- | --- |
+| エラーログ永続化 | `console.error()` → Cloudflare Workers Logs |
+| リアルタイム通知 | Discord Webhook（`DISCORD_WEBHOOK_URL`シークレット） |
+| 成功ログ | `console.log()` → 同上 |
+
+### 必要なシークレット（未設定）
+
+```bash
+wrangler secret put BLUESKY_IDENTIFIER      # nyanmusu.bsky.social
+wrangler secret put BLUESKY_APP_PASSWORD    # BlueskyのApp Password（DM許可不要）
+wrangler secret put DISCORD_WEBHOOK_URL     # Discord通知用Webhook URL
+```
+
+### Bluesky App Password の取得方法
+
+Bluesky → 設定 → プライバシーとセキュリティ → App Passwords → Add App Password
+
+### Discord Webhook の取得方法
+
+1. Discordでプライベートサーバーを新規作成（自分専用のエラー通知用）
+2. チャンネル設定 → 連携サービス → Webhookを作成してURLをコピー
+3. `wrangler secret put DISCORD_WEBHOOK_URL`でWorkerにセット
+
+### 実装予定ファイル
+
+```text
+worker/
+└── bluesky-bot.js    ← Cron Trigger で動く新規Worker（未作成）
+wrangler.toml         ← Cron Trigger の設定追加が必要
+```
+
+### 実装フロー
+
+```text
+Cron Trigger（月〜金 10:00 UTC）
+  └→ /research 呼び出し（記念日テキスト生成）
+      ├→ 失敗 → console.error + Discord通知 → 終了
+      └→ 成功
+          └→ /generate 呼び出し（画像生成）
+              ├→ 失敗 → console.error + Discord通知 → 終了
+              └→ 成功
+                  └→ Bluesky投稿（画像＋テキスト＋ハッシュタグ）
+                      ├→ 失敗 → console.error + Discord通知 → 終了
+                      └→ 成功 → console.log
+```
+
+---
+
 ## テスト・診断
 
 ### 自動テスト（GitHub Actions）
