@@ -505,10 +505,27 @@
       const file = new File([blob], fileName, { type: "image/png" });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
+          const SITE_URL = "https://hiroshikuze.github.io/anniversary-cat-worker/";
+          const X_URL_CHARS = 23; // X はURLの実長に関わらず23文字としてカウント
+          const X_LIMIT = 280;
+          const desc = researchData?.description ?? "";
+          const hashtag = currentLang === "ja" ? "\n#にゃんバーサリー" : "\n#Nyaniversary";
+          const urlSuffix = "\n" + SITE_URL;
+          // X の文字数計算（URLをX換算長に置換して計測）
+          const xLen = (s) => s.replace(SITE_URL, "x".repeat(X_URL_CHARS)).length;
+          // description → URL → hashtag の優先順で収まる組み合わせを選択
+          let shareText;
+          if (xLen(desc + hashtag + urlSuffix) <= X_LIMIT) {
+            shareText = desc + hashtag + urlSuffix;
+          } else if (xLen(desc + urlSuffix) <= X_LIMIT) {
+            shareText = desc + urlSuffix;
+          } else {
+            shareText = desc;
+          }
           await navigator.share({
             files: [file],
             title: currentLang === "ja" ? "にゃんバーサリー" : "Nyaniversary",
-            text: researchData?.description ?? "",
+            text: shareText,
           });
           return;
         } catch (e) {
