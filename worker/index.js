@@ -1,6 +1,6 @@
 /**
- * Cloudflare Worker - Anniversary Cat API Proxy
- * @updated 2026-03-07
+ * Cloudflare Worker - Anniversary Cat API Proxy + Bluesky Bot
+ * @updated 2026-03-23
  *
  * 環境変数（secrets）:
  *   GEMINI_API_KEY  ... Cloudflare ダッシュボード > Settings > Variables and Secrets で設定
@@ -8,6 +8,8 @@
  * 環境変数（vars / wrangler.toml）:
  *   ALLOWED_ORIGIN  ... GitHub Pages の URL（例: https://hiroshikuze.github.io）
  */
+
+import { runBot } from "./bluesky-bot.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -433,6 +435,11 @@ async function handleProxyImage(request, corsH) {
 // メインハンドラ
 // ---------------------------------------------------------------------------
 export default {
+  // ── Cron Trigger: Bluesky 営業 Bot（月〜金 10:00 UTC = 19:00 JST）──────────
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runBot(env));
+  },
+
   async fetch(request, env) {
     const origin = request.headers.get("Origin") ?? "";
     const corsH = makeCorsHeaders(origin, env.ALLOWED_ORIGIN ?? "");
