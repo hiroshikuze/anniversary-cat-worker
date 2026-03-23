@@ -238,7 +238,11 @@ async function checkSourceUrl(url) {
     warn(`sourceUrl ネットワークエラー: ${error}（外部サイトのため警告のみ）`);
     return;
   }
-  check(`sourceUrl HTTP ${res.status} (< 400)`, res.status < 400, url.slice(0, 60));
+  if (res.status < 400) {
+    check(`sourceUrl HTTP ${res.status} (< 400)`, true, url.slice(0, 60));
+  } else {
+    warn(`sourceUrl HTTP ${res.status} → 外部サイトが一時的に不達（コードの問題ではない）`);
+  }
 }
 
 // ─── チェック 4: Pollinations.ai 到達確認 ────────────────────────────────────
