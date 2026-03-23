@@ -231,7 +231,7 @@ async function checkSourceUrl(url) {
 async function checkPollinations() {
   console.log("\n[4] Pollinations.ai 到達確認");
   const url =
-    "https://image.pollinations.ai/prompt/cat?model=turbo&width=64&height=64&seed=1&nologo=true";
+    "https://image.pollinations.ai/prompt/cat?model=flux&width=64&height=64&seed=1&nologo=true";
 
   const { ok: reached, res, error } = await safeFetch(url);
   if (!check("Pollinations API へ到達できる", reached, error)) return;
