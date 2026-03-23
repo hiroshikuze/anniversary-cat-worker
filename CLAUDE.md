@@ -91,6 +91,72 @@ Cron Trigger（月〜金 10:00 UTC）
 
 ---
 
+## APIエンドポイント一覧
+
+| メソッド | パス | 説明 |
+| --- | --- | --- |
+| POST | `/research` | Gemini + Google Searchで記念日テキスト取得 |
+| POST | `/generate` | Gemini画像生成（Pollinationsフォールバックあり） |
+| GET | `/proxy-image?url=...` | Pollinations.ai画像のCORSプロキシ |
+
+### /proxy-imageのセキュリティ制約
+
+`https://image.pollinations.ai/` 以外のURLはすべて403で拒否する（オープンプロキシ化防止）。
+
+---
+
+## レート制限
+
+### 設定値（`worker/index.js` の `RATE_LIMITS`）
+
+| エンドポイント | IP別上限 | グローバル上限 | TTL |
+| --- | --- | --- | --- |
+| `/generate` | 3回/日 | 50回/日 | 25時間 |
+| `/research` | 10回/日 | なし | 25時間 |
+
+Cloudflare KV（`RATE_KV`）で管理。日付はUTC基準でリセット。
+
+### BYPASS_TOKEN（開発用）
+
+ブラウザのコンソールで以下を実行するとレート制限をスキップできる。
+
+```js
+localStorage.setItem('bypassToken', '<シークレット値>')
+```
+
+フロントエンドはこの値を`X-Bypass-Token`ヘッダーに付与し、Workerが照合する。
+
+---
+
+## フロントエンド機能概要（`frontend/index.html`）
+
+| 機能 | 詳細 |
+| --- | --- |
+| 多言語対応 | JP/EN切り替えボタン（`translations`オブジェクトで管理） |
+| 画像共有 | Web Share API（ファイル共有）対応端末は「共有する」ボタン、非対応はダウンロード |
+| PWA | Service Worker登録済み（`/anniversary-cat-worker/sw.js`） |
+| クライアント側レート制限キャッシュ | `localStorage`に制限済みフラグを保存し二重送信を防止 |
+| リトライ | 500系エラーは指数バックオフで最大3回リトライ（429はリトライしない） |
+| OGP/Twitter Card | `og:image`と`twitter:image`設定済み |
+
+---
+
+## Pollinations.ai フォールバック詳細
+
+画像生成時、GeminiとPollinationsを**並列実行**（`Promise.any`）し、先に成功した方を返す。
+
+```text
+Promise.any([tryGemini(), tryPollinations()])
+```
+
+### Pollinationsの注意事項
+
+- 使用モデル: `flux` / `turbo` / `flux-realism` / `flux-anime`（4モデル同時並列、最初の成功を採用）
+- **プロンプトはASCIIのみ**（日本語等の非ASCII文字はサーバー500エラーの原因になるためフィルタリング済み）
+- タイムアウト: 20秒/モデル
+
+---
+
 ## テスト・診断
 
 ### 自動テスト（GitHub Actions）
@@ -191,13 +257,18 @@ anniversary-cat-worker/
 ## デプロイ
 
 ```bash
-# Worker をデプロイ
-wrangler deploy
+# KV namespace を作成（初回のみ・作成後にwrangler.tomlのidを更新）
+wrangler kv namespace create RATE_KV
 
 # シークレットを設定（初回のみ）
 wrangler secret put GEMINI_API_KEY
 wrangler secret put BYPASS_TOKEN
+
+# Worker をデプロイ
+wrangler deploy
 ```
+
+KV namespaceのIDは`wrangler.toml`の`[[kv_namespaces]]`に記載済み（`id = "531244f9f904493d93c3a418b9765df8"`）。
 
 フロントエンドはGitHub Pagesで自動デプロイ（`frontend/`ディレクトリ）。
 
