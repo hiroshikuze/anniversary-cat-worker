@@ -2,9 +2,9 @@
   "name": "anniversary-cat-worker",
   "version": "1.0.0",
   "description": "AI-powered daily cat illustration generator inspired by today's anniversary.",
-  "main": "index.js",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node scripts/test-bot.mjs"
   },
   "repository": {
     "type": "git",

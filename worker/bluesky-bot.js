@@ -12,15 +12,17 @@
  *   BYPASS_TOKEN          ... /research・/generate のレート制限スキップトークン
  */
 
-import { PhotonImage, initSync } from "@silvia-odwyer/photon";
-import photonWasm from "@silvia-odwyer/photon/photon_rs_bg.wasm";
-
+// Photonは動的importで遅延ロード（Node.jsテスト環境での.wasmロード失敗を回避）
 let _photonReady = false;
-function ensurePhoton() {
-  if (!_photonReady) {
-    initSync({ module: photonWasm });
-    _photonReady = true;
-  }
+let _PhotonImage  = null;
+
+async function ensurePhoton() {
+  if (_photonReady) return;
+  const { PhotonImage, initSync } = await import("@silvia-odwyer/photon");
+  const { default: photonWasm }   = await import("@silvia-odwyer/photon/photon_rs_bg.wasm");
+  initSync({ module: photonWasm });
+  _PhotonImage  = PhotonImage;
+  _photonReady  = true;
 }
 
 const BLUESKY_API            = "https://bsky.social/xrpc";
@@ -151,10 +153,10 @@ async function shrinkImageIfNeeded(imageData, mimeType, theme, description) {
   console.log(`[bot] 画像サイズ超過 (${bytes.length} bytes > ${BLUESKY_MAX_IMAGE_BYTES})、Photon JPEG圧縮を試みます`);
 
   try {
-    ensurePhoton();
+    await ensurePhoton();
 
     // quality 70 で圧縮
-    const img1      = PhotonImage.new_from_byteslice(bytes);
+    const img1      = _PhotonImage.new_from_byteslice(bytes);
     const jpeg70    = img1.get_bytes_jpeg(70);
     img1.free();
     if (jpeg70.length <= BLUESKY_MAX_IMAGE_BYTES) {
@@ -163,7 +165,7 @@ async function shrinkImageIfNeeded(imageData, mimeType, theme, description) {
     }
 
     // quality 40 で再試行
-    const img2      = PhotonImage.new_from_byteslice(bytes);
+    const img2      = _PhotonImage.new_from_byteslice(bytes);
     const jpeg40    = img2.get_bytes_jpeg(40);
     img2.free();
     if (jpeg40.length <= BLUESKY_MAX_IMAGE_BYTES) {
