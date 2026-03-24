@@ -42,9 +42,9 @@ function check(label, passed, detail = "") {
   return passed;
 }
 
-async function safeFetch(url, options = {}) {
+async function safeFetch(url, options = {}, timeoutMs = 20_000) {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(20_000), ...options });
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), ...options });
     return { ok: true, res, status: res.status };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -163,7 +163,8 @@ async function checkResearch(apiKey, allModels) {
         tools: [{ google_search: {} }],
         generationConfig: { temperature: 0.2 },
       }),
-    }
+    },
+    60_000  // Google Search grounding は応答に時間がかかるため60秒
   );
   if (!check("Research API 呼び出し成功", callOk, error)) return;
 
