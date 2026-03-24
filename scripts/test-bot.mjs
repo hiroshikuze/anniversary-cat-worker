@@ -9,7 +9,10 @@
  * 終了コード 0 = 全件成功、1 = 1件以上失敗
  */
 
-import { buildPostText, buildHashtagFacets, notifyDiscord, runBot } from "../worker/bluesky-bot.js";
+import {
+  buildPostText, buildHashtagFacets, notifyDiscord, runBot,
+  shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
+} from "../worker/bluesky-bot.js";
 
 let passed = 0;
 let failed = 0;
@@ -163,6 +166,117 @@ console.log("\n[notifyDiscord]");
     threw = true;
   }
   assert("DISCORD_WEBHOOK_URL 空でもクラッシュしない", !threw);
+}
+
+// ---------------------------------------------------------------------------
+// shrinkImageIfNeeded
+// ---------------------------------------------------------------------------
+console.log("\n[shrinkImageIfNeeded]");
+
+/**
+ * テスト用: base64文字列をデコードしたときにbyteCountバイトになるbase64を生成。
+ * Node.js の Buffer を使用（テスト環境専用）。
+ */
+function makeBase64(byteCount) {
+  return Buffer.alloc(byteCount).toString("base64");
+}
+
+/**
+ * テスト用: fetchのモック。pollinationsへのリクエストに対して
+ * fakeBytes の ArrayBuffer を返す偽レスポンスを返す。
+ */
+function mockFetch(fakeBytes) {
+  return async (url) => {
+    if (!url.includes("pollinations.ai")) throw new Error(`想定外のfetch: ${url}`);
+    return {
+      ok:           true,
+      arrayBuffer:  async () => fakeBytes.buffer,
+      headers:      { get: (h) => h === "Content-Type" ? "image/jpeg" : null },
+    };
+  };
+}
+
+/**
+ * テスト用: PhotonImageのモック。
+ * quality=70 → jpeg70Bytes、quality=40 → jpeg40Bytes を返すインスタンスを生成する。
+ */
+function mockPhotonImage(jpeg70Bytes, jpeg40Bytes) {
+  return {
+    new_from_byteslice: () => ({
+      get_bytes_jpeg: (quality) => quality === 70 ? jpeg70Bytes : jpeg40Bytes,
+      free:           () => {},
+    }),
+  };
+}
+
+{
+  // ── サイズ内の画像はそのまま返る ──────────────────────────────────────
+  _setPhotonForTest(null); // Photonを未初期化状態に戻す
+  const imageData = makeBase64(100); // 100バイト（上限976KBよりはるかに小）
+  const result    = await shrinkImageIfNeeded(imageData, "image/png", "テーマ", "説明");
+  assert("上限内の画像: imageDataが変わらない",   result.imageData === imageData);
+  assert("上限内の画像: mimeTypeが変わらない",    result.mimeType  === "image/png");
+}
+
+{
+  // ── Photon quality=70 で圧縮成功 ─────────────────────────────────────
+  const jpeg70 = new Uint8Array(100_000); // 100KB（上限内）
+  _setPhotonForTest(mockPhotonImage(jpeg70, null));
+  const result = await shrinkImageIfNeeded(
+    makeBase64(BLUESKY_MAX_IMAGE_BYTES + 1), "image/png", "テーマ", "説明"
+  );
+  assert("quality=70成功: mimeTypeがimage/jpeg", result.mimeType === "image/jpeg");
+  assert("quality=70成功: 上限以内のサイズ",
+    Buffer.from(result.imageData, "base64").length <= BLUESKY_MAX_IMAGE_BYTES);
+}
+
+{
+  // ── quality=70が大きすぎて quality=40 で成功 ──────────────────────────
+  const jpeg70 = new Uint8Array(BLUESKY_MAX_IMAGE_BYTES + 1); // 上限超過
+  const jpeg40 = new Uint8Array(100_000);                      // 100KB（上限内）
+  _setPhotonForTest(mockPhotonImage(jpeg70, jpeg40));
+  const result = await shrinkImageIfNeeded(
+    makeBase64(BLUESKY_MAX_IMAGE_BYTES + 1), "image/png", "テーマ", "説明"
+  );
+  assert("quality=40成功: mimeTypeがimage/jpeg", result.mimeType === "image/jpeg");
+  assert("quality=40成功: 上限以内のサイズ",
+    Buffer.from(result.imageData, "base64").length <= BLUESKY_MAX_IMAGE_BYTES);
+}
+
+{
+  // ── quality=40も超過 → Pollinationsフォールバック ─────────────────────
+  const tooBig  = new Uint8Array(BLUESKY_MAX_IMAGE_BYTES + 1); // 両qualityとも超過
+  const pollImg = new Uint8Array([0xff, 0xd8, 0xff]); // 3バイトの偽jpeg
+  _setPhotonForTest(mockPhotonImage(tooBig, tooBig));
+  const origFetch    = globalThis.fetch;
+  globalThis.fetch   = mockFetch(pollImg);
+  const result       = await shrinkImageIfNeeded(
+    makeBase64(BLUESKY_MAX_IMAGE_BYTES + 1), "image/png", "テーマ", "説明"
+  );
+  globalThis.fetch   = origFetch;
+  _setPhotonForTest(null);
+  assert("quality=40超過: Pollinationsフォールバックが呼ばれる", result.mimeType === "image/jpeg");
+  assert("quality=40超過: Pollinationsの画像データが返る",
+    Buffer.from(result.imageData, "base64").length === pollImg.length);
+}
+
+{
+  // ── Photon例外 → Pollinationsフォールバック ───────────────────────────
+  const throwingPhoton = {
+    new_from_byteslice: () => { throw new Error("WASMクラッシュ"); },
+  };
+  const pollImg = new Uint8Array([0xff, 0xd8, 0xff]);
+  _setPhotonForTest(throwingPhoton);
+  const origFetch    = globalThis.fetch;
+  globalThis.fetch   = mockFetch(pollImg);
+  const result       = await shrinkImageIfNeeded(
+    makeBase64(BLUESKY_MAX_IMAGE_BYTES + 1), "image/png", "テーマ", "説明"
+  );
+  globalThis.fetch   = origFetch;
+  _setPhotonForTest(null);
+  assert("Photon例外: Pollinationsフォールバックが呼ばれる", result.mimeType === "image/jpeg");
+  assert("Photon例外: Pollinationsの画像データが返る",
+    Buffer.from(result.imageData, "base64").length === pollImg.length);
 }
 
 // ---------------------------------------------------------------------------

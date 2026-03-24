@@ -27,7 +27,7 @@ async function ensurePhoton() {
 
 const BLUESKY_API            = "https://bsky.social/xrpc";
 const SITE_URL               = "https://hiroshikuze.github.io/anniversary-cat-worker/";
-const BLUESKY_MAX_IMAGE_BYTES = 976_000; // Bluesky上限 1,000,000 bytes に余裕を持たせた値
+export const BLUESKY_MAX_IMAGE_BYTES = 976_000; // Bluesky上限 1,000,000 bytes に余裕を持たせた値
 
 const HASHTAG_LIST = ["#AIart", "#cat", "#kitten", "#ほのぼの", "#猫"];
 const HASHTAGS     = HASHTAG_LIST.join(" ");
@@ -179,6 +179,18 @@ async function shrinkImageIfNeeded(imageData, mimeType, theme, description) {
   }
 
   return shrinkByPollinations(theme, description);
+}
+
+export { shrinkImageIfNeeded };
+
+/**
+ * テスト用: PhotonImageのモックを注入する。
+ * Node.jsテスト環境ではWASMが使えないため、この関数でモックに差し替える。
+ * @param {object|null} mockPhotoImage - モックするPhotoImageオブジェクト。nullでリセット。
+ */
+export function _setPhotonForTest(mockPhotoImage) {
+  _PhotonImage = mockPhotoImage;
+  _photonReady = mockPhotoImage !== null;
 }
 
 /** 画像データを Bluesky にアップロードして blob 参照を返す */
