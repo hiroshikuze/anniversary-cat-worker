@@ -1,7 +1,37 @@
-# CLAUDE.md — にゃんバーサリー (anniversary-cat-worker)
+# CLAUDE.md
 
-Claude Codeがこのリポジトリを扱う際の引き継ぎ情報。
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+---
+
+<!-- にゃんバーサリー (anniversary-cat-worker) — Claude Code引き継ぎ情報 -->
+
 **新しいセッションを開始するたびにここを確認すること。**
+
+---
+
+## コマンド一覧
+
+```bash
+# ユニットテスト（外部API不要・Bluesky bot のロジック検証）
+npm test
+# または
+node scripts/test-bot.mjs
+
+# ローカル開発サーバー（Worker）
+wrangler dev
+
+# 手動デプロイ（通常はCIが自動実行）
+wrangler deploy
+```
+
+### CI/CDによる自動デプロイ
+
+| トリガー | 実行内容 |
+| --- | --- |
+| `main`へのpush（`worker/**` or `wrangler.toml`変更時） | Cloudflare Workersへ自動デプロイ |
+| `main`へのpush（`frontend/**`変更時） | GitHub Pagesへ自動デプロイ |
+| `main` or `claude/**`へのpush | ヘルスチェック + ユニットテスト自動実行 |
 
 ---
 
