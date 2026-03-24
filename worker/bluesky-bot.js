@@ -318,9 +318,9 @@ export async function runBot(env, handleResearch, handleGenerate) {
 
     const text    = buildPostText(research.theme, research.description ?? "");
     const altText = `にゃんバーサリー - 「${research.theme}」をテーマにAIが生成した水彩画風の猫イラスト`;
-    await createPost(accessJwt, did, text, blobRef, mimeType, altText);
+    const postResult = await createPost(accessJwt, did, text, blobRef, mimeType, altText);
 
-    console.log(`${prefix} Bluesky 投稿 完了`);
+    console.log(`${prefix} Bluesky 投稿 完了 uri=${postResult.uri ?? "(不明)"} identifier=${env.BLUESKY_IDENTIFIER}`);
 
   } catch (err) {
     const msg = `${prefix} エラー: ${err.message}`;
