@@ -34,7 +34,8 @@ Claude Codeがこのリポジトリを扱う際の引き継ぎ情報。
 - **Botアカウント**: `@nyanmusu.bsky.social`（既存の休眠アカウントを再活用）
 - **投稿内容**: `/research` → `/generate` で当日の記念日コンテンツを生成し、締めの宣伝文＋ハッシュタグを付けて投稿
 - **投稿スケジュール**: 月〜金 19時台（UTC 10:00）、祝日判定なし
-  - Cron式: `0 10 * * 1-5`
+  - Cron式: `0 10 * * 2-6`
+  - ※Cloudflare Workersの曜日指定は `1=日曜日` のため、月〜金は `2-6`（標準cronの `1-5` とは異なる）
 - **ハッシュタグ**: `#AIart #cat #kitten #ほのぼの #猫`
 - **言語**: 日本語のみ（まずは様子を見る）
 - **リプライ対応**: 手動（hiroshikuze本人が対応）
@@ -80,7 +81,7 @@ GitHub Actionsにも同名のシークレットを登録する。
 ```text
 worker/
 └── bluesky-bot.js    ← Cron Trigger で動くBotロジック（index.jsからimport）
-wrangler.toml         ← [triggers] crons = ["0 10 * * 1-5"] を追加済み
+wrangler.toml         ← [triggers] crons = ["0 10 * * 2-6"] を追加済み
 ```
 
 ### 実装フロー
@@ -308,7 +309,20 @@ const KNOWN_CANDIDATES = [
 - **設計方針**: BotとWorkerは同一プロセス内なのでHTTP経由は不要。直接呼び出しならURL設定ミス・レート制限・BYPASS_TOKEN管理の問題が全て消える
 - **場所**: `worker/bluesky-bot.js` `runBot()` / `worker/index.js` `scheduled()`
 
-### 4. 記念日の根拠リンクが表示されない (2026-03)
+### 4. Cron曜日指定がずれていた (2026-03)
+
+- **原因**: Cloudflare Workersの曜日指定は `1=日曜日` で標準cronと異なる。`1-5` では日〜木になっていた
+- **修正**: `0 10 * * 1-5` → `0 10 * * 2-6`（月〜金）
+- **場所**: `wrangler.toml` L8、Cloudflareダッシュボードのトリガー設定
+
+### 5. Bluesky画像アップロードがサイズ超過で失敗 (2026-03)
+
+- **原因**: Gemini生成画像（PNG）がBluesky上限1,000,000 bytesを超えることがある（実測 ~1.3MB）
+- **修正**: `shrinkImageIfNeeded()`を追加。上限超過時にPollinationsで512×512の画像を再取得する
+- **設計**: Cloudflare Workersには画像圧縮APIがないため、再取得で対処
+- **場所**: `worker/bluesky-bot.js` `shrinkImageIfNeeded()` / `runBot()`
+
+### 6. 記念日の根拠リンクが表示されない (2026-03)
 
 - **原因**: リファクタリング時に `sourceUrl` の表示コードがフロントから消えていた
 - **修正**: `<p>` を `<a>` タグに変更し、`researchData.sourceUrl` を `href` に設定
@@ -353,7 +367,7 @@ wrangler deploy
 
 KV namespaceのIDは`wrangler.toml`の`[[kv_namespaces]]`に記載済み（`id = "531244f9f904493d93c3a418b9765df8"`）。
 
-Cron Trigger（`0 10 * * 1-5`）は`wrangler.toml`に設定済み。デプロイ後はCloudflareダッシュボードの「Triggers」タブで確認できる。
+Cron Trigger（`0 10 * * 2-6`）は`wrangler.toml`に設定済み。デプロイ後はCloudflareダッシュボードの「Triggers」タブで確認できる。
 
 フロントエンドはGitHub Pagesで自動デプロイ（`frontend/`ディレクトリ）。
 

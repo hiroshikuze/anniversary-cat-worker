@@ -12,8 +12,9 @@
  *   BYPASS_TOKEN          ... /research・/generate のレート制限スキップトークン
  */
 
-const BLUESKY_API = "https://bsky.social/xrpc";
-const SITE_URL    = "https://hiroshikuze.github.io/anniversary-cat-worker/";
+const BLUESKY_API            = "https://bsky.social/xrpc";
+const SITE_URL               = "https://hiroshikuze.github.io/anniversary-cat-worker/";
+const BLUESKY_MAX_IMAGE_BYTES = 976_000; // Bluesky上限 1,000,000 bytes に余裕を持たせた値
 
 const HASHTAG_LIST = ["#AIart", "#cat", "#kitten", "#ほのぼの", "#猫"];
 const HASHTAGS     = HASHTAG_LIST.join(" ");
@@ -78,6 +79,16 @@ async function createBlueskySession(identifier, password) {
   return { accessJwt: data.accessJwt, did: data.did };
 }
 
+/** ArrayBuffer を base64 文字列に変換 */
+function arrayBufferToBase64(buffer) {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 /** base64 文字列を Uint8Array に変換（Cloudflare Workers の atob を使用） */
 function base64ToBytes(base64) {
   const binary = atob(base64);
@@ -86,6 +97,33 @@ function base64ToBytes(base64) {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+/**
+ * Bluesky上限（~976KB）を超える画像の場合、Pollinationsから512×512の小サイズ画像を取得する。
+ * Cloudflare Workersには画像圧縮APIがないため、再取得で対処する。
+ */
+async function shrinkImageIfNeeded(imageData, mimeType, theme, description) {
+  const bytes = base64ToBytes(imageData);
+  if (bytes.length <= BLUESKY_MAX_IMAGE_BYTES) {
+    return { imageData, mimeType };
+  }
+  console.log(`[bot] 画像サイズ超過 (${bytes.length} bytes > ${BLUESKY_MAX_IMAGE_BYTES})、Pollinations 512x512 で再取得`);
+
+  const toAscii = (s) => (s ?? "").replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
+  const subject = toAscii(theme) || toAscii(description) || "anniversary";
+  const prompt  = `kawaii watercolor cat, ${subject}, pastel colors, white background`;
+  const seed    = Math.floor(Math.random() * 1_000_000);
+  const url     = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
+                  `?model=flux&width=512&height=512&seed=${seed}&nologo=true`;
+
+  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!res.ok) throw new Error(`画像縮小取得失敗: Pollinations status=${res.status}`);
+
+  const buffer   = await res.arrayBuffer();
+  const newMime  = res.headers.get("Content-Type") || "image/jpeg";
+  console.log(`[bot] 縮小画像取得完了 (${buffer.byteLength} bytes)`);
+  return { imageData: arrayBufferToBase64(buffer), mimeType: newMime };
 }
 
 /** 画像データを Bluesky にアップロードして blob 参照を返す */
@@ -203,8 +241,12 @@ export async function runBot(env, handleResearch, handleGenerate) {
       env.BLUESKY_APP_PASSWORD
     );
 
-    const imageBytes = base64ToBytes(generated.imageData);
-    const mimeType   = generated.mimeType || "image/png";
+    const shrunk     = await shrinkImageIfNeeded(
+      generated.imageData, generated.mimeType || "image/png",
+      research.theme, research.description ?? ""
+    );
+    const imageBytes = base64ToBytes(shrunk.imageData);
+    const mimeType   = shrunk.mimeType;
     const blobRef    = await uploadBlob(accessJwt, imageBytes, mimeType);
 
     const text    = buildPostText(research.theme, research.description ?? "");
