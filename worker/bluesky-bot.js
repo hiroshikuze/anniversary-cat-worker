@@ -13,7 +13,6 @@
  */
 
 const BLUESKY_API = "https://bsky.social/xrpc";
-const WORKER_URL  = "https://anniversary-cat-worker.hiroshikuze.workers.dev";
 const SITE_URL    = "https://hiroshikuze.github.io/anniversary-cat-worker/";
 
 const HASHTAG_LIST = ["#AIart", "#cat", "#kitten", "#ほのぼの", "#猫"];
@@ -164,45 +163,37 @@ export async function notifyDiscord(webhookUrl, message) {
  * Cron Trigger から呼び出されるエントリポイント。
  * 失敗時はログ記録と Discord 通知を行い、リトライはしない。
  * （/generate 内部に Pollinations フォールバックがあるため外側リトライは二重投稿の恐れあり）
+ *
+ * @param {object} env - Cloudflare Workers の環境変数
+ * @param {Function} handleResearch - index.js の handleResearch 関数
+ * @param {Function} handleGenerate - index.js の handleGenerate 関数
  */
-export async function runBot(env) {
+export async function runBot(env, handleResearch, handleGenerate) {
   // JST で日付文字列を生成（UTC+9）
   const jst     = new Date(Date.now() + 9 * 60 * 60 * 1000);
   const dateStr = `${jst.getFullYear()}年${jst.getMonth() + 1}月${jst.getDate()}日`;
   const prefix  = `[bot] ${dateStr}`;
 
-  const headers = {
-    "Content-Type":    "application/json",
-    "X-Bypass-Token":  env.BYPASS_TOKEN ?? "",
-  };
+  const apiKey = env.GEMINI_API_KEY;
+  if (!apiKey) {
+    const msg = `${prefix} エラー: GEMINI_API_KEY が設定されていません`;
+    console.error(msg);
+    await notifyDiscord(env.DISCORD_WEBHOOK_URL, msg);
+    return;
+  }
 
   try {
     // ── 1. 記念日リサーチ ──────────────────────────────────────────────────
     console.log(`${prefix} research 開始`);
-    const researchRes = await fetch(`${WORKER_URL}/research`, {
-      method: "POST",
-      headers,
-      body:   JSON.stringify({ date: dateStr }),
-    });
-    if (!researchRes.ok) {
-      const d = await researchRes.json().catch(() => ({}));
-      throw new Error(`research 失敗 (${researchRes.status}): ${d.error ?? "(詳細不明)"}`);
-    }
-    const research = await researchRes.json();
+    const research = await handleResearch({ date: dateStr }, apiKey);
     console.log(`${prefix} research 完了 theme="${research.theme}"`);
 
     // ── 2. 画像生成 ────────────────────────────────────────────────────────
     console.log(`${prefix} generate 開始`);
-    const generateRes = await fetch(`${WORKER_URL}/generate`, {
-      method: "POST",
-      headers,
-      body:   JSON.stringify({ theme: research.theme, description: research.description }),
-    });
-    if (!generateRes.ok) {
-      const d = await generateRes.json().catch(() => ({}));
-      throw new Error(`generate 失敗 (${generateRes.status}): ${d.error ?? "(詳細不明)"}`);
-    }
-    const generated = await generateRes.json();
+    const generated = await handleGenerate(
+      { theme: research.theme, description: research.description },
+      apiKey
+    );
     console.log(`${prefix} generate 完了 source=${generated.source}`);
 
     // ── 3. Bluesky に投稿 ──────────────────────────────────────────────────
