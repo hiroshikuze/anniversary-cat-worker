@@ -5,7 +5,8 @@ preview_urls = false
 
 [triggers]
 # 月〜金 10:00 UTC（= 19:00 JST）に Bluesky 営業 Bot を実行
-crons = ["0 10 * * 1-5"]
+# Cloudflare Workers の曜日指定は 1=日曜日 のため、月〜金は 2-6
+crons = ["0 10 * * 2-6"]
 
 [vars]
 # GitHub Pages の URL を設定（デプロイ後に実際の URL に変更してください）

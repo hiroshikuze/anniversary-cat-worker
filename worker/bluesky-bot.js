@@ -1,6 +1,6 @@
 /**
  * worker/bluesky-bot.js - Bluesky 営業 Bot
- * @updated 2026-03-23
+ * @updated 2026-03-24
  *
  * Cloudflare Workers の Cron Trigger（月〜金 10:00 UTC = 19:00 JST）で起動。
  * worker/index.js の scheduled ハンドラから runBot(env) を呼び出す。
@@ -12,8 +12,22 @@
  *   BYPASS_TOKEN          ... /research・/generate のレート制限スキップトークン
  */
 
-const BLUESKY_API = "https://bsky.social/xrpc";
-const SITE_URL    = "https://hiroshikuze.github.io/anniversary-cat-worker/";
+// Photonは動的importで遅延ロード（Node.jsテスト環境での.wasmロード失敗を回避）
+let _photonReady = false;
+let _PhotonImage  = null;
+
+async function ensurePhoton() {
+  if (_photonReady) return;
+  const { PhotonImage, initSync } = await import("@silvia-odwyer/photon");
+  const { default: photonWasm }   = await import("@silvia-odwyer/photon/photon_rs_bg.wasm");
+  initSync({ module: photonWasm });
+  _PhotonImage  = PhotonImage;
+  _photonReady  = true;
+}
+
+const BLUESKY_API            = "https://bsky.social/xrpc";
+const SITE_URL               = "https://hiroshikuze.github.io/anniversary-cat-worker/";
+export const BLUESKY_MAX_IMAGE_BYTES = 976_000; // Bluesky上限 1,000,000 bytes に余裕を持たせた値
 
 const HASHTAG_LIST = ["#AIart", "#cat", "#kitten", "#ほのぼの", "#猫"];
 const HASHTAGS     = HASHTAG_LIST.join(" ");
@@ -78,6 +92,16 @@ async function createBlueskySession(identifier, password) {
   return { accessJwt: data.accessJwt, did: data.did };
 }
 
+/** ArrayBuffer を base64 文字列に変換 */
+function arrayBufferToBase64(buffer) {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 /** base64 文字列を Uint8Array に変換（Cloudflare Workers の atob を使用） */
 function base64ToBytes(base64) {
   const binary = atob(base64);
@@ -86,6 +110,87 @@ function base64ToBytes(base64) {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+/** Uint8Array を base64 文字列に変換 */
+function uint8ArrayToBase64(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+/**
+ * Pollinationsから512×512の小サイズ画像を再取得する（最終フォールバック）。
+ */
+async function shrinkByPollinations(theme, description) {
+  const toAscii = (s) => (s ?? "").replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
+  const subject = toAscii(theme) || toAscii(description) || "anniversary";
+  const prompt  = `kawaii watercolor cat, ${subject}, pastel colors, white background`;
+  const seed    = Math.floor(Math.random() * 1_000_000);
+  const url     = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
+                  `?model=flux&width=512&height=512&seed=${seed}&nologo=true`;
+
+  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!res.ok) throw new Error(`画像縮小取得失敗: Pollinations status=${res.status}`);
+
+  const buffer  = await res.arrayBuffer();
+  const newMime = res.headers.get("Content-Type") || "image/jpeg";
+  console.log(`[bot] Pollinations縮小画像取得完了 (${buffer.byteLength} bytes)`);
+  return { imageData: arrayBufferToBase64(buffer), mimeType: newMime };
+}
+
+/**
+ * Bluesky上限（~976KB）を超える画像をPhotonでJPEG圧縮する。
+ * Photon失敗時またはJPEG圧縮後もサイズ超過の場合はPollinationsで再取得する。
+ */
+async function shrinkImageIfNeeded(imageData, mimeType, theme, description) {
+  const bytes = base64ToBytes(imageData);
+  if (bytes.length <= BLUESKY_MAX_IMAGE_BYTES) {
+    return { imageData, mimeType };
+  }
+  console.log(`[bot] 画像サイズ超過 (${bytes.length} bytes > ${BLUESKY_MAX_IMAGE_BYTES})、Photon JPEG圧縮を試みます`);
+
+  try {
+    await ensurePhoton();
+
+    // quality 70 で圧縮
+    const img1      = _PhotonImage.new_from_byteslice(bytes);
+    const jpeg70    = img1.get_bytes_jpeg(70);
+    img1.free();
+    if (jpeg70.length <= BLUESKY_MAX_IMAGE_BYTES) {
+      console.log(`[bot] Photon圧縮完了 quality=70 (${jpeg70.length} bytes)`);
+      return { imageData: uint8ArrayToBase64(jpeg70), mimeType: "image/jpeg" };
+    }
+
+    // quality 40 で再試行
+    const img2      = _PhotonImage.new_from_byteslice(bytes);
+    const jpeg40    = img2.get_bytes_jpeg(40);
+    img2.free();
+    if (jpeg40.length <= BLUESKY_MAX_IMAGE_BYTES) {
+      console.log(`[bot] Photon圧縮完了 quality=40 (${jpeg40.length} bytes)`);
+      return { imageData: uint8ArrayToBase64(jpeg40), mimeType: "image/jpeg" };
+    }
+
+    console.log(`[bot] Photon圧縮後もサイズ超過 (${jpeg40.length} bytes)、Pollinationsフォールバック`);
+  } catch (err) {
+    console.log(`[bot] Photon圧縮失敗 (${err.message})、Pollinationsフォールバック`);
+  }
+
+  return shrinkByPollinations(theme, description);
+}
+
+export { shrinkImageIfNeeded };
+
+/**
+ * テスト用: PhotonImageのモックを注入する。
+ * Node.jsテスト環境ではWASMが使えないため、この関数でモックに差し替える。
+ * @param {object|null} mockPhotoImage - モックするPhotoImageオブジェクト。nullでリセット。
+ */
+export function _setPhotonForTest(mockPhotoImage) {
+  _PhotonImage = mockPhotoImage;
+  _photonReady = mockPhotoImage !== null;
 }
 
 /** 画像データを Bluesky にアップロードして blob 参照を返す */
@@ -203,8 +308,12 @@ export async function runBot(env, handleResearch, handleGenerate) {
       env.BLUESKY_APP_PASSWORD
     );
 
-    const imageBytes = base64ToBytes(generated.imageData);
-    const mimeType   = generated.mimeType || "image/png";
+    const shrunk     = await shrinkImageIfNeeded(
+      generated.imageData, generated.mimeType || "image/png",
+      research.theme, research.description ?? ""
+    );
+    const imageBytes = base64ToBytes(shrunk.imageData);
+    const mimeType   = shrunk.mimeType;
     const blobRef    = await uploadBlob(accessJwt, imageBytes, mimeType);
 
     const text    = buildPostText(research.theme, research.description ?? "");
