@@ -14,6 +14,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - name: Run bot unit tests
+        run: node scripts/test-bot.mjs
       - name: Run health check
         run: node scripts/health-check.js
         env:

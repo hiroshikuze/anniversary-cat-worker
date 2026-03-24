@@ -23,7 +23,7 @@ Claude Codeがこのリポジトリを扱う際の引き継ぎ情報。
 
 ---
 
-## Bluesky営業Botプロジェクト（未実装・実装予定）
+## Bluesky営業Botプロジェクト（実装済み）
 
 ### 概要
 
@@ -87,10 +87,10 @@ wrangler.toml         ← [triggers] crons = ["0 10 * * 1-5"] を追加済み
 
 ```text
 Cron Trigger（月〜金 10:00 UTC = 19:00 JST）
-  └→ /research 呼び出し（既存エンドポイント・BYPASS_TOKENでレート制限スキップ）
+  └→ handleResearch() を直接呼び出し（HTTP経由ではなく関数呼び出し・レート制限なし）
       ├→ 失敗 → console.error + Discord通知 → 終了
       └→ 成功
-          └→ /generate 呼び出し（既存エンドポイント・同上）
+          └→ handleGenerate() を直接呼び出し（同上）
               ├→ 失敗 → console.error + Discord通知 → 終了
               └→ 成功
                   └→ Bluesky投稿（画像blob upload → createRecord）
@@ -98,6 +98,9 @@ Cron Trigger（月〜金 10:00 UTC = 19:00 JST）
                       └→ 成功 → console.log
 
 ```
+
+> **重要**: BotはHTTP自己呼び出し（fetch to WORKER_URL）をせず、`handleResearch`・`handleGenerate`を直接関数として呼び出す。
+> HTTP経由にするとレート制限・BYPASS_TOKEN管理・URL設定ミスのリスクがあるため。
 
 ### 投稿テキスト形式
 
@@ -113,6 +116,36 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 
 - 300 grapheme以内に収まる設計（実測 ~200 grapheme）
 - ハッシュタグはAT Protocolのfacets形式（UTF-8バイト位置）で付与
+
+### Botの手動テスト方法
+
+本番環境で実際に投稿されるかを確認する手順。
+
+#### Cloudflareダッシュボードから手動発火（推奨）
+
+1. 事前確認: `wrangler secret list` で必要なシークレットが4つ揃っているか確認
+2. **Workers & Pages** → `anniversary-cat-worker` → **Triggers**タブ
+3. Cron Triggersセクションの **「Execute」** ボタンをクリック
+4. **Logs**タブ → **Begin log stream** で結果を確認
+
+実際にBlueskyに投稿されるため、確認後はBlueskyアプリ（またはWeb）で手動削除する。
+
+**ログで確認すべきパターン:**
+
+| ログ | 意味 |
+| --- | --- |
+| `[bot] research 完了 theme="xxx"` | 記念日取得成功 |
+| `[bot] generate 完了 source=gemini` | 画像生成成功 |
+| `[bot] Bluesky 投稿 完了` | 投稿成功 |
+| `[bot] エラー: xxx` | どこかで失敗（メッセージで原因特定） |
+
+#### wrangler devでローカルテスト（Bluesky投稿なしに確認したい場合）
+
+シークレット等が不要な部分（テキスト生成・facets計算）のみ検証するなら`scripts/test-bot.mjs`を使う。
+
+```bash
+node scripts/test-bot.mjs
+```
 
 ### Bluesky AT Protocol エンドポイント
 
@@ -194,8 +227,13 @@ Promise.any([tryGemini(), tryPollinations()])
 
 ### 自動テスト（GitHub Actions）
 
-`main`および`claude/**`へのpushのたびに`scripts/health-check.js`が自動実行される。
+`main`および`claude/**`へのpushのたびに以下が自動実行される。
 結果はGitHubの**Actionsタブ**で確認（✅/❌）。
+
+| スクリプト | 内容 |
+| --- | --- |
+| `scripts/health-check.js` | 本番Worker・Gemini APIへのE2Eチェック |
+| `scripts/test-bot.mjs` | `bluesky-bot.js`のユニットテスト（外部API不要） |
 
 > **Claude はサンドボックス制限で外部 API に接続できないため、health-check.js を直接実行できない。**
 > テスト結果が必要な場合はユーザーに Actions タブの確認を依頼すること。
@@ -263,7 +301,14 @@ const KNOWN_CANDIDATES = [
 - **修正**: `!uri.includes("vertexaisearch.cloud.google.com")` に修正
 - **場所**: `worker/index.js` L205
 
-### 3. 記念日の根拠リンクが表示されない (2026-03)
+### 3. BotがHTTP自己呼び出しでURL設定ミスにより動作しない (2026-03)
+
+- **原因**: BotがWorker自身のエンドポイントへfetchしていたが、`WORKER_URL`環境変数が未設定でURLがundefinedになっていた
+- **修正**: `fetch(WORKER_URL/research)`をやめ、`handleResearch()`・`handleGenerate()`を直接関数として呼び出すよう変更
+- **設計方針**: BotとWorkerは同一プロセス内なのでHTTP経由は不要。直接呼び出しならURL設定ミス・レート制限・BYPASS_TOKEN管理の問題が全て消える
+- **場所**: `worker/bluesky-bot.js` `runBot()` / `worker/index.js` `scheduled()`
+
+### 4. 記念日の根拠リンクが表示されない (2026-03)
 
 - **原因**: リファクタリング時に `sourceUrl` の表示コードがフロントから消えていた
 - **修正**: `<p>` を `<a>` タグに変更し、`researchData.sourceUrl` を `href` に設定
@@ -282,7 +327,8 @@ anniversary-cat-worker/
 ├── frontend/
 │   └── index.html          ← フロントエンド（GitHub Pages）
 ├── scripts/
-│   └── health-check.js     ← 診断スクリプト（GitHub Actions で自動実行）
+│   ├── health-check.js     ← E2E診断スクリプト（GitHub Actions で自動実行）
+│   └── test-bot.mjs        ← bluesky-bot.jsのユニットテスト（外部API不要）
 └── wrangler.toml           ← Cloudflare デプロイ設定（Cron Trigger 含む）
 ```
 
