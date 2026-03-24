@@ -437,7 +437,7 @@ async function handleProxyImage(request, corsH) {
 export default {
   // ── Cron Trigger: Bluesky 営業 Bot（月〜金 10:00 UTC = 19:00 JST）──────────
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runBot(env));
+    ctx.waitUntil(runBot(env, handleResearch, handleGenerate));
   },
 
   async fetch(request, env) {
