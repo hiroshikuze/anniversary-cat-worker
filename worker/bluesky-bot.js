@@ -1,6 +1,6 @@
 /**
  * worker/bluesky-bot.js - Bluesky 営業 Bot
- * @updated 2026-03-23
+ * @updated 2026-03-24
  *
  * Cloudflare Workers の Cron Trigger（月〜金 10:00 UTC = 19:00 JST）で起動。
  * worker/index.js の scheduled ハンドラから runBot(env) を呼び出す。
@@ -11,6 +11,17 @@
  *   DISCORD_WEBHOOK_URL   ... エラー通知用 Discord Webhook URL
  *   BYPASS_TOKEN          ... /research・/generate のレート制限スキップトークン
  */
+
+import { PhotonImage, initSync } from "@silvia-odwyer/photon";
+import photonWasm from "@silvia-odwyer/photon/photon_rs_bg.wasm";
+
+let _photonReady = false;
+function ensurePhoton() {
+  if (!_photonReady) {
+    initSync({ module: photonWasm });
+    _photonReady = true;
+  }
+}
 
 const BLUESKY_API            = "https://bsky.social/xrpc";
 const SITE_URL               = "https://hiroshikuze.github.io/anniversary-cat-worker/";
@@ -99,17 +110,19 @@ function base64ToBytes(base64) {
   return bytes;
 }
 
-/**
- * Bluesky上限（~976KB）を超える画像の場合、Pollinationsから512×512の小サイズ画像を取得する。
- * Cloudflare Workersには画像圧縮APIがないため、再取得で対処する。
- */
-async function shrinkImageIfNeeded(imageData, mimeType, theme, description) {
-  const bytes = base64ToBytes(imageData);
-  if (bytes.length <= BLUESKY_MAX_IMAGE_BYTES) {
-    return { imageData, mimeType };
+/** Uint8Array を base64 文字列に変換 */
+function uint8ArrayToBase64(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
   }
-  console.log(`[bot] 画像サイズ超過 (${bytes.length} bytes > ${BLUESKY_MAX_IMAGE_BYTES})、Pollinations 512x512 で再取得`);
+  return btoa(binary);
+}
 
+/**
+ * Pollinationsから512×512の小サイズ画像を再取得する（最終フォールバック）。
+ */
+async function shrinkByPollinations(theme, description) {
   const toAscii = (s) => (s ?? "").replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
   const subject = toAscii(theme) || toAscii(description) || "anniversary";
   const prompt  = `kawaii watercolor cat, ${subject}, pastel colors, white background`;
@@ -120,10 +133,50 @@ async function shrinkImageIfNeeded(imageData, mimeType, theme, description) {
   const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
   if (!res.ok) throw new Error(`画像縮小取得失敗: Pollinations status=${res.status}`);
 
-  const buffer   = await res.arrayBuffer();
-  const newMime  = res.headers.get("Content-Type") || "image/jpeg";
-  console.log(`[bot] 縮小画像取得完了 (${buffer.byteLength} bytes)`);
+  const buffer  = await res.arrayBuffer();
+  const newMime = res.headers.get("Content-Type") || "image/jpeg";
+  console.log(`[bot] Pollinations縮小画像取得完了 (${buffer.byteLength} bytes)`);
   return { imageData: arrayBufferToBase64(buffer), mimeType: newMime };
+}
+
+/**
+ * Bluesky上限（~976KB）を超える画像をPhotonでJPEG圧縮する。
+ * Photon失敗時またはJPEG圧縮後もサイズ超過の場合はPollinationsで再取得する。
+ */
+async function shrinkImageIfNeeded(imageData, mimeType, theme, description) {
+  const bytes = base64ToBytes(imageData);
+  if (bytes.length <= BLUESKY_MAX_IMAGE_BYTES) {
+    return { imageData, mimeType };
+  }
+  console.log(`[bot] 画像サイズ超過 (${bytes.length} bytes > ${BLUESKY_MAX_IMAGE_BYTES})、Photon JPEG圧縮を試みます`);
+
+  try {
+    ensurePhoton();
+
+    // quality 70 で圧縮
+    const img1      = PhotonImage.new_from_byteslice(bytes);
+    const jpeg70    = img1.get_bytes_jpeg(70);
+    img1.free();
+    if (jpeg70.length <= BLUESKY_MAX_IMAGE_BYTES) {
+      console.log(`[bot] Photon圧縮完了 quality=70 (${jpeg70.length} bytes)`);
+      return { imageData: uint8ArrayToBase64(jpeg70), mimeType: "image/jpeg" };
+    }
+
+    // quality 40 で再試行
+    const img2      = PhotonImage.new_from_byteslice(bytes);
+    const jpeg40    = img2.get_bytes_jpeg(40);
+    img2.free();
+    if (jpeg40.length <= BLUESKY_MAX_IMAGE_BYTES) {
+      console.log(`[bot] Photon圧縮完了 quality=40 (${jpeg40.length} bytes)`);
+      return { imageData: uint8ArrayToBase64(jpeg40), mimeType: "image/jpeg" };
+    }
+
+    console.log(`[bot] Photon圧縮後もサイズ超過 (${jpeg40.length} bytes)、Pollinationsフォールバック`);
+  } catch (err) {
+    console.log(`[bot] Photon圧縮失敗 (${err.message})、Pollinationsフォールバック`);
+  }
+
+  return shrinkByPollinations(theme, description);
 }
 
 /** 画像データを Bluesky にアップロードして blob 参照を返す */

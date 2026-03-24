@@ -318,9 +318,9 @@ const KNOWN_CANDIDATES = [
 ### 5. Bluesky画像アップロードがサイズ超過で失敗 (2026-03)
 
 - **原因**: Gemini生成画像（PNG）がBluesky上限1,000,000 bytesを超えることがある（実測 ~1.3MB）
-- **修正**: `shrinkImageIfNeeded()`を追加。上限超過時にPollinationsで512×512の画像を再取得する
-- **設計**: Cloudflare Workersには画像圧縮APIがないため、再取得で対処
-- **場所**: `worker/bluesky-bot.js` `shrinkImageIfNeeded()` / `runBot()`
+- **修正**: `shrinkImageIfNeeded()`を追加。上限超過時に`@silvia-odwyer/photon`（WASMベース）でJPEG圧縮（quality 70→40の順で試行）し、それでも超過する場合はPollinationsで512×512の画像を再取得する
+- **設計**: PhotonはCloudflare WorkersのWASM対応を活用。gzip後672KiBで無料プラン1MB上限内に収まる。Gemini・Pollinations両方の画像に対応
+- **場所**: `worker/bluesky-bot.js` `shrinkImageIfNeeded()` / `ensurePhoton()` / `runBot()`
 
 ### 6. 記念日の根拠リンクが表示されない (2026-03)
 

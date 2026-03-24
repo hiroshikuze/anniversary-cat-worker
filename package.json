@@ -1,0 +1,19 @@
+{
+  "name": "anniversary-cat-worker",
+  "version": "1.0.0",
+  "description": "AI-powered daily cat illustration generator inspired by today's anniversary.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://local_proxy@127.0.0.1:38553/git/hiroshikuze/anniversary-cat-worker"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@silvia-odwyer/photon": "^0.3.3"
+  }
+}
