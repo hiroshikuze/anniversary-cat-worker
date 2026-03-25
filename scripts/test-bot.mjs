@@ -10,7 +10,7 @@
  */
 
 import {
-  buildPostText, buildHashtagFacets, notifyDiscord, runBot,
+  buildPostText, buildHashtagFacets, buildUrlFacets, notifyDiscord, runBot,
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
@@ -78,6 +78,25 @@ console.log("\n[buildHashtagFacets]");
       facet.features[0].$type === "app.bsky.richtext.facet#tag"
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// buildUrlFacets
+// ---------------------------------------------------------------------------
+console.log("\n[buildUrlFacets]");
+{
+  const text = buildPostText("テスト", "説明文");
+  const facets = buildUrlFacets(text);
+  const encoder = new TextEncoder();
+  const textBytes = encoder.encode(text);
+
+  assert("facets の件数が1件（SITE_URL）", facets.length === 1);
+
+  const { byteStart, byteEnd } = facets[0].index;
+  const extracted = new TextDecoder().decode(textBytes.slice(byteStart, byteEnd));
+  assert("SITE_URL のバイト位置が正確", extracted === "https://hiroshikuze.github.io/anniversary-cat-worker/");
+  assert("$type が app.bsky.richtext.facet#link", facets[0].features[0].$type === "app.bsky.richtext.facet#link");
+  assert("uri が SITE_URL と一致", facets[0].features[0].uri === "https://hiroshikuze.github.io/anniversary-cat-worker/");
 }
 
 // ---------------------------------------------------------------------------

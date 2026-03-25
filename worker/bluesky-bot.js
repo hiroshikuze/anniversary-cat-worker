@@ -74,6 +74,30 @@ export function buildHashtagFacets(text) {
   return facets;
 }
 
+/**
+ * テキスト中の SITE_URL を AT Protocol の facets 形式（link タイプ）に変換する。
+ * iOSなど一部クライアントではURLをfacetで明示しないとリンクにならないため必要。
+ */
+export function buildUrlFacets(text) {
+  const encoder = new TextEncoder();
+  const facets  = [];
+  let searchFrom = 0;
+
+  while (true) {
+    const idx = text.indexOf(SITE_URL, searchFrom);
+    if (idx === -1) break;
+    const byteStart = encoder.encode(text.slice(0, idx)).length;
+    const byteEnd   = byteStart + encoder.encode(SITE_URL).length;
+    facets.push({
+      index:    { byteStart, byteEnd },
+      features: [{ $type: "app.bsky.richtext.facet#link", uri: SITE_URL }],
+    });
+    searchFrom = idx + SITE_URL.length;
+  }
+
+  return facets;
+}
+
 // ---------------------------------------------------------------------------
 // Bluesky AT Protocol ヘルパー
 // ---------------------------------------------------------------------------
@@ -215,7 +239,7 @@ async function createPost(accessJwt, did, text, blobRef, mimeType, altText) {
   const record = {
     $type:     "app.bsky.feed.post",
     text,
-    facets:    buildHashtagFacets(text),
+    facets:    [...buildHashtagFacets(text), ...buildUrlFacets(text)],
     embed:     {
       $type:  "app.bsky.embed.images",
       images: [{
