@@ -418,15 +418,21 @@ Bluesky投稿（Bot）
 - クリーンアップ: Cron Trigger起動時に7日以上前の画像を削除
 - 期限切れアクセス時: 「この記念日画像は期限が切れました」＋再作成ボタンを表示
 
-#### SUZURI API連携の課題
+#### SUZURI API連携
 
-| 方式 | 概要 | 課題 |
-| --- | --- | --- |
-| A. SUZURI APIで動的生成 | 画像をアップロードして商品ページを自動作成 | **Creator APIは招待制**。申請が通るか要確認 |
-| B. 画像ダウンロード→手動アップロード | 高画質画像をダウンロードさせ、ユーザー自身がSUZURIで登録 | UXが断絶する |
-| C. 固定SUZURIショップへ誘導 | 毎日の投稿画像を手動登録したショップへ誘導 | Botの自動化と噛み合わない |
+調査の結果、SUZURI APIは**招待制ではなく、SUZURIアカウントがあれば即時利用可能**な見込み。
 
-**最優先アクション: SUZURIのCreator API申請が通るかどうかを確認する。通らない場合は設計が変わる。**
+- Developer Center（`https://suzuri.jp/developer`）にログイン状態でアクセスしAPIキーを取得する
+- `POST /api/v1/materials` に画像URLを渡すだけで商品が動的生成され、レスポンスに商品ページURLが返る
+- 認証はAPIキー方式（Bearer Token）で十分。OAuthは他ユーザーのアカウントに生成する場合のみ必要
+
+```text
+画像生成完了
+  └→ POST /api/v1/materials（SUZURIに商品を動的生成）
+      └→ レスポンスの sampleUrl を「グッズを買う」ボタンのリンクに使う
+```
+
+**最優先アクション: SUZURIにログインした状態で `https://suzuri.jp/developer` にアクセスし、APIキーが取得できるか実際に確認する。**
 
 #### 透過処理
 
