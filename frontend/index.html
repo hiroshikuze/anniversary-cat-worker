@@ -563,6 +563,18 @@
     // ----------------------------------------------------------
     // Canvas ウォーターマーク合成（© nyanmusu を右下に描画）
     // ----------------------------------------------------------
+    // 座標計算のみを行う純粋関数（テスト用にwindow経由でエクスポート）
+    function _calcWatermarkLayout(imgWidth, imgHeight, textWidth) {
+      const fontSize = Math.max(12, Math.round(imgWidth * 0.013));
+      const padX = 8, padY = 5, margin = 12;
+      const bgW  = textWidth + padX * 2;
+      const bgH  = fontSize  + padY * 2;
+      const bgX  = imgWidth  - bgW - margin;
+      const bgY  = imgHeight - bgH - margin;
+      return { bgX, bgY, bgW, bgH, fontSize, textX: bgX + padX, textY: bgY + bgH / 2 };
+    }
+    window._calcWatermarkLayout = _calcWatermarkLayout;
+
     function applyWatermark(imageData, mimeType) {
       return new Promise((resolve) => {
         const img = new Image();
@@ -574,14 +586,11 @@
           ctx.drawImage(img, 0, 0);
 
           const text     = "© nyanmusu";
-          const fontSize = Math.max(12, Math.round(img.width * 0.013));
-          ctx.font       = `${fontSize}px sans-serif`;
+          ctx.font       = `12px sans-serif`; // measureText用（仮）
           const textW    = ctx.measureText(text).width;
-          const padX = 8, padY = 5, margin = 12;
-          const bgW  = textW + padX * 2;
-          const bgH  = fontSize + padY * 2;
-          const bgX  = img.width  - bgW - margin;
-          const bgY  = img.height - bgH - margin;
+          const { bgX, bgY, bgW, bgH, fontSize, textX, textY } =
+            _calcWatermarkLayout(img.width, img.height, textW);
+          ctx.font = `${fontSize}px sans-serif`;
 
           ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
           ctx.beginPath();
@@ -590,7 +599,7 @@
 
           ctx.fillStyle    = "rgba(255, 255, 255, 0.9)";
           ctx.textBaseline = "middle";
-          ctx.fillText(text, bgX + padX, bgY + bgH / 2);
+          ctx.fillText(text, textX, textY);
 
           // data URL → base64部分のみ取り出す
           const dataUrl   = canvas.toDataURL("image/jpeg", 0.92);

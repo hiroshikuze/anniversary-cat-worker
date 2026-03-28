@@ -9,6 +9,8 @@
  * 終了コード 0 = 全件成功、1 = 1件以上失敗
  */
 
+import { updateMetaInR2 } from "../worker/r2-storage.js";
+
 import {
   buildPostText, buildHashtagFacets, buildUrlFacets, notifyDiscord, runBot,
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
@@ -329,6 +331,117 @@ function mockPhotonImage(jpeg70Bytes, jpeg40Bytes) {
   assert("Photon例外: Pollinationsフォールバックが呼ばれる", result.mimeType === "image/jpeg");
   assert("Photon例外: Pollinationsの画像データが返る",
     Buffer.from(result.imageData, "base64").length === pollImg.length);
+}
+
+// ---------------------------------------------------------------------------
+// updateMetaInR2
+// ---------------------------------------------------------------------------
+console.log("\n[updateMetaInR2]");
+
+function makeMockBucket(initialMeta) {
+  const store = {};
+  if (initialMeta !== undefined) {
+    store["test-id/meta.json"] = JSON.stringify(initialMeta);
+  }
+  return {
+    async get(key) {
+      if (!(key in store)) return null;
+      const val = store[key];
+      return { json: async () => JSON.parse(val) };
+    },
+    async put(key, value) { store[key] = value; },
+    _read(key) { return store[key] ? JSON.parse(store[key]) : undefined; },
+  };
+}
+
+{
+  // 正常系: 指定フィールドが上書きされ、他のフィールドは保持される
+  const bucket = makeMockBucket({ theme: "テスト記念日", materialId: null, products: [] });
+  await updateMetaInR2(bucket, "test-id", { materialId: 42, products: [{ slug: "sticker" }] });
+  const result = bucket._read("test-id/meta.json");
+  assert("updateMetaInR2: materialId が更新される", result.materialId === 42);
+  assert("updateMetaInR2: products が更新される", result.products[0].slug === "sticker");
+  assert("updateMetaInR2: 既存フィールド theme が保持される", result.theme === "テスト記念日");
+}
+
+{
+  // idが存在しない場合: エラーなく終了し何もしない
+  const bucket = makeMockBucket(); // meta なし
+  let threw = false;
+  try {
+    await updateMetaInR2(bucket, "nonexistent-id", { materialId: 1 });
+  } catch {
+    threw = true;
+  }
+  assert("updateMetaInR2: 存在しないidでもエラーをthrowしない", !threw);
+  assert("updateMetaInR2: 存在しないidでは何も書き込まれない",
+    bucket._read("nonexistent-id/meta.json") === undefined);
+}
+
+{
+  // updatesで渡した以外のフィールドが消えないこと
+  const bucket = makeMockBucket({
+    theme: "記念日A", description: "説明A", sourceUrl: "https://example.com",
+    materialId: null, products: [], createdAt: "2026-03-28T00:00:00.000Z",
+  });
+  await updateMetaInR2(bucket, "test-id", { materialId: 99 });
+  const result = bucket._read("test-id/meta.json");
+  assert("updateMetaInR2: description が消えない", result.description === "説明A");
+  assert("updateMetaInR2: sourceUrl が消えない", result.sourceUrl === "https://example.com");
+  assert("updateMetaInR2: createdAt が消えない", result.createdAt === "2026-03-28T00:00:00.000Z");
+}
+
+// ---------------------------------------------------------------------------
+// _calcWatermarkLayout（frontend/index.html の applyWatermark 座標計算ロジック）
+// ※ ブラウザCanvasなしで検証するため、同じ純粋関数をここで定義してテストする
+// ---------------------------------------------------------------------------
+console.log("\n[_calcWatermarkLayout]");
+
+function calcWatermarkLayout(imgWidth, imgHeight, textWidth) {
+  const fontSize = Math.max(12, Math.round(imgWidth * 0.013));
+  const padX = 8, padY = 5, margin = 12;
+  const bgW  = textWidth + padX * 2;
+  const bgH  = fontSize  + padY * 2;
+  const bgX  = imgWidth  - bgW - margin;
+  const bgY  = imgHeight - bgH - margin;
+  return { bgX, bgY, bgW, bgH, fontSize, textX: bgX + padX, textY: bgY + bgH / 2 };
+}
+
+{
+  // 標準サイズ 1024×1024
+  const layout = calcWatermarkLayout(1024, 1024, 80);
+  assert("1024px: fontSize = max(12, round(1024×0.013)) = 13", layout.fontSize === 13);
+  assert("1024px: bgW = textWidth + 16",  layout.bgW === 80 + 16);
+  assert("1024px: bgH = fontSize + 10",   layout.bgH === 13 + 10);
+  assert("1024px: 右端から margin だけ内側（bgX + bgW + margin = imgWidth）",
+    layout.bgX + layout.bgW + 12 === 1024);
+  assert("1024px: 下端から margin だけ内側（bgY + bgH + margin = imgHeight）",
+    layout.bgY + layout.bgH + 12 === 1024);
+  assert("1024px: textX = bgX + padX",    layout.textX === layout.bgX + 8);
+  assert("1024px: textY = 背景の垂直中央", layout.textY === layout.bgY + layout.bgH / 2);
+}
+
+{
+  // 極小サイズ: fontSize が最小値 12 にクランプされる
+  const layout = calcWatermarkLayout(100, 100, 60);
+  assert("100px: fontSize が min 12 にクランプ", layout.fontSize === 12);
+}
+
+{
+  // テキスト幅が変わると bgW が変わる
+  const a = calcWatermarkLayout(512, 512, 50);
+  const b = calcWatermarkLayout(512, 512, 100);
+  assert("textWidth増加でbgWが増加する", b.bgW > a.bgW);
+  assert("textWidth増加でbgXが左にずれる（右端は固定）", b.bgX < a.bgX);
+}
+
+{
+  // 最小想定サイズ 512×512 でも範囲内に収まること（Pollinationsフォールバック画像サイズ）
+  const layout = calcWatermarkLayout(512, 512, 80);
+  assert("512px: bgX が 0 以上", layout.bgX >= 0);
+  assert("512px: bgY が 0 以上", layout.bgY >= 0);
+  assert("512px: bgX + bgW が imgWidth 以内", layout.bgX + layout.bgW <= 512);
+  assert("512px: bgY + bgH が imgHeight 以内", layout.bgY + layout.bgH <= 512);
 }
 
 // ---------------------------------------------------------------------------
