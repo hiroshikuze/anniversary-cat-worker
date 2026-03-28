@@ -561,21 +561,34 @@
     }
 
     // ----------------------------------------------------------
-    // Canvas ウォーターマーク合成（© nyanmusu を右下に描画）
+    // Canvas ウォーターマーク合成（© nyanmusu を描画）
     // ----------------------------------------------------------
     // 座標計算のみを行う純粋関数（テスト用にwindow経由でエクスポート）
-    function _calcWatermarkLayout(imgWidth, imgHeight, textWidth) {
+    // position: 'bottom-right'（矩形商品）または 'bottom-center'（円形・変形商品）
+    function _calcWatermarkLayout(imgWidth, imgHeight, textWidth, position = "bottom-right") {
       const fontSize = Math.max(12, Math.round(imgWidth * 0.013));
       const padX = 8, padY = 5, margin = 12;
       const bgW  = textWidth + padX * 2;
       const bgH  = fontSize  + padY * 2;
-      const bgX  = imgWidth  - bgW - margin;
+      const bgX  = position === "bottom-center"
+        ? Math.round((imgWidth - bgW) / 2)
+        : imgWidth - bgW - margin;
       const bgY  = imgHeight - bgH - margin;
       return { bgX, bgY, bgW, bgH, fontSize, textX: bgX + padX, textY: bgY + bgH / 2 };
     }
     window._calcWatermarkLayout = _calcWatermarkLayout;
 
-    function applyWatermark(imageData, mimeType) {
+    // 商品グループ別のウォーターマーク位置
+    const WATERMARK_POSITION = {
+      "t-shirt":          "bottom-right",
+      "sticker":          "bottom-right",
+      "can-badge":        "bottom-center",
+      "acrylic-keychain": "bottom-center",
+    };
+    const RIGHT_SLUGS  = ["t-shirt", "sticker"];
+    const CENTER_SLUGS = ["can-badge", "acrylic-keychain"];
+
+    function applyWatermark(imageData, mimeType, position = "bottom-right") {
       return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
@@ -589,7 +602,7 @@
           ctx.font       = `12px sans-serif`; // measureText用（仮）
           const textW    = ctx.measureText(text).width;
           const { bgX, bgY, bgW, bgH, fontSize, textX, textY } =
-            _calcWatermarkLayout(img.width, img.height, textW);
+            _calcWatermarkLayout(img.width, img.height, textW, position);
           ctx.font = `${fontSize}px sans-serif`;
 
           ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
@@ -682,17 +695,31 @@
         showGenerate("result");
 
         // ウォーターマーク合成 → SUZURI登録（best-effort: 失敗しても表示は維持）
-        applyWatermark(data.imageData, data.mimeType).then(watermarked =>
+        // 商品グループごとに位置を変えて並列実行
+        Promise.all([
+          applyWatermark(data.imageData, data.mimeType, "bottom-right"),
+          applyWatermark(data.imageData, data.mimeType, "bottom-center"),
+        ]).then(([rightWm, centerWm]) => Promise.allSettled([
           apiFetch("/suzuri-create", {
-            imageData: watermarked.imageData,
-            mimeType:  watermarked.mimeType,
+            imageData: rightWm.imageData,
+            mimeType:  rightWm.mimeType,
             theme:     researchData.theme,
             r2Id:      data.id ?? null,
-          })
-        ).then(suzuriData => {
-          if (suzuriData?.products?.length > 0) {
-            showGoods(suzuriData.products);
-          }
+            slugs:     RIGHT_SLUGS,
+          }),
+          apiFetch("/suzuri-create", {
+            imageData: centerWm.imageData,
+            mimeType:  centerWm.mimeType,
+            theme:     researchData.theme,
+            r2Id:      null,
+            slugs:     CENTER_SLUGS,
+          }),
+        ])).then(([rightRes, centerRes]) => {
+          const products = [
+            ...(rightRes.status  === "fulfilled" ? rightRes.value?.products  ?? [] : []),
+            ...(centerRes.status === "fulfilled" ? centerRes.value?.products ?? [] : []),
+          ];
+          if (products.length > 0) showGoods(products);
         }).catch(e => {
           console.warn("[suzuri-create] 失敗:", e.message);
         });

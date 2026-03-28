@@ -71,10 +71,15 @@ async function fetchAvailableItemIds(env) {
  * }}
  * @throws {Error} APIキー未設定またはAPIエラー時
  */
-export async function createSuzuriProducts(imageUrl, theme, env) {
+export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = null) {
   if (!env.SUZURI_API_KEY) {
     throw new Error("SUZURI_API_KEY が設定されていません");
   }
+
+  // 対象スラッグを絞り込む（slugFilter 未指定時は全スラッグ）
+  const targetSlugs = slugFilter
+    ? Object.keys(SUZURI_ITEM_IDS).filter(s => slugFilter.includes(s))
+    : Object.keys(SUZURI_ITEM_IDS);
 
   // 在庫チェック（fail-open: 失敗時は全アイテムを対象）
   const availableIds = await fetchAvailableItemIds(env);
@@ -82,9 +87,8 @@ export async function createSuzuriProducts(imageUrl, theme, env) {
 
   // 在庫ありのアイテムのみで商品作成リストを生成
   const availableSlugs = new Set(
-    Object.entries(SUZURI_ITEM_IDS)
-      .filter(([, itemId]) => !availableIds || availableIds.has(itemId))
-      .map(([slug]) => slug)
+    targetSlugs
+      .filter(slug => !availableIds || availableIds.has(SUZURI_ITEM_IDS[slug]))
   );
 
   const productsToCreate = [...availableSlugs].map(slug => ({
@@ -122,8 +126,8 @@ export async function createSuzuriProducts(imageUrl, theme, env) {
   );
   console.log(`[suzuri] POST /materials 完了 materialId=${data.material.id} products=[${[...createdMap.keys()].join(",")}]`);
 
-  // 全4商品をavailableフラグ付きで返す（在庫切れはavailable: false）
-  const allProducts = Object.keys(SUZURI_ITEM_IDS).map(slug => {
+  // 対象商品をavailableフラグ付きで返す（在庫切れはavailable: false）
+  const allProducts = targetSlugs.map(slug => {
     const p = createdMap.get(SUZURI_ITEM_IDS[slug]);
     if (p) {
       return {
