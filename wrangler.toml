@@ -30,6 +30,12 @@ ALLOWED_ORIGIN = "https://hiroshikuze.github.io"
 binding = "RATE_KV"
 id = "531244f9f904493d93c3a418b9765df8"
 
+# 画像ストレージ用 R2 バケット
+# 作成コマンド: wrangler r2 bucket create anniversary-cat-images
+[[r2_buckets]]
+binding = "IMAGE_BUCKET"
+bucket_name = "anniversary-cat-images"
+
 [observability.logs]
 enabled = true
 invocation_logs = true
