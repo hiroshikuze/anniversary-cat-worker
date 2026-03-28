@@ -100,6 +100,39 @@ console.log("\n[buildUrlFacets]");
 }
 
 // ---------------------------------------------------------------------------
+// buildPostText - カスタム pageUrl
+// ---------------------------------------------------------------------------
+console.log("\n[buildPostText: カスタムpageUrl]");
+{
+  const customUrl = "https://hiroshikuze.github.io/anniversary-cat-worker/?id=bot/2026-03-28";
+  const text = buildPostText("ねこの日", "猫を愛でる記念日です", customUrl);
+  assert("カスタムURLが含まれる", text.includes(customUrl));
+  assert("デフォルトSITE_URLは含まれない", !text.includes("hiroshikuze.github.io/anniversary-cat-worker/\n"));
+
+  const graphemes = [...new Intl.Segmenter().segment(text)];
+  assert(`300 grapheme以内（カスタムURL、実測: ${graphemes.length}）`, graphemes.length <= 300);
+}
+
+// ---------------------------------------------------------------------------
+// buildUrlFacets - カスタム url
+// ---------------------------------------------------------------------------
+console.log("\n[buildUrlFacets: カスタムurl]");
+{
+  const customUrl = "https://hiroshikuze.github.io/anniversary-cat-worker/?id=bot/2026-03-28";
+  const text = buildPostText("テスト", "説明文", customUrl);
+  const facets = buildUrlFacets(text, customUrl);
+  const encoder = new TextEncoder();
+  const textBytes = encoder.encode(text);
+
+  assert("facets の件数が1件（カスタムURL）", facets.length === 1);
+  const { byteStart, byteEnd } = facets[0].index;
+  const extracted = new TextDecoder().decode(textBytes.slice(byteStart, byteEnd));
+  assert("カスタムURLのバイト位置が正確", extracted === customUrl);
+  assert("uri がカスタムURLと一致", facets[0].features[0].uri === customUrl);
+  assert("$type が app.bsky.richtext.facet#link", facets[0].features[0].$type === "app.bsky.richtext.facet#link");
+}
+
+// ---------------------------------------------------------------------------
 // runBot - GEMINI_API_KEY 未設定時は早期終了（handleResearch を呼ばない）
 // ---------------------------------------------------------------------------
 console.log("\n[runBot: GEMINI_API_KEY 未設定]");

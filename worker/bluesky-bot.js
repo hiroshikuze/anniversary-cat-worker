@@ -1,6 +1,6 @@
 /**
  * worker/bluesky-bot.js - Bluesky 営業 Bot
- * @updated 2026-03-24
+ * @updated 2026-03-28
  *
  * Cloudflare Workers の Cron Trigger（月〜金 10:00 UTC = 19:00 JST）で起動。
  * worker/index.js の scheduled ハンドラから runBot(env) を呼び出す。
@@ -10,7 +10,11 @@
  *   BLUESKY_APP_PASSWORD  ... Bluesky の App Password
  *   DISCORD_WEBHOOK_URL   ... エラー通知用 Discord Webhook URL
  *   BYPASS_TOKEN          ... /research・/generate のレート制限スキップトークン
+ *   SUZURI_API_KEY        ... SUZURI API キー（商品生成用）
  */
+
+import { saveToR2 } from "./r2-storage.js";
+import { createSuzuriProducts } from "./suzuri.js";
 
 // Photonは動的importで遅延ロード（Node.jsテスト環境での.wasmロード失敗を回避）
 let _photonReady = false;
@@ -39,11 +43,14 @@ const HASHTAGS     = HASHTAG_LIST.join(" ");
 /**
  * Bluesky 投稿テキストを生成する。
  * Bluesky の上限は 300 grapheme。この形式では最大 ~220 grapheme 程度に収まる。
+ * @param {string} theme
+ * @param {string} description
+ * @param {string} [pageUrl] - CTA に使う URL（デフォルト: SITE_URL）
  */
-export function buildPostText(theme, description) {
+export function buildPostText(theme, description, pageUrl = SITE_URL) {
   const header = `今日は「${theme}」の日！🐱`;
   const body   = description ? `\n${description}` : "";
-  const cta    = `\n\nあなたも今日のにゃんバーサリーを作ってみませんか？\n${SITE_URL}`;
+  const cta    = `\n\nあなたも今日のにゃんバーサリーを作ってみませんか？\n${pageUrl}`;
   const tags   = `\n\n${HASHTAGS}`;
   return header + body + cta + tags;
 }
@@ -75,24 +82,26 @@ export function buildHashtagFacets(text) {
 }
 
 /**
- * テキスト中の SITE_URL を AT Protocol の facets 形式（link タイプ）に変換する。
+ * テキスト中の URL を AT Protocol の facets 形式（link タイプ）に変換する。
  * iOSなど一部クライアントではURLをfacetで明示しないとリンクにならないため必要。
+ * @param {string} text
+ * @param {string} [url] - 検索・リンク先 URL（デフォルト: SITE_URL）
  */
-export function buildUrlFacets(text) {
+export function buildUrlFacets(text, url = SITE_URL) {
   const encoder = new TextEncoder();
   const facets  = [];
   let searchFrom = 0;
 
   while (true) {
-    const idx = text.indexOf(SITE_URL, searchFrom);
+    const idx = text.indexOf(url, searchFrom);
     if (idx === -1) break;
     const byteStart = encoder.encode(text.slice(0, idx)).length;
-    const byteEnd   = byteStart + encoder.encode(SITE_URL).length;
+    const byteEnd   = byteStart + encoder.encode(url).length;
     facets.push({
       index:    { byteStart, byteEnd },
-      features: [{ $type: "app.bsky.richtext.facet#link", uri: SITE_URL }],
+      features: [{ $type: "app.bsky.richtext.facet#link", uri: url }],
     });
-    searchFrom = idx + SITE_URL.length;
+    searchFrom = idx + url.length;
   }
 
   return facets;
@@ -235,11 +244,11 @@ async function uploadBlob(accessJwt, imageBytes, mimeType) {
 }
 
 /** テキスト・画像・ファセットを含む投稿レコードを作成する */
-async function createPost(accessJwt, did, text, blobRef, mimeType, altText) {
+async function createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl = SITE_URL) {
   const record = {
     $type:     "app.bsky.feed.post",
     text,
-    facets:    [...buildHashtagFacets(text), ...buildUrlFacets(text)],
+    facets:    [...buildHashtagFacets(text), ...buildUrlFacets(text, pageUrl)],
     embed:     {
       $type:  "app.bsky.embed.images",
       images: [{
@@ -299,9 +308,11 @@ export async function notifyDiscord(webhookUrl, message) {
  */
 export async function runBot(env, handleResearch, handleGenerate) {
   // JST で日付文字列を生成（UTC+9）
-  const jst     = new Date(Date.now() + 9 * 60 * 60 * 1000);
-  const dateStr = `${jst.getFullYear()}年${jst.getMonth() + 1}月${jst.getDate()}日`;
-  const prefix  = `[bot] ${dateStr}`;
+  const jst        = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const dateStr    = `${jst.getFullYear()}年${jst.getMonth() + 1}月${jst.getDate()}日`;
+  const jstDateISO = `${jst.getFullYear()}-${String(jst.getMonth() + 1).padStart(2, "0")}-${String(jst.getDate()).padStart(2, "0")}`;
+  const r2Id       = `bot/${jstDateISO}`;
+  const prefix     = `[bot] ${dateStr}`;
 
   const apiKey = env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -325,7 +336,49 @@ export async function runBot(env, handleResearch, handleGenerate) {
     );
     console.log(`${prefix} generate 完了 source=${generated.source}`);
 
-    // ── 3. Bluesky に投稿 ──────────────────────────────────────────────────
+    // ── 3. SUZURI 商品生成（best-effort） ─────────────────────────────────
+    let pageUrl        = SITE_URL;
+    let materialId     = null;
+    let suzuriProducts = [];
+
+    if (env.SUZURI_API_KEY) {
+      try {
+        const imgMime = generated.mimeType || "image/png";
+        const dataUri = `data:${imgMime};base64,${generated.imageData}`;
+        const suzuriResult = await createSuzuriProducts(dataUri, research.theme, env);
+        materialId     = suzuriResult.materialId;
+        suzuriProducts = suzuriResult.products;
+        console.log(`${prefix} SUZURI商品生成完了 materialId=${materialId}`);
+      } catch (err) {
+        console.warn(`${prefix} SUZURI商品生成失敗（投稿は継続）: ${err.message}`);
+      }
+    }
+
+    // ── 4. R2 保存（best-effort） ─────────────────────────────────────────
+    if (env.IMAGE_BUCKET) {
+      try {
+        const meta = {
+          theme:       research.theme,
+          description: research.description ?? "",
+          sourceUrl:   research.sourceUrl   ?? "",
+          materialId,
+          products:    suzuriProducts,
+          createdAt:   new Date().toISOString(),
+        };
+        await saveToR2(
+          env.IMAGE_BUCKET,
+          r2Id,
+          { data: generated.imageData, mimeType: generated.mimeType || "image/png" },
+          meta
+        );
+        pageUrl = `${SITE_URL}?id=${r2Id}`;
+        console.log(`${prefix} R2保存完了 id=${r2Id}`);
+      } catch (err) {
+        console.warn(`${prefix} R2保存失敗（投稿は継続）: ${err.message}`);
+      }
+    }
+
+    // ── 5. Bluesky に投稿 ──────────────────────────────────────────────────
     console.log(`${prefix} Bluesky 投稿 開始`);
     const { accessJwt, did } = await createBlueskySession(
       env.BLUESKY_IDENTIFIER,
@@ -340,9 +393,9 @@ export async function runBot(env, handleResearch, handleGenerate) {
     const mimeType   = shrunk.mimeType;
     const blobRef    = await uploadBlob(accessJwt, imageBytes, mimeType);
 
-    const text    = buildPostText(research.theme, research.description ?? "");
+    const text    = buildPostText(research.theme, research.description ?? "", pageUrl);
     const altText = `にゃんバーサリー - 「${research.theme}」をテーマにAIが生成した水彩画風の猫イラスト`;
-    const postResult = await createPost(accessJwt, did, text, blobRef, mimeType, altText);
+    const postResult = await createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl);
 
     console.log(`${prefix} Bluesky 投稿 完了 uri=${postResult.uri ?? "(不明)"} identifier=${env.BLUESKY_IDENTIFIER}`);
 

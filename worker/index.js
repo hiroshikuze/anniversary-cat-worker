@@ -10,6 +10,8 @@
  */
 
 import { runBot } from "./bluesky-bot.js";
+import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2 } from "./r2-storage.js";
+import { createSuzuriProducts, deleteSuzuriMaterial } from "./suzuri.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -409,6 +411,26 @@ async function handleGenerate(body, apiKey) {
 }
 
 // ---------------------------------------------------------------------------
+// /image/:id  ― R2 から画像とメタデータを返す
+// ---------------------------------------------------------------------------
+async function handleGetImage(id, env, corsH) {
+  if (!env.IMAGE_BUCKET) {
+    return new Response("Not Found", { status: 404, headers: corsH });
+  }
+  const [meta, image] = await Promise.all([
+    getMetaFromR2(env.IMAGE_BUCKET, id),
+    getImageFromR2(env.IMAGE_BUCKET, id),
+  ]);
+  if (!meta || !image) {
+    return new Response("Not Found", { status: 404, headers: corsH });
+  }
+  return Response.json(
+    { ...meta, imageData: image.data, mimeType: image.mimeType },
+    { headers: corsH }
+  );
+}
+
+// ---------------------------------------------------------------------------
 // /proxy-image  ― Pollinations.ai の画像をプロキシ（CORS 回避）
 // ---------------------------------------------------------------------------
 async function handleProxyImage(request, corsH) {
@@ -437,7 +459,35 @@ async function handleProxyImage(request, corsH) {
 export default {
   // ── Cron Trigger: Bluesky 営業 Bot（月〜金 10:00 UTC = 19:00 JST）──────────
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runBot(env, handleResearch, handleGenerate));
+    ctx.waitUntil((async () => {
+      // 期限切れ R2/SUZURI エントリのクリーンアップ
+      if (env.IMAGE_BUCKET) {
+        try {
+          const expiredIds = await listExpiredIds(env.IMAGE_BUCKET);
+          for (const id of expiredIds) {
+            if (env.SUZURI_API_KEY) {
+              const meta = await getMetaFromR2(env.IMAGE_BUCKET, id);
+              if (meta?.materialId) {
+                try {
+                  await deleteSuzuriMaterial(meta.materialId, env);
+                  console.log(`[cleanup] SUZURI material=${meta.materialId} 削除完了`);
+                } catch (e) {
+                  console.warn(`[cleanup] SUZURI material=${meta.materialId} 削除失敗: ${e.message}`);
+                }
+              }
+            }
+            await deleteFromR2(env.IMAGE_BUCKET, id);
+            console.log(`[cleanup] R2 id=${id} 削除完了`);
+          }
+          if (expiredIds.length > 0) {
+            console.log(`[cleanup] ${expiredIds.length}件削除完了`);
+          }
+        } catch (e) {
+          console.error(`[cleanup] エラー: ${e.message}`);
+        }
+      }
+      await runBot(env, handleResearch, handleGenerate);
+    })());
   },
 
   async fetch(request, env) {
@@ -453,6 +503,12 @@ export default {
     // GET: 画像プロキシ
     if (request.method === "GET" && url.pathname === "/proxy-image") {
       return handleProxyImage(request, corsH);
+    }
+
+    // GET: R2画像取得（/image/bot/YYYY-MM-DD または /image/user/{uuid}）
+    if (request.method === "GET" && url.pathname.startsWith("/image/")) {
+      const id = url.pathname.slice("/image/".length);
+      return handleGetImage(id, env, corsH);
     }
 
     if (request.method !== "POST") {
@@ -489,6 +545,49 @@ export default {
           }
         }
         result = await handleGenerate(body, apiKey);
+
+        // R2保存 + SUZURI商品生成（best-effort: 失敗しても imageData は返す）
+        const r2Id         = `user/${crypto.randomUUID()}`;
+        let materialId     = null;
+        let suzuriProducts = [];
+
+        if (env.SUZURI_API_KEY) {
+          try {
+            const dataUri = `data:${result.mimeType};base64,${result.imageData}`;
+            const suzuriResult = await createSuzuriProducts(dataUri, body.theme, env);
+            materialId     = suzuriResult.materialId;
+            suzuriProducts = suzuriResult.products;
+          } catch (e) {
+            console.warn(`[generate] SUZURI商品生成失敗: ${e.message}`);
+          }
+        }
+
+        if (env.IMAGE_BUCKET) {
+          try {
+            const meta = {
+              theme:       body.theme,
+              description: body.description ?? "",
+              sourceUrl:   "",
+              materialId,
+              products:    suzuriProducts,
+              createdAt:   new Date().toISOString(),
+            };
+            await saveToR2(
+              env.IMAGE_BUCKET,
+              r2Id,
+              { data: result.imageData, mimeType: result.mimeType },
+              meta
+            );
+            result = { ...result, id: r2Id, suzuriProducts };
+          } catch (e) {
+            console.warn(`[generate] R2保存失敗: ${e.message}`);
+            if (suzuriProducts.length > 0) {
+              result = { ...result, suzuriProducts };
+            }
+          }
+        } else if (suzuriProducts.length > 0) {
+          result = { ...result, suzuriProducts };
+        }
       } else {
         return new Response("Not Found", { status: 404, headers: corsH });
       }
