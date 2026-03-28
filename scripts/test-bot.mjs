@@ -10,6 +10,7 @@
  */
 
 import { updateMetaInR2 } from "../worker/r2-storage.js";
+import { createSuzuriProducts, SUZURI_ITEM_IDS } from "../worker/suzuri.js";
 
 import {
   buildPostText, buildHashtagFacets, buildUrlFacets, notifyDiscord, runBot,
@@ -331,6 +332,115 @@ function mockPhotonImage(jpeg70Bytes, jpeg40Bytes) {
   assert("Photon例外: Pollinationsフォールバックが呼ばれる", result.mimeType === "image/jpeg");
   assert("Photon例外: Pollinationsの画像データが返る",
     Buffer.from(result.imageData, "base64").length === pollImg.length);
+}
+
+// ---------------------------------------------------------------------------
+// createSuzuriProducts
+// ---------------------------------------------------------------------------
+console.log("\n[createSuzuriProducts]");
+
+const _origFetch = globalThis.fetch;
+
+function makeSuzuriFetch(itemsBody, materialsBody, { itemsOk = true, materialsOk = true } = {}) {
+  return async (url, opts) => {
+    const method = opts?.method ?? "GET";
+    if (url.includes("/items") && method === "GET") {
+      return { ok: itemsOk, status: itemsOk ? 200 : 503, json: async () => itemsBody };
+    }
+    if (url.includes("/materials") && method === "POST") {
+      return { ok: materialsOk, status: materialsOk ? 200 : 400, json: async () => materialsBody };
+    }
+    throw new Error(`Unexpected fetch: ${method} ${url}`);
+  };
+}
+
+const MOCK_ITEMS_ALL_OK = {
+  items: Object.values(SUZURI_ITEM_IDS).map(id => ({ id, available: true })),
+};
+
+function makeMaterialsRes(overrideNames = {}) {
+  // overrideNames: { slug: "APIが返すname文字列" } でname表記ゆれを再現
+  const defaultNames = {
+    "t-shirt": "t-shirt", "sticker": "sticker",
+    "can-badge": "can-badge", "acrylic-keychain": "acrylic-keychain",
+  };
+  const names = { ...defaultNames, ...overrideNames };
+  return {
+    material: { id: 999 },
+    products: Object.entries(SUZURI_ITEM_IDS).map(([slug, id]) => ({
+      item:              { id, name: names[slug] ?? slug },
+      sampleUrl:         `https://suzuri.jp/${slug}`,
+      pngSampleImageUrl: `https://example.com/${slug}.png`,
+    })),
+  };
+}
+
+const ENV = { SUZURI_API_KEY: "test-key" };
+
+{
+  // 正常系: 全4商品がavailable:trueで返る
+  globalThis.fetch = makeSuzuriFetch(MOCK_ITEMS_ALL_OK, makeMaterialsRes());
+  const result = await createSuzuriProducts("data:image/jpeg;base64,abc", "テスト", ENV);
+  globalThis.fetch = _origFetch;
+  assert("正常系: materialIdが返る", result.materialId === 999);
+  assert("正常系: 全4商品が返る", result.products.length === 4);
+  assert("正常系: 全商品がavailable:true",
+    result.products.every(p => p.available === true));
+  assert("正常系: t-shirtのsampleUrlが設定される",
+    result.products.find(p => p.slug === "t-shirt")?.sampleUrl === "https://suzuri.jp/t-shirt");
+}
+
+{
+  // 【回帰テスト】item.nameが予期しない表記でもitemIdで正しくマッチする
+  // 旧コード（name文字列照合）ではすべてavailable:falseになっていたバグの再発防止
+  const nonStandardNames = {
+    "t-shirt":          "StandardTshirt",   // ハイフンなし・CamelCase
+    "sticker":          "Sticker",          // 先頭大文字
+    "can-badge":        "CanBadge",         // ハイフンなし
+    "acrylic-keychain": "AcrylicKeychain",  // ハイフンなし
+  };
+  globalThis.fetch = makeSuzuriFetch(MOCK_ITEMS_ALL_OK, makeMaterialsRes(nonStandardNames));
+  const result = await createSuzuriProducts("data:image/jpeg;base64,abc", "テスト", ENV);
+  globalThis.fetch = _origFetch;
+  const allAvailable = result.products.every(p => p.available === true);
+  assert("【回帰】item.name表記ゆれ時も全商品available:true（itemIdで照合）", allAvailable);
+  assert("【回帰】item.name='StandardTshirt'でt-shirtが正しくマッチ",
+    result.products.find(p => p.slug === "t-shirt")?.available === true);
+}
+
+{
+  // fail-open: GET /api/v1/items が503でも POST /materials が実行される
+  globalThis.fetch = makeSuzuriFetch({}, makeMaterialsRes(), { itemsOk: false });
+  let threw = false;
+  let result;
+  try {
+    result = await createSuzuriProducts("data:image/jpeg;base64,abc", "テスト", ENV);
+  } catch {
+    threw = true;
+  }
+  globalThis.fetch = _origFetch;
+  assert("fail-open: /items失敗でもcreateSuzuriProductsが成功する", !threw);
+  assert("fail-open: /items失敗時も全商品available:true（全件対象でmaterials呼び出し）",
+    result?.products.every(p => p.available === true));
+}
+
+{
+  // materialsレスポンスに含まれないslugはavailable:false
+  const partialMaterialsRes = {
+    material: { id: 777 },
+    products: [
+      // t-shirtのみ返す（他3つは在庫切れ等でSUZURI側が省略した想定）
+      { item: { id: 1, name: "t-shirt" }, sampleUrl: "https://suzuri.jp/t-shirt", pngSampleImageUrl: "" },
+    ],
+  };
+  globalThis.fetch = makeSuzuriFetch(MOCK_ITEMS_ALL_OK, partialMaterialsRes);
+  const result = await createSuzuriProducts("data:image/jpeg;base64,abc", "テスト", ENV);
+  globalThis.fetch = _origFetch;
+  assert("部分レスポンス: t-shirtのみavailable:true",
+    result.products.find(p => p.slug === "t-shirt")?.available === true);
+  assert("部分レスポンス: stickerはavailable:false",
+    result.products.find(p => p.slug === "sticker")?.available === false);
+  assert("部分レスポンス: 4件すべて返る", result.products.length === 4);
 }
 
 // ---------------------------------------------------------------------------

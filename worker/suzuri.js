@@ -60,6 +60,7 @@ export async function createSuzuriProducts(imageUrl, theme, env) {
 
   // 在庫チェック（fail-open: 失敗時は全アイテムを対象）
   const availableIds = await fetchAvailableItemIds(env);
+  console.log(`[suzuri] fetchAvailableItemIds result=${availableIds === null ? "null(fail-open)" : `Set(${[...availableIds].join(",")})`}`);
 
   // 在庫ありのアイテムのみで商品作成リストを生成
   const availableSlugs = new Set(
@@ -96,14 +97,15 @@ export async function createSuzuriProducts(imageUrl, theme, env) {
     throw new Error(`SUZURI商品生成失敗: status=${res.status} message=${data.message ?? JSON.stringify(data)}`);
   }
 
-  // 作成された商品のslugをマップ化
+  // 作成された商品をitemIdでマップ化（name文字列は表記ゆれがあるためIDで照合）
   const createdMap = new Map(
-    (data.products ?? []).map(p => [p.item?.name ?? "", p])
+    (data.products ?? []).map(p => [p.item?.id, p])
   );
+  console.log(`[suzuri] POST /materials 完了 materialId=${data.material.id} products=[${[...createdMap.keys()].join(",")}]`);
 
   // 全4商品をavailableフラグ付きで返す（在庫切れはavailable: false）
   const allProducts = Object.keys(SUZURI_ITEM_IDS).map(slug => {
-    const p = createdMap.get(slug);
+    const p = createdMap.get(SUZURI_ITEM_IDS[slug]);
     if (p) {
       return {
         slug,

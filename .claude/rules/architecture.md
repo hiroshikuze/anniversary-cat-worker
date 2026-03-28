@@ -220,7 +220,14 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 - **修正**: `GET /api/v1/items`で事前在庫チェック、`available: boolean`を返し、フロントでグレーアウト＋タップ時トースト表示
 - **場所**: `worker/suzuri.js` `fetchAvailableItemIds()` / `frontend/index.html` `showGoods()`
 
-### 8. SUZURIに著作権表示なし画像がアップロードされていた（2026-03）
+### 8. SUZURIの全商品が在庫切れ表示になる（2026-03）
+
+- **原因**: `createdMap`のキーを`p.item?.name`（文字列スラッグ）で作成していたが、SUZURIが返す`item.name`が`SUZURI_ITEM_IDS`のキーと表記が一致しなかった（例: `"StandardTshirt"` vs `"t-shirt"`）
+- **修正**: `p.item?.id`（整数）でマップを作成し、`createdMap.get(SUZURI_ITEM_IDS[slug])`で照合するよう変更。文字列の表記ゆれに依存しない
+- **再発防止**: `scripts/test-bot.mjs`に`【回帰】item.name表記ゆれ時も全商品available:true`テストを追加
+- **場所**: `worker/suzuri.js` `createSuzuriProducts()`
+
+### 9. SUZURIに著作権表示なし画像がアップロードされていた（2026-03）
 
 - **原因**: 画像生成後そのままSUZURI登録していた
 - **修正**: `/generate`からSUZURI登録を分離し、フロントCanvas合成（`applyWatermark()`）でウォーターマーク付与後に`POST /suzuri-create`で登録
