@@ -21,13 +21,36 @@ export const SUZURI_ITEM_IDS = {
 };
 
 /**
+ * SUZURI APIから在庫のあるアイテムIDのセットを取得する。
+ * fail-open: API失敗時は null を返し、呼び出し側は全アイテムを有効とみなす。
+ */
+async function fetchAvailableItemIds(env) {
+  try {
+    const res = await fetch(`${SUZURI_API_BASE}/items`, {
+      headers: { "Authorization": `Bearer ${env.SUZURI_API_KEY}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const items = data.items ?? [];
+    // available フィールドが明示的に false のアイテムを除外（ない場合は有効とみなす）
+    return new Set(items.filter(i => i.available !== false).map(i => i.id));
+  } catch {
+    return null; // fail-open
+  }
+}
+
+/**
  * SUZURI商品を動的生成する。
- * 4商品（Tシャツ・ステッカー・缶バッジ・アクリルキーホルダー）を一括生成する。
+ * 在庫確認後に有効な商品のみを作成し、在庫切れ商品は available: false で返す。
  *
- * @param {string} imageUrl - 商品に使用する画像のURL（R2の公開URL）
+ * @param {string} imageUrl - 商品に使用する画像URL（base64 data URIまたは公開URL）
  * @param {string} theme    - 記念日テーマ（マテリアルのタイトルに使用）
  * @param {object} env      - Cloudflare Workers の環境変数（SUZURI_API_KEY を含む）
- * @returns {{ materialId: number, products: Array<{ slug: string, sampleUrl: string, previewImageUrl: string }> }}
+ * @returns {{
+ *   materialId: number,
+ *   products: Array<{ slug: string, sampleUrl: string, previewImageUrl: string, available: boolean }>
+ * }}
  * @throws {Error} APIキー未設定またはAPIエラー時
  */
 export async function createSuzuriProducts(imageUrl, theme, env) {
@@ -35,10 +58,24 @@ export async function createSuzuriProducts(imageUrl, theme, env) {
     throw new Error("SUZURI_API_KEY が設定されていません");
   }
 
-  const products = Object.entries(SUZURI_ITEM_IDS).map(([, itemId]) => ({
-    itemId,
+  // 在庫チェック（fail-open: 失敗時は全アイテムを対象）
+  const availableIds = await fetchAvailableItemIds(env);
+
+  // 在庫ありのアイテムのみで商品作成リストを生成
+  const availableSlugs = new Set(
+    Object.entries(SUZURI_ITEM_IDS)
+      .filter(([, itemId]) => !availableIds || availableIds.has(itemId))
+      .map(([slug]) => slug)
+  );
+
+  const productsToCreate = [...availableSlugs].map(slug => ({
+    itemId:    SUZURI_ITEM_IDS[slug],
     published: true,
   }));
+
+  if (productsToCreate.length === 0) {
+    throw new Error("SUZURI: 在庫のある商品がありません");
+  }
 
   const res = await fetch(`${SUZURI_API_BASE}/materials`, {
     method: "POST",
@@ -48,8 +85,8 @@ export async function createSuzuriProducts(imageUrl, theme, env) {
     },
     body: JSON.stringify({
       texture: imageUrl,
-      title: theme,
-      products,
+      title:   theme,
+      products: productsToCreate,
     }),
     signal: AbortSignal.timeout(30_000),
   });
@@ -59,13 +96,29 @@ export async function createSuzuriProducts(imageUrl, theme, env) {
     throw new Error(`SUZURI商品生成失敗: status=${res.status} message=${data.message ?? JSON.stringify(data)}`);
   }
 
+  // 作成された商品のslugをマップ化
+  const createdMap = new Map(
+    (data.products ?? []).map(p => [p.item?.name ?? "", p])
+  );
+
+  // 全4商品をavailableフラグ付きで返す（在庫切れはavailable: false）
+  const allProducts = Object.keys(SUZURI_ITEM_IDS).map(slug => {
+    const p = createdMap.get(slug);
+    if (p) {
+      return {
+        slug,
+        sampleUrl:       p.sampleUrl        ?? "",
+        previewImageUrl: p.pngSampleImageUrl ?? p.sampleImageUrl ?? "",
+        available:       true,
+      };
+    }
+    // 在庫切れ等でスキップされたアイテム
+    return { slug, sampleUrl: "", previewImageUrl: "", available: false };
+  });
+
   return {
     materialId: data.material.id,
-    products: (data.products ?? []).map(p => ({
-      slug:            p.item?.name ?? "",
-      sampleUrl:       p.sampleUrl ?? "",
-      previewImageUrl: p.pngSampleImageUrl ?? p.sampleImageUrl ?? "",
-    })),
+    products:   allProducts,
   };
 }
 

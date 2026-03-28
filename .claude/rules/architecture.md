@@ -34,10 +34,44 @@ anniversary-cat-worker/
 | POST | `/research` | Gemini + Google Searchで記念日テキスト取得 |
 | POST | `/generate` | Gemini画像生成（Pollinationsフォールバックあり） |
 | GET | `/proxy-image?url=...` | Pollinations.ai画像のCORSプロキシ |
+| GET | `/image/:id` | R2保存画像の取得（`bot/YYYY-MM-DD`または`user/{uuid}`） |
+| POST | `/suzuri-create` | ウォーターマーク済み画像を受け取りSUZURI登録・R2メタ更新 |
 
 ### /proxy-imageのセキュリティ制約
 
 `https://image.pollinations.ai/`以外のURLはすべて403で拒否する（オープンプロキシ化防止）。
+
+---
+
+## /suzuri-createエンドポイント仕様
+
+フロントエンドがCanvasでウォーターマーク合成した画像をSUZURIに登録するエンドポイント。
+`/generate`からSUZURI登録処理を分離することで、合成済み画像のみSUZURIに送れる。
+
+**リクエスト:**
+
+```json
+{
+  "imageData": "<base64>",
+  "mimeType": "image/jpeg",
+  "theme": "記念日テーマ",
+  "r2Id": "user/{uuid}"
+}
+```
+
+- `r2Id`は任意。指定時はSUZURI登録完了後にR2の`meta.json`を`materialId`/`products`で更新する。
+
+**レスポンス:**
+
+```json
+{
+  "products": [{ "slug": "t-shirt", "sampleUrl": "...", "available": true }, ...],
+  "materialId": 12345
+}
+```
+
+- `SUZURI_API_KEY`未設定時は503を返す
+- レート制限なし（`/generate`のレート制限が上流で機能するため）
 
 ---
 
@@ -179,6 +213,19 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 - **原因**: リファクタリング時に`sourceUrl`の表示コードがフロントから消えていた
 - **修正**: `<p>`を`<a>`タグに変更し`researchData.sourceUrl`を`href`に設定
 - **場所**: `frontend/index.html` L155, L450-458
+
+### 7. SUZURI在庫切れ商品の購入リンクが有効になっていた（2026-03）
+
+- **原因**: 全商品に`<a>`タグを生成していたため、在庫切れでも遷移できた
+- **修正**: `GET /api/v1/items`で事前在庫チェック、`available: boolean`を返し、フロントでグレーアウト＋タップ時トースト表示
+- **場所**: `worker/suzuri.js` `fetchAvailableItemIds()` / `frontend/index.html` `showGoods()`
+
+### 8. SUZURIに著作権表示なし画像がアップロードされていた（2026-03）
+
+- **原因**: 画像生成後そのままSUZURI登録していた
+- **修正**: `/generate`からSUZURI登録を分離し、フロントCanvas合成（`applyWatermark()`）でウォーターマーク付与後に`POST /suzuri-create`で登録
+- **ウォーターマーク仕様**: 右下margin 12px・`© nyanmusu`・半透明黒背景（rgba(0,0,0,0.35)）・白テキスト・JPEG quality 0.92で出力
+- **場所**: `frontend/index.html` `applyWatermark()` / `_calcWatermarkLayout()` / `worker/index.js` `/suzuri-create`ハンドラ
 
 ---
 

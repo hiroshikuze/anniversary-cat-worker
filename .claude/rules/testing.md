@@ -4,7 +4,7 @@
 
 | スクリプト | 実行方法 | 外部API | 用途 |
 | --- | --- | --- | --- |
-| `scripts/test-bot.mjs` | `npm test` | 不要 | bluesky-bot.jsのロジック検証 |
+| `scripts/test-bot.mjs` | `npm test` | 不要 | bluesky-bot.js / r2-storage.js / ウォーターマーク座標計算のロジック検証 |
 | `scripts/test-suzuri-api.mjs` | `node scripts/test-suzuri-api.mjs` | SUZURI API | SUZURI API動作確認（実商品が生成される） |
 | `scripts/health-check.js` | GitHub Actionsのみ | 必要 | 本番Worker・Gemini APIのE2Eチェック |
 
@@ -12,6 +12,10 @@
 
 - 外部APIへの接続は`globalThis.fetch`をモックして代替する
 - Cloudflare Workers専用API（WASM等）はexportした差し替え関数（`_setXxxForTest`）でモックする
+- Cloudflare R2バケットはget/putを持つモックオブジェクトで代替する
+- ブラウザ専用API（Canvas・Image等）を使う関数は、**純粋な計算ロジックを切り出して**テストする
+  - `applyWatermark()`の座標計算 → `_calcWatermarkLayout()`として切り出し、`window._calcWatermarkLayout`に公開
+  - テストファイルに同名の同等関数を定義して計算結果を検証する
 - テストケースは「正常系」「境界値」「エラー系」の3パターンを書く
 - 新しい関数を追加したら対応するテストを`scripts/test-bot.mjs`に追加する
 

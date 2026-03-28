@@ -79,6 +79,33 @@
     }
     .btn-secondary:hover { background: #fbcfe8; }
 
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+      to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #be185d;
+      color: white;
+      padding: 10px 20px;
+      border-radius: 9999px;
+      font-size: 13px;
+      white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(190,24,93,0.3);
+      animation: toastIn 0.25s ease forwards;
+      z-index: 9999;
+      pointer-events: none;
+    }
+    .btn-disabled {
+      background: #f3f4f6;
+      color: #9ca3af;
+      cursor: not-allowed;
+      opacity: 0.7;
+    }
+
     .lang-toggle {
       display: inline-flex;
       align-items: center;
@@ -203,6 +230,9 @@
 
   </div><!-- /container -->
 
+  <!-- トースト通知（在庫切れ等） -->
+  <div id="g-toast" class="toast hidden"></div>
+
   <script>
     // ==========================================================
     // 設定: デプロイした Cloudflare Worker の URL
@@ -240,6 +270,7 @@
         noImageError:       "画像データなし。返却フィールド: ",
         rateLimitError:     "本日の利用上限に達しました。明日またお試しください。",
         goodsLabel:         "🛍️ グッズを買う（SUZURI）",
+        outOfStockToast:    "この商品は現在在庫切れです",
         expiredText:        "この記念日画像は期限切れです（7日間保存）",
         createNewBtn:       "🎨 今日の記念日で作る",
         dateLocale:         "ja-JP",
@@ -271,6 +302,7 @@
         noImageError:       "No image data. Returned fields: ",
         rateLimitError:     "You have reached today's usage limit. Please try again tomorrow.",
         goodsLabel:         "🛍️ Buy Goods (SUZURI)",
+        outOfStockToast:    "This item is currently out of stock",
         expiredText:        "This anniversary image has expired (stored for 7 days)",
         createNewBtn:       "🎨 Create Today's Anniversary",
         dateLocale:         "en-US",
@@ -435,22 +467,49 @@
     };
     const GOODS_ICONS = { "t-shirt": "👕", "sticker": "🏷️", "can-badge": "📌", "acrylic-keychain": "🔑" };
 
+    let _toastTimer = null;
+    function showToast(message, durationMs = 3000) {
+      const el = document.getElementById("g-toast");
+      el.textContent = message;
+      el.classList.remove("hidden");
+      el.style.animation = "none";
+      // reflow to restart animation
+      void el.offsetWidth;
+      el.style.animation = "";
+      clearTimeout(_toastTimer);
+      _toastTimer = setTimeout(() => el.classList.add("hidden"), durationMs);
+    }
+
     function showGoods(products) {
       const listEl = document.getElementById("g-goods-list");
       listEl.innerHTML = "";
+      let hasAny = false;
       for (const p of products) {
-        if (!p.sampleUrl) continue;
         const name = GOODS_NAMES[currentLang]?.[p.slug] ?? GOODS_NAMES.ja[p.slug] ?? p.slug;
         const icon = GOODS_ICONS[p.slug] ?? "🎁";
-        const a = document.createElement("a");
-        a.href = p.sampleUrl;
-        a.target = "_blank";
-        a.rel = "noopener";
-        a.className = "btn-secondary py-2 px-3 rounded-xl text-sm font-medium text-center flex items-center justify-center gap-1";
-        a.textContent = `${icon} ${name}`;
-        listEl.appendChild(a);
+        if (p.available && p.sampleUrl) {
+          const a = document.createElement("a");
+          a.href = p.sampleUrl;
+          a.target = "_blank";
+          a.rel = "noopener";
+          a.className = "btn-secondary py-2 px-3 rounded-xl text-sm font-medium text-center flex items-center justify-center gap-1";
+          a.textContent = `${icon} ${name}`;
+          listEl.appendChild(a);
+        } else {
+          const btn = document.createElement("button");
+          btn.className = "btn-disabled py-2 px-3 rounded-xl text-sm font-medium text-center flex items-center justify-center gap-1 w-full";
+          btn.textContent = `${icon} ${name}`;
+          btn.setAttribute("aria-disabled", "true");
+          btn.addEventListener("click", () => {
+            showToast(translations[currentLang].outOfStockToast);
+          });
+          listEl.appendChild(btn);
+        }
+        hasAny = true;
       }
-      document.getElementById("g-goods").classList.remove("hidden");
+      if (hasAny) {
+        document.getElementById("g-goods").classList.remove("hidden");
+      }
     }
 
     // ----------------------------------------------------------
@@ -499,6 +558,56 @@
         document.getElementById("g-error-text").textContent = err.message;
         showGenerate("error");
       }
+    }
+
+    // ----------------------------------------------------------
+    // Canvas ウォーターマーク合成（© nyanmusu を右下に描画）
+    // ----------------------------------------------------------
+    // 座標計算のみを行う純粋関数（テスト用にwindow経由でエクスポート）
+    function _calcWatermarkLayout(imgWidth, imgHeight, textWidth) {
+      const fontSize = Math.max(12, Math.round(imgWidth * 0.013));
+      const padX = 8, padY = 5, margin = 12;
+      const bgW  = textWidth + padX * 2;
+      const bgH  = fontSize  + padY * 2;
+      const bgX  = imgWidth  - bgW - margin;
+      const bgY  = imgHeight - bgH - margin;
+      return { bgX, bgY, bgW, bgH, fontSize, textX: bgX + padX, textY: bgY + bgH / 2 };
+    }
+    window._calcWatermarkLayout = _calcWatermarkLayout;
+
+    function applyWatermark(imageData, mimeType) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          canvas.width  = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0);
+
+          const text     = "© nyanmusu";
+          ctx.font       = `12px sans-serif`; // measureText用（仮）
+          const textW    = ctx.measureText(text).width;
+          const { bgX, bgY, bgW, bgH, fontSize, textX, textY } =
+            _calcWatermarkLayout(img.width, img.height, textW);
+          ctx.font = `${fontSize}px sans-serif`;
+
+          ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+          ctx.beginPath();
+          ctx.roundRect(bgX, bgY, bgW, bgH, 4);
+          ctx.fill();
+
+          ctx.fillStyle    = "rgba(255, 255, 255, 0.9)";
+          ctx.textBaseline = "middle";
+          ctx.fillText(text, textX, textY);
+
+          // data URL → base64部分のみ取り出す
+          const dataUrl   = canvas.toDataURL("image/jpeg", 0.92);
+          const base64    = dataUrl.split(",")[1];
+          resolve({ imageData: base64, mimeType: "image/jpeg" });
+        };
+        img.src = `data:${mimeType};base64,${imageData}`;
+      });
     }
 
     // ----------------------------------------------------------
@@ -570,10 +679,23 @@
           descEl.removeAttribute("href");
           descEl.classList.remove("underline");
         }
-        if (data.suzuriProducts?.length > 0) {
-          showGoods(data.suzuriProducts);
-        }
         showGenerate("result");
+
+        // ウォーターマーク合成 → SUZURI登録（best-effort: 失敗しても表示は維持）
+        applyWatermark(data.imageData, data.mimeType).then(watermarked =>
+          apiFetch("/suzuri-create", {
+            imageData: watermarked.imageData,
+            mimeType:  watermarked.mimeType,
+            theme:     researchData.theme,
+            r2Id:      data.id ?? null,
+          })
+        ).then(suzuriData => {
+          if (suzuriData?.products?.length > 0) {
+            showGoods(suzuriData.products);
+          }
+        }).catch(e => {
+          console.warn("[suzuri-create] 失敗:", e.message);
+        });
 
       } catch (err) {
         console.error("[generate] error:", err.message);

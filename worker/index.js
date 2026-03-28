@@ -10,7 +10,7 @@
  */
 
 import { runBot } from "./bluesky-bot.js";
-import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2 } from "./r2-storage.js";
+import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2 } from "./r2-storage.js";
 import { createSuzuriProducts, deleteSuzuriMaterial } from "./suzuri.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -546,30 +546,17 @@ export default {
         }
         result = await handleGenerate(body, apiKey);
 
-        // R2保存 + SUZURI商品生成（best-effort: 失敗しても imageData は返す）
-        const r2Id         = `user/${crypto.randomUUID()}`;
-        let materialId     = null;
-        let suzuriProducts = [];
-
-        if (env.SUZURI_API_KEY) {
-          try {
-            const dataUri = `data:${result.mimeType};base64,${result.imageData}`;
-            const suzuriResult = await createSuzuriProducts(dataUri, body.theme, env);
-            materialId     = suzuriResult.materialId;
-            suzuriProducts = suzuriResult.products;
-          } catch (e) {
-            console.warn(`[generate] SUZURI商品生成失敗: ${e.message}`);
-          }
-        }
-
+        // R2保存（best-effort: 失敗しても imageData は返す）
+        // SUZURI商品生成はフロントでウォーターマーク合成後に /suzuri-create で行う
         if (env.IMAGE_BUCKET) {
           try {
+            const r2Id = `user/${crypto.randomUUID()}`;
             const meta = {
               theme:       body.theme,
               description: body.description ?? "",
               sourceUrl:   "",
-              materialId,
-              products:    suzuriProducts,
+              materialId:  null,
+              products:    [],
               createdAt:   new Date().toISOString(),
             };
             await saveToR2(
@@ -578,16 +565,33 @@ export default {
               { data: result.imageData, mimeType: result.mimeType },
               meta
             );
-            result = { ...result, id: r2Id, suzuriProducts };
+            result = { ...result, id: r2Id };
           } catch (e) {
             console.warn(`[generate] R2保存失敗: ${e.message}`);
-            if (suzuriProducts.length > 0) {
-              result = { ...result, suzuriProducts };
-            }
           }
-        } else if (suzuriProducts.length > 0) {
-          result = { ...result, suzuriProducts };
         }
+      } else if (url.pathname === "/suzuri-create") {
+        // フロントでウォーターマーク合成済み画像を受け取りSUZURI登録する
+        if (!env.SUZURI_API_KEY) {
+          return Response.json({ error: "SUZURI_API_KEY が設定されていません" }, { status: 503, headers: corsH });
+        }
+        const { imageData, mimeType, theme, r2Id } = body;
+        if (!imageData || !mimeType || !theme) {
+          return Response.json({ error: "imageData, mimeType, theme が必要です" }, { status: 400, headers: corsH });
+        }
+        const dataUri = `data:${mimeType};base64,${imageData}`;
+        const suzuriResult = await createSuzuriProducts(dataUri, theme, env);
+        if (r2Id && env.IMAGE_BUCKET) {
+          try {
+            await updateMetaInR2(env.IMAGE_BUCKET, r2Id, {
+              materialId: suzuriResult.materialId,
+              products:   suzuriResult.products,
+            });
+          } catch (e) {
+            console.warn(`[suzuri-create] R2メタ更新失敗: ${e.message}`);
+          }
+        }
+        result = { products: suzuriResult.products, materialId: suzuriResult.materialId };
       } else {
         return new Response("Not Found", { status: 404, headers: corsH });
       }
