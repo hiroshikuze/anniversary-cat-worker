@@ -31,7 +31,7 @@ const SUZURI_BASE_PRICES = {
   "can-badge":       385,
   "acrylic-keychain": 495,
 };
-const SUZURI_TORIBUN = Object.fromEntries(
+export const SUZURI_TORIBUN = Object.fromEntries(
   Object.entries(SUZURI_BASE_PRICES).map(([slug, base]) => [
     slug,
     Math.floor(base * PRICE_MARGIN_RATE),
