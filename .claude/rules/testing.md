@@ -39,11 +39,22 @@
 
 ## Botの手動テスト（本番発火）
 
+Cloudflareダッシュボードは日本語UIの場合、英語UIとナビゲーションが異なる。
+
+### 手順（日本語UI）
+
 1. `wrangler secret list`で必要なシークレットが揃っているか確認
-2. Workers & Pages → `anniversary-cat-worker` → Triggersタブ
-3. Cron Triggersセクションの「Execute」ボタンをクリック
-4. Logsタブ → Begin log streamで結果を確認
-5. 確認後、Blueskyアプリで投稿を手動削除
+2. Workers & Pages → `anniversary-cat-worker` → **「コードを編集する」**ボタンをクリック
+3. エディタ右上の「HTTP」プルダウンを**「Scheduled」**に切り替える
+4. **「送信」**ボタンをクリック（Cron Triggerが即時発火）
+5. Workers & Pages → `anniversary-cat-worker` → **設定タブ** → **トリガーイベント**で実行履歴を確認
+6. ログ確認: 左サイドバー **「分析とログ」** → **「ログ」** → Begin log stream
+7. 確認後、Blueskyアプリ（`@nyanmusu.bsky.social`）で投稿を手動削除
+
+### 実行履歴の確認場所
+
+- 設定タブ → **トリガーイベント** → Cronイベント一覧（実行時刻・CPU時間・ステータス表示）
+- 「成功」が表示されればCron自体は正常動作
 
 ## SUZURI APIテストスクリプトの注意事項
 
