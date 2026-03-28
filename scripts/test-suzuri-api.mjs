@@ -54,10 +54,10 @@ if (items.length === 0) {
 
 console.log(`✅ ${items.length}件のアイテムを取得`);
 
-// 対象商品のitemIdを探す
-const TARGET_NAMES = ["スタンダードTシャツ", "ステッカー", "缶バッジ", "アクリルキーホルダー"];
+// 対象商品のitemIdを探す（APIはname=英語スラッグを返す）
+const TARGET_SLUGS = ["t-shirt", "sticker", "can-badge", "acrylic-keychain"];
 const targetItems = items.filter(item =>
-  TARGET_NAMES.some(name => item.name?.includes(name))
+  TARGET_SLUGS.some(slug => item.name === slug)
 );
 
 console.log("\n--- 対象商品のitemId ---");
