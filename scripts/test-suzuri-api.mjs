@@ -103,14 +103,14 @@ const materialsPayload = {
   products: [
     {
       itemId,
-      publishingStrategy: "everyone",  // "everyone" = 全体公開（"private" = 非公開）
+      published: true,  // true = 公開 / false = 非公開
     },
   ],
 };
 
 console.log(`  itemId: ${itemId}${tshirtItem ? "" : " (fallback)"}`);
 console.log(`  texture: ${TEST_IMAGE_URL}`);
-console.log(`  publishingStrategy: everyone`);
+console.log(`  published: true`);
 
 const materialsRes = await fetch(`${SUZURI_API_BASE}/materials`, {
   method: "POST",

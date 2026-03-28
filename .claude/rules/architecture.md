@@ -238,14 +238,61 @@ Bluesky投稿（Bot）
 SUZURIアカウントがあれば即時利用可能（招待制ではない）。
 
 - Developer Center（`https://suzuri.jp/developer`）にログイン状態でアクセスしAPIキーを取得する
-- `POST /api/v1/materials`に画像URLを渡すだけで商品が動的生成され、レスポンスに商品ページURLが返る
-- 認証はAPIキー方式（Bearer Token）で十分
+- 認証: `Authorization: Bearer <APIキー>`ヘッダー
+- レートリミット: レスポンスヘッダー `X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Reset` で確認可能
 
 ```text
 画像生成完了
   └→ POST /api/v1/materials（SUZURIに商品を動的生成）
-      └→ レスポンスのsampleUrlを「グッズを買う」ボタンのリンクに使う
+      └→ レスポンスのproducts[].sampleUrlを「グッズを買う」ボタンのリンクに使う
 ```
+
+**POST /api/v1/materials リクエスト仕様:**
+
+```json
+{
+  "texture": "https://example.com/image.png",
+  "title": "タイトル（任意）",
+  "price": 300,
+  "description": "説明文（任意）",
+  "products": [
+    {
+      "itemId": 1,
+      "published": true
+    }
+  ]
+}
+```
+
+| フィールド | 型 | 必須 | 説明 |
+| --- | --- | --- | --- |
+| `texture` | string | 必須 | 画像のURLまたはbase64データURI（どちらも可） |
+| `title` | string | 任意 | マテリアルのタイトル |
+| `price` | integer | 任意 | トリブン（クリエイター利益額）。0〜5000の範囲 |
+| `description` | string | 任意 | 説明文 |
+| `products[].itemId` | integer | 必須 | アイテム種別ID（`GET /api/v1/items`で確認） |
+| `products[].published` | boolean | 任意 | `true`=公開、`false`=非公開 |
+
+**POST /api/v1/materials レスポンス仕様（重要フィールド）:**
+
+| フィールド | 説明 |
+| --- | --- |
+| `material.id` | 作成されたマテリアルID（DELETE時に使用） |
+| `products[].sampleUrl` | SUZURIの商品詳細ページURL（「グッズを買う」ボタンのリンク先） |
+| `products[].sampleImageUrl` | グッズのプレビュー画像URL（WebP形式） |
+| `products[].pngSampleImageUrl` | グッズのプレビュー画像URL（PNG形式） |
+| `products[].item.id` | アイテム種別ID |
+| `products[].item.humanizeName` | アイテム名（日本語、例: `"スタンダードTシャツ"`） |
+
+**アイテムID一覧:** `GET /api/v1/items`で取得する。`scripts/test-suzuri-api.mjs`実行時にStep 1で全件表示される。
+
+**マテリアル削除:**
+
+```
+DELETE /api/v1/materials/{material_id}
+```
+
+テスト後の商品削除や、7日経過したマテリアルのクリーンアップに使用する。
 
 #### SUZURIショップ設定（完了済み・2026-03）
 
