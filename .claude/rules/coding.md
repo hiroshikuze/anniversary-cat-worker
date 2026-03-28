@@ -8,6 +8,7 @@
 - Cloudflare Workers環境ではNode.js専用API（`Buffer`等）を使っていないか
 - テスト用コードは`export`で切り出し、本番コードと混在させない
 - WASMモジュール（Photon等）は動的importで遅延ロードする（Node.jsテスト環境でのロード失敗回避）
+- 外部APIレスポンスをMapにする際は**整数IDをキーにする**。文字列名はAPIバージョン・ロケールで表記が変わり照合ミスの原因になる（過去バグ: SUZURI `item.name` 表記ゆれ）
 
 ## セキュリティ
 
