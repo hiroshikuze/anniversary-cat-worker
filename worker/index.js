@@ -575,12 +575,12 @@ export default {
         if (!env.SUZURI_API_KEY) {
           return Response.json({ error: "SUZURI_API_KEY が設定されていません" }, { status: 503, headers: corsH });
         }
-        const { imageData, mimeType, theme, r2Id } = body;
+        const { imageData, mimeType, theme, r2Id, slugs } = body;
         if (!imageData || !mimeType || !theme) {
           return Response.json({ error: "imageData, mimeType, theme が必要です" }, { status: 400, headers: corsH });
         }
         const dataUri = `data:${mimeType};base64,${imageData}`;
-        const suzuriResult = await createSuzuriProducts(dataUri, theme, env);
+        const suzuriResult = await createSuzuriProducts(dataUri, theme, env, slugs ?? null);
         if (r2Id && env.IMAGE_BUCKET) {
           try {
             await updateMetaInR2(env.IMAGE_BUCKET, r2Id, {

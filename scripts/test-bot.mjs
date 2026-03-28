@@ -444,6 +444,82 @@ const ENV = { SUZURI_API_KEY: "test-key" };
 }
 
 // ---------------------------------------------------------------------------
+// createSuzuriProducts: slugFilter
+// ---------------------------------------------------------------------------
+console.log("\n[createSuzuriProducts: slugFilter]");
+
+{
+  // slugFilter 指定時は指定スラッグのみ POST /materials に送る
+  let capturedSlugs;
+  const captureFetch2 = async (url, opts) => {
+    const method = opts?.method ?? "GET";
+    if (url.includes("/items") && method === "GET") {
+      return { ok: true, status: 200, json: async () => MOCK_ITEMS_ALL_OK };
+    }
+    if (url.includes("/materials") && method === "POST") {
+      const body = JSON.parse(opts.body);
+      capturedSlugs = body.products.map(p => p.itemId);
+      const filteredProducts = makeMaterialsRes().products.filter(p =>
+        body.products.some(pp => pp.itemId === p.item.id)
+      );
+      return { ok: true, status: 200, json: async () => ({ material: { id: 111 }, products: filteredProducts }) };
+    }
+    throw new Error(`Unexpected fetch: ${method} ${url}`);
+  };
+
+  globalThis.fetch = captureFetch2;
+  const result = await createSuzuriProducts("data:image/jpeg;base64,abc", "テスト", ENV, ["t-shirt", "sticker"]);
+  globalThis.fetch = _origFetch;
+
+  assert("slugFilter: POST /materials に t-shirt(1) と sticker(11) のみ送る",
+    capturedSlugs?.length === 2 &&
+    capturedSlugs.includes(SUZURI_ITEM_IDS["t-shirt"]) &&
+    capturedSlugs.includes(SUZURI_ITEM_IDS["sticker"]));
+  assert("slugFilter: can-badge は POST に含まれない",
+    !capturedSlugs?.includes(SUZURI_ITEM_IDS["can-badge"]));
+  assert("slugFilter: 結果は指定した2商品のみ返る", result.products.length === 2);
+  assert("slugFilter: t-shirt が available:true", result.products.find(p => p.slug === "t-shirt")?.available === true);
+  assert("slugFilter: sticker が available:true", result.products.find(p => p.slug === "sticker")?.available === true);
+}
+
+{
+  // slugFilter=null（未指定）時は従来通り全4商品
+  globalThis.fetch = makeSuzuriFetch(MOCK_ITEMS_ALL_OK, makeMaterialsRes());
+  const result = await createSuzuriProducts("data:image/jpeg;base64,abc", "テスト", ENV, null);
+  globalThis.fetch = _origFetch;
+  assert("slugFilter=null: 全4商品が返る", result.products.length === 4);
+}
+
+{
+  // center グループ（can-badge, acrylic-keychain）のみ
+  let capturedIds;
+  const captureFetch3 = async (url, opts) => {
+    const method = opts?.method ?? "GET";
+    if (url.includes("/items") && method === "GET") {
+      return { ok: true, status: 200, json: async () => MOCK_ITEMS_ALL_OK };
+    }
+    if (url.includes("/materials") && method === "POST") {
+      const body = JSON.parse(opts.body);
+      capturedIds = body.products.map(p => p.itemId);
+      const filteredProducts = makeMaterialsRes().products.filter(p =>
+        body.products.some(pp => pp.itemId === p.item.id)
+      );
+      return { ok: true, status: 200, json: async () => ({ material: { id: 222 }, products: filteredProducts }) };
+    }
+    throw new Error(`Unexpected fetch: ${method} ${url}`);
+  };
+  globalThis.fetch = captureFetch3;
+  const result = await createSuzuriProducts("data:image/jpeg;base64,abc", "テスト", ENV, ["can-badge", "acrylic-keychain"]);
+  globalThis.fetch = _origFetch;
+
+  assert("centerグループ: POST に can-badge(17) と acrylic-keychain(147) のみ含む",
+    capturedIds?.length === 2 &&
+    capturedIds.includes(SUZURI_ITEM_IDS["can-badge"]) &&
+    capturedIds.includes(SUZURI_ITEM_IDS["acrylic-keychain"]));
+  assert("centerグループ: 結果は2商品のみ返る", result.products.length === 2);
+}
+
+// ---------------------------------------------------------------------------
 // SUZURI_TORIBUN（価格計算）
 // ---------------------------------------------------------------------------
 console.log("\n[SUZURI_TORIBUN]");
@@ -563,28 +639,75 @@ function makeMockBucket(initialMeta) {
 // ---------------------------------------------------------------------------
 console.log("\n[_calcWatermarkLayout]");
 
-function calcWatermarkLayout(imgWidth, imgHeight, textWidth) {
+function calcWatermarkLayout(imgWidth, imgHeight, textWidth, position = "bottom-right") {
   const fontSize = Math.max(12, Math.round(imgWidth * 0.013));
   const padX = 8, padY = 5, margin = 12;
   const bgW  = textWidth + padX * 2;
   const bgH  = fontSize  + padY * 2;
-  const bgX  = imgWidth  - bgW - margin;
+  const bgX  = position === "bottom-center"
+    ? Math.round((imgWidth - bgW) / 2)
+    : imgWidth - bgW - margin;
   const bgY  = imgHeight - bgH - margin;
   return { bgX, bgY, bgW, bgH, fontSize, textX: bgX + padX, textY: bgY + bgH / 2 };
 }
 
 {
-  // 標準サイズ 1024×1024
+  // bottom-right（デフォルト）: 標準サイズ 1024×1024
   const layout = calcWatermarkLayout(1024, 1024, 80);
-  assert("1024px: fontSize = max(12, round(1024×0.013)) = 13", layout.fontSize === 13);
-  assert("1024px: bgW = textWidth + 16",  layout.bgW === 80 + 16);
-  assert("1024px: bgH = fontSize + 10",   layout.bgH === 13 + 10);
-  assert("1024px: 右端から margin だけ内側（bgX + bgW + margin = imgWidth）",
+  assert("bottom-right 1024px: fontSize = max(12, round(1024×0.013)) = 13", layout.fontSize === 13);
+  assert("bottom-right 1024px: bgW = textWidth + 16",  layout.bgW === 80 + 16);
+  assert("bottom-right 1024px: bgH = fontSize + 10",   layout.bgH === 13 + 10);
+  assert("bottom-right 1024px: 右端から margin だけ内側（bgX + bgW + margin = imgWidth）",
     layout.bgX + layout.bgW + 12 === 1024);
-  assert("1024px: 下端から margin だけ内側（bgY + bgH + margin = imgHeight）",
+  assert("bottom-right 1024px: 下端から margin だけ内側（bgY + bgH + margin = imgHeight）",
     layout.bgY + layout.bgH + 12 === 1024);
-  assert("1024px: textX = bgX + padX",    layout.textX === layout.bgX + 8);
-  assert("1024px: textY = 背景の垂直中央", layout.textY === layout.bgY + layout.bgH / 2);
+  assert("bottom-right 1024px: textX = bgX + padX",    layout.textX === layout.bgX + 8);
+  assert("bottom-right 1024px: textY = 背景の垂直中央", layout.textY === layout.bgY + layout.bgH / 2);
+}
+
+{
+  // position 省略時は bottom-right と同じ結果になる
+  const withDefault  = calcWatermarkLayout(1024, 1024, 80);
+  const withExplicit = calcWatermarkLayout(1024, 1024, 80, "bottom-right");
+  assert("position省略時は bottom-right と同じ bgX", withDefault.bgX === withExplicit.bgX);
+}
+
+{
+  // bottom-center: bgX が水平中央に配置される
+  const layout = calcWatermarkLayout(1024, 1024, 80);
+  const center = calcWatermarkLayout(1024, 1024, 80, "bottom-center");
+  assert("bottom-center 1024px: bgX = round((imgWidth - bgW) / 2)",
+    center.bgX === Math.round((1024 - center.bgW) / 2));
+  assert("bottom-center 1024px: bgX が bottom-right より左",
+    center.bgX < layout.bgX);
+  assert("bottom-center 1024px: bgY は bottom-right と同じ（下端margin固定）",
+    center.bgY === layout.bgY);
+  assert("bottom-center 1024px: textX = bgX + padX", center.textX === center.bgX + 8);
+}
+
+{
+  // bottom-center: 缶バッジの円形クロップ内に収まること（内接円チェック）
+  // 正方形画像の中心(W/2, H/2)から各コーナーの距離がW/2以内であること
+  const W = 1024, H = 1024, textW = 80;
+  const layout = calcWatermarkLayout(W, H, textW, "bottom-center");
+  const cx = W / 2, cy = H / 2, r = W / 2;
+  // 左端・右端の中央下部コーナーが円内に収まるか
+  const leftX  = layout.bgX;
+  const rightX = layout.bgX + layout.bgW;
+  const bottomY = layout.bgY + layout.bgH;
+  const leftInCircle  = (leftX  - cx) ** 2 + (bottomY - cy) ** 2 <= r ** 2;
+  const rightInCircle = (rightX - cx) ** 2 + (bottomY - cy) ** 2 <= r ** 2;
+  assert("bottom-center 1024px: ウォーターマーク左端が缶バッジ内接円内", leftInCircle);
+  assert("bottom-center 1024px: ウォーターマーク右端が缶バッジ内接円内", rightInCircle);
+}
+
+{
+  // bottom-center: 512×512 でも範囲内（Pollinationsフォールバック画像）
+  const layout = calcWatermarkLayout(512, 512, 80, "bottom-center");
+  assert("bottom-center 512px: bgX が 0 以上", layout.bgX >= 0);
+  assert("bottom-center 512px: bgY が 0 以上", layout.bgY >= 0);
+  assert("bottom-center 512px: bgX + bgW が imgWidth 以内", layout.bgX + layout.bgW <= 512);
+  assert("bottom-center 512px: bgY + bgH が imgHeight 以内", layout.bgY + layout.bgH <= 512);
 }
 
 {
@@ -594,20 +717,29 @@ function calcWatermarkLayout(imgWidth, imgHeight, textWidth) {
 }
 
 {
-  // テキスト幅が変わると bgW が変わる
+  // テキスト幅が変わると bgW が変わる（bottom-right）
   const a = calcWatermarkLayout(512, 512, 50);
   const b = calcWatermarkLayout(512, 512, 100);
-  assert("textWidth増加でbgWが増加する", b.bgW > a.bgW);
-  assert("textWidth増加でbgXが左にずれる（右端は固定）", b.bgX < a.bgX);
+  assert("bottom-right: textWidth増加でbgWが増加する", b.bgW > a.bgW);
+  assert("bottom-right: textWidth増加でbgXが左にずれる（右端は固定）", b.bgX < a.bgX);
 }
 
 {
-  // 最小想定サイズ 512×512 でも範囲内に収まること（Pollinationsフォールバック画像サイズ）
+  // テキスト幅が変わると bgW が変わる（bottom-center）
+  const a = calcWatermarkLayout(512, 512, 50, "bottom-center");
+  const b = calcWatermarkLayout(512, 512, 100, "bottom-center");
+  assert("bottom-center: textWidth増加でbgWが増加する", b.bgW > a.bgW);
+  assert("bottom-center: bgX は常に (imgWidth - bgW) / 2（中央固定）",
+    a.bgX === Math.round((512 - a.bgW) / 2) && b.bgX === Math.round((512 - b.bgW) / 2));
+}
+
+{
+  // bottom-right: 最小想定サイズ 512×512 でも範囲内に収まること
   const layout = calcWatermarkLayout(512, 512, 80);
-  assert("512px: bgX が 0 以上", layout.bgX >= 0);
-  assert("512px: bgY が 0 以上", layout.bgY >= 0);
-  assert("512px: bgX + bgW が imgWidth 以内", layout.bgX + layout.bgW <= 512);
-  assert("512px: bgY + bgH が imgHeight 以内", layout.bgY + layout.bgH <= 512);
+  assert("bottom-right 512px: bgX が 0 以上", layout.bgX >= 0);
+  assert("bottom-right 512px: bgY が 0 以上", layout.bgY >= 0);
+  assert("bottom-right 512px: bgX + bgW が imgWidth 以内", layout.bgX + layout.bgW <= 512);
+  assert("bottom-right 512px: bgY + bgH が imgHeight 以内", layout.bgY + layout.bgH <= 512);
 }
 
 // ---------------------------------------------------------------------------

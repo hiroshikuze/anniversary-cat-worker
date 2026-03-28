@@ -48,6 +48,15 @@ anniversary-cat-worker/
 フロントエンドがCanvasでウォーターマーク合成した画像をSUZURIに登録するエンドポイント。
 `/generate`からSUZURI登録処理を分離することで、合成済み画像のみSUZURIに送れる。
 
+商品ごとにウォーターマーク位置が異なるため、フロントから**2回**呼び出す（右下グループ・中央下グループ）。
+
+**ウォーターマーク位置ルール:**
+
+| 商品 | position | 理由 |
+| --- | --- | --- |
+| `t-shirt` / `sticker` | `bottom-right` | 矩形商品なのでコーナーが見切れない |
+| `can-badge` / `acrylic-keychain` | `bottom-center` | 円形・変形クロップでコーナーが切れるため |
+
 **リクエスト:**
 
 ```json
@@ -55,11 +64,13 @@ anniversary-cat-worker/
   "imageData": "<base64>",
   "mimeType": "image/jpeg",
   "theme": "記念日テーマ",
-  "r2Id": "user/{uuid}"
+  "r2Id": "user/{uuid}",
+  "slugs": ["t-shirt", "sticker"]
 }
 ```
 
-- `r2Id`は任意。指定時はSUZURI登録完了後にR2の`meta.json`を`materialId`/`products`で更新する。
+- `slugs`は任意。指定時はそのスラッグのみSUZURI登録する（未指定時は全4商品）。
+- `r2Id`は任意。指定時はSUZURI登録完了後にR2の`meta.json`を`materialId`/`products`で更新する。最初の呼び出しにのみ指定する。
 
 **レスポンス:**
 
@@ -231,8 +242,9 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 
 - **原因**: 画像生成後そのままSUZURI登録していた
 - **修正**: `/generate`からSUZURI登録を分離し、フロントCanvas合成（`applyWatermark()`）でウォーターマーク付与後に`POST /suzuri-create`で登録
-- **ウォーターマーク仕様**: 右下margin 12px・`© nyanmusu`・半透明黒背景（rgba(0,0,0,0.35)）・白テキスト・JPEG quality 0.92で出力
-- **場所**: `frontend/index.html` `applyWatermark()` / `_calcWatermarkLayout()` / `worker/index.js` `/suzuri-create`ハンドラ
+- **ウォーターマーク仕様**: margin 12px・`© nyanmusu`・半透明黒背景（rgba(0,0,0,0.35)）・白テキスト・JPEG quality 0.92で出力
+- **位置**: `position`引数で制御。`'bottom-right'`（右下）または`'bottom-center'`（中央下）。商品グループごとに使い分ける
+- **場所**: `frontend/index.html` `applyWatermark(imageData, mimeType, position)` / `_calcWatermarkLayout(imgW, imgH, textW, position)` / `worker/index.js` `/suzuri-create`ハンドラ
 
 ---
 
