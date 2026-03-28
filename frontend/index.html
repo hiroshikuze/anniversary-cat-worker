@@ -164,6 +164,12 @@
             💾 保存する
           </button>
         </div>
+
+        <!-- グッズを買うセクション（SUZURI商品がある場合のみ表示） -->
+        <div id="g-goods" class="hidden mt-4">
+          <p class="text-xs text-pink-400 text-center mb-2" data-i18n="goodsLabel">🛍️ グッズを買う（SUZURI）</p>
+          <div id="g-goods-list" class="grid grid-cols-2 gap-2"></div>
+        </div>
       </div>
 
       <!-- エラー -->
@@ -174,6 +180,18 @@
         <button onclick="startResearch()"
           class="w-full btn-secondary py-2 px-4 rounded-xl text-sm font-medium" data-i18n="retryBtn">
           🔄 再試行する
+        </button>
+      </div>
+
+      <!-- 期限切れ -->
+      <div id="g-expired" class="hidden">
+        <div class="bg-pink-50 border border-pink-100 rounded-2xl p-5 mb-3 text-center">
+          <p class="text-4xl mb-2">🐱💤</p>
+          <p class="text-sm text-pink-500" data-i18n="expiredText">この記念日画像は期限切れです（7日間保存）</p>
+        </div>
+        <button onclick="startResearch()"
+          class="w-full btn-primary text-white py-2.5 px-4 rounded-xl text-sm font-medium" data-i18n="createNewBtn">
+          🎨 今日の記念日で作る
         </button>
       </div>
     </div>
@@ -221,6 +239,9 @@
         imageLoadError:     "画像の読み込みに失敗しました。しばらく待ってから再度お試しください。",
         noImageError:       "画像データなし。返却フィールド: ",
         rateLimitError:     "本日の利用上限に達しました。明日またお試しください。",
+        goodsLabel:         "🛍️ グッズを買う（SUZURI）",
+        expiredText:        "この記念日画像は期限切れです（7日間保存）",
+        createNewBtn:       "🎨 今日の記念日で作る",
         dateLocale:         "ja-JP",
       },
       en: {
@@ -249,6 +270,9 @@
         imageLoadError:     "Failed to load the image. Please try again later.",
         noImageError:       "No image data. Returned fields: ",
         rateLimitError:     "You have reached today's usage limit. Please try again tomorrow.",
+        goodsLabel:         "🛍️ Buy Goods (SUZURI)",
+        expiredText:        "This anniversary image has expired (stored for 7 days)",
+        createNewBtn:       "🎨 Create Today's Anniversary",
         dateLocale:         "en-US",
       },
     };
@@ -329,6 +353,11 @@
         document.querySelector('[data-i18n="saveBtn"]').setAttribute("data-i18n", "shareBtn");
       }
       applyLang();
+      // ?id= パラメータがあれば共有された画像を読み込む（Blueskyリンク等）
+      const sharedId = new URLSearchParams(window.location.search).get("id");
+      if (sharedId) {
+        loadSharedImage(sharedId);
+      }
       // Service Worker の登録
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/anniversary-cat-worker/sw.js')
@@ -392,9 +421,84 @@
     // UI 状態切り替えヘルパー
     // ----------------------------------------------------------
     function showGenerate(state) {
-      ["waiting", "loading", "result", "error"].forEach((s) => {
+      ["waiting", "loading", "result", "error", "expired"].forEach((s) => {
         document.getElementById("g-" + s).classList.toggle("hidden", s !== state);
       });
+    }
+
+    // ----------------------------------------------------------
+    // グッズ表示
+    // ----------------------------------------------------------
+    const GOODS_NAMES = {
+      ja: { "t-shirt": "Tシャツ", "sticker": "ステッカー", "can-badge": "缶バッジ", "acrylic-keychain": "アクキー" },
+      en: { "t-shirt": "T-Shirt", "sticker": "Sticker",    "can-badge": "Can Badge", "acrylic-keychain": "Acrylic Keychain" },
+    };
+    const GOODS_ICONS = { "t-shirt": "👕", "sticker": "🏷️", "can-badge": "📌", "acrylic-keychain": "🔑" };
+
+    function showGoods(products) {
+      const listEl = document.getElementById("g-goods-list");
+      listEl.innerHTML = "";
+      for (const p of products) {
+        if (!p.sampleUrl) continue;
+        const name = GOODS_NAMES[currentLang]?.[p.slug] ?? GOODS_NAMES.ja[p.slug] ?? p.slug;
+        const icon = GOODS_ICONS[p.slug] ?? "🎁";
+        const a = document.createElement("a");
+        a.href = p.sampleUrl;
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.className = "btn-secondary py-2 px-3 rounded-xl text-sm font-medium text-center flex items-center justify-center gap-1";
+        a.textContent = `${icon} ${name}`;
+        listEl.appendChild(a);
+      }
+      document.getElementById("g-goods").classList.remove("hidden");
+    }
+
+    // ----------------------------------------------------------
+    // 共有URLから画像を読み込む（?id=bot/YYYY-MM-DD 等）
+    // ----------------------------------------------------------
+    async function loadSharedImage(id) {
+      showGenerate("loading");
+      try {
+        const res = await fetch(`${WORKER_URL}/image/${id}`);
+        if (res.status === 404) {
+          showGenerate("expired");
+          return;
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        researchData = { theme: data.theme, description: data.description, sourceUrl: data.sourceUrl };
+
+        const displayUrl = `data:${data.mimeType};base64,${data.imageData}`;
+        const imgEl = document.getElementById("g-image");
+        await new Promise((resolve, reject) => {
+          imgEl.onload = resolve;
+          imgEl.onerror = reject;
+          imgEl.src = displayUrl;
+        });
+        lastImageUrl = displayUrl;
+
+        document.getElementById("g-result-label").textContent = data.theme ?? "";
+        const descEl = document.getElementById("g-result-description");
+        descEl.textContent = data.description ?? "";
+        if (data.sourceUrl) {
+          descEl.href = data.sourceUrl;
+          descEl.classList.add("underline");
+        } else {
+          descEl.removeAttribute("href");
+          descEl.classList.remove("underline");
+        }
+
+        document.getElementById("g-goods").classList.add("hidden");
+        if (data.products?.length > 0) {
+          showGoods(data.products);
+        }
+
+        showGenerate("result");
+      } catch (err) {
+        document.getElementById("g-error-text").textContent = err.message;
+        showGenerate("error");
+      }
     }
 
     // ----------------------------------------------------------
@@ -408,6 +512,7 @@
       }
       researchData = null;
       lastImageUrl = null;
+      document.getElementById("g-goods").classList.add("hidden");
       showGenerate("loading");
 
       try {
@@ -432,6 +537,7 @@
         return;
       }
       lastImageUrl = null;
+      document.getElementById("g-goods").classList.add("hidden");
       showGenerate("loading");
 
       try {
@@ -463,6 +569,9 @@
         } else {
           descEl.removeAttribute("href");
           descEl.classList.remove("underline");
+        }
+        if (data.suzuriProducts?.length > 0) {
+          showGoods(data.suzuriProducts);
         }
         showGenerate("result");
 
