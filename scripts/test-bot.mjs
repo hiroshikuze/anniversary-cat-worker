@@ -10,7 +10,7 @@
  */
 
 import { updateMetaInR2 } from "../worker/r2-storage.js";
-import { createSuzuriProducts, SUZURI_ITEM_IDS } from "../worker/suzuri.js";
+import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN } from "../worker/suzuri.js";
 
 import {
   buildPostText, buildHashtagFacets, buildUrlFacets, notifyDiscord, runBot,
@@ -441,6 +441,62 @@ const ENV = { SUZURI_API_KEY: "test-key" };
   assert("部分レスポンス: stickerはavailable:false",
     result.products.find(p => p.slug === "sticker")?.available === false);
   assert("部分レスポンス: 4件すべて返る", result.products.length === 4);
+}
+
+// ---------------------------------------------------------------------------
+// SUZURI_TORIBUN（価格計算）
+// ---------------------------------------------------------------------------
+console.log("\n[SUZURI_TORIBUN]");
+
+{
+  // ベース価格 × 30% 切り捨てが正しいこと
+  assert("t-shirt: Math.floor(1980 × 0.30) = 594",        SUZURI_TORIBUN["t-shirt"]         === 594);
+  assert("sticker: Math.floor(385 × 0.30) = 115",         SUZURI_TORIBUN["sticker"]          === 115);
+  assert("can-badge: Math.floor(385 × 0.30) = 115",       SUZURI_TORIBUN["can-badge"]        === 115);
+  assert("acrylic-keychain: Math.floor(495 × 0.30) = 148", SUZURI_TORIBUN["acrylic-keychain"] === 148);
+  // 全商品に正の取り分が設定されている
+  const allPositive = Object.values(SUZURI_TORIBUN).every(v => v > 0);
+  assert("全商品のトリブンが 0 より大きい", allPositive);
+  // SUZURIの上限（5000円）を超えていない
+  const withinLimit = Object.values(SUZURI_TORIBUN).every(v => v <= 5000);
+  assert("全商品のトリブンが上限 5000 円以内", withinLimit);
+  // SUZURI_ITEM_IDS の全スラッグに対応するトリブンが存在する
+  const allSlugsHavePrice = Object.keys(SUZURI_ITEM_IDS).every(slug => slug in SUZURI_TORIBUN);
+  assert("全スラッグに対応するトリブンが定義されている", allSlugsHavePrice);
+}
+
+// ---------------------------------------------------------------------------
+// createSuzuriProducts: price フィールド検証
+// ---------------------------------------------------------------------------
+console.log("\n[createSuzuriProducts: トリブン価格]");
+
+{
+  // POST /materials リクエストに各商品の price が含まれること
+  let capturedBody;
+  const captureFetch = async (url, opts) => {
+    const method = opts?.method ?? "GET";
+    if (url.includes("/items") && method === "GET") {
+      return { ok: true, status: 200, json: async () => MOCK_ITEMS_ALL_OK };
+    }
+    if (url.includes("/materials") && method === "POST") {
+      capturedBody = JSON.parse(opts.body);
+      return { ok: true, status: 200, json: async () => makeMaterialsRes() };
+    }
+    throw new Error(`Unexpected fetch: ${method} ${url}`);
+  };
+  globalThis.fetch = captureFetch;
+  await createSuzuriProducts("data:image/jpeg;base64,abc", "テスト", ENV);
+  globalThis.fetch = _origFetch;
+
+  assert("POST /materials に products が含まれる", Array.isArray(capturedBody?.products));
+  const tshirt = capturedBody?.products?.find(p => p.itemId === SUZURI_ITEM_IDS["t-shirt"]);
+  const sticker = capturedBody?.products?.find(p => p.itemId === SUZURI_ITEM_IDS["sticker"]);
+  assert("t-shirt の price が SUZURI_TORIBUN と一致（594円）",
+    tshirt?.price === SUZURI_TORIBUN["t-shirt"]);
+  assert("sticker の price が SUZURI_TORIBUN と一致（115円）",
+    sticker?.price === SUZURI_TORIBUN["sticker"]);
+  const allHavePrice = capturedBody?.products?.every(p => typeof p.price === "number" && p.price > 0);
+  assert("全商品に正の price が設定されている", allHavePrice);
 }
 
 // ---------------------------------------------------------------------------

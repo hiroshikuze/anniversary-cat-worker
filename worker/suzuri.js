@@ -21,6 +21,24 @@ export const SUZURI_ITEM_IDS = {
 };
 
 /**
+ * クリエイター取り分（トリブン）= ベース価格 × 30%（切り捨て）
+ * ベース価格は GET /api/v1/items の price フィールドより（2026-03確認済み）
+ */
+const PRICE_MARGIN_RATE = 0.30;
+const SUZURI_BASE_PRICES = {
+  "t-shirt":         1980,
+  "sticker":         385,
+  "can-badge":       385,
+  "acrylic-keychain": 495,
+};
+export const SUZURI_TORIBUN = Object.fromEntries(
+  Object.entries(SUZURI_BASE_PRICES).map(([slug, base]) => [
+    slug,
+    Math.floor(base * PRICE_MARGIN_RATE),
+  ])
+);
+
+/**
  * SUZURI APIから在庫のあるアイテムIDのセットを取得する。
  * fail-open: API失敗時は null を返し、呼び出し側は全アイテムを有効とみなす。
  */
@@ -71,6 +89,7 @@ export async function createSuzuriProducts(imageUrl, theme, env) {
 
   const productsToCreate = [...availableSlugs].map(slug => ({
     itemId:    SUZURI_ITEM_IDS[slug],
+    price:     SUZURI_TORIBUN[slug],
     published: true,
   }));
 
