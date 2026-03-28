@@ -106,6 +106,20 @@ export async function deleteFromR2(bucket, id) {
   }
 }
 
+/**
+ * R2のメタデータを部分更新する。画像は変更せずmeta.jsonのみ上書きする。
+ * @param {R2Bucket} bucket
+ * @param {string} id
+ * @param {object} updates - 既存メタに上書きするフィールド
+ */
+export async function updateMetaInR2(bucket, id, updates) {
+  const existing = await getMetaFromR2(bucket, id);
+  if (!existing) return;
+  await bucket.put(`${id}/meta.json`, JSON.stringify({ ...existing, ...updates }), {
+    httpMetadata: { contentType: "application/json" },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // ユーティリティ
 // ---------------------------------------------------------------------------

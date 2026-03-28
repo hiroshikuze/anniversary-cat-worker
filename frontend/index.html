@@ -561,6 +561,47 @@
     }
 
     // ----------------------------------------------------------
+    // Canvas ウォーターマーク合成（© nyanmusu を右下に描画）
+    // ----------------------------------------------------------
+    function applyWatermark(imageData, mimeType) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          canvas.width  = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0);
+
+          const text     = "© nyanmusu";
+          const fontSize = Math.max(12, Math.round(img.width * 0.013));
+          ctx.font       = `${fontSize}px sans-serif`;
+          const textW    = ctx.measureText(text).width;
+          const padX = 8, padY = 5, margin = 12;
+          const bgW  = textW + padX * 2;
+          const bgH  = fontSize + padY * 2;
+          const bgX  = img.width  - bgW - margin;
+          const bgY  = img.height - bgH - margin;
+
+          ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+          ctx.beginPath();
+          ctx.roundRect(bgX, bgY, bgW, bgH, 4);
+          ctx.fill();
+
+          ctx.fillStyle    = "rgba(255, 255, 255, 0.9)";
+          ctx.textBaseline = "middle";
+          ctx.fillText(text, bgX + padX, bgY + bgH / 2);
+
+          // data URL → base64部分のみ取り出す
+          const dataUrl   = canvas.toDataURL("image/jpeg", 0.92);
+          const base64    = dataUrl.split(",")[1];
+          resolve({ imageData: base64, mimeType: "image/jpeg" });
+        };
+        img.src = `data:${mimeType};base64,${imageData}`;
+      });
+    }
+
+    // ----------------------------------------------------------
     // リサーチ → 画像生成
     // ----------------------------------------------------------
     async function startResearch() {
@@ -629,10 +670,23 @@
           descEl.removeAttribute("href");
           descEl.classList.remove("underline");
         }
-        if (data.suzuriProducts?.length > 0) {
-          showGoods(data.suzuriProducts);
-        }
         showGenerate("result");
+
+        // ウォーターマーク合成 → SUZURI登録（best-effort: 失敗しても表示は維持）
+        applyWatermark(data.imageData, data.mimeType).then(watermarked =>
+          apiFetch("/suzuri-create", {
+            imageData: watermarked.imageData,
+            mimeType:  watermarked.mimeType,
+            theme:     researchData.theme,
+            r2Id:      data.id ?? null,
+          })
+        ).then(suzuriData => {
+          if (suzuriData?.products?.length > 0) {
+            showGoods(suzuriData.products);
+          }
+        }).catch(e => {
+          console.warn("[suzuri-create] 失敗:", e.message);
+        });
 
       } catch (err) {
         console.error("[generate] error:", err.message);
