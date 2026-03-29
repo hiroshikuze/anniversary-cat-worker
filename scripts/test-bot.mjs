@@ -17,7 +17,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
-import { pickPersona } from "../worker/index.js";
+import { pickPersona, pickPersonality } from "../worker/index.js";
 
 let passed = 0;
 let failed = 0;
@@ -786,6 +786,62 @@ console.log("\n[pickPersona]");
   }
   assert(`Common(w=20) の出現数がUltra Rare(w=1)より多い (${commonCount} vs ${rareCount})`,
     commonCount > rareCount);
+}
+
+// ---------------------------------------------------------------------------
+// pickPersonality
+// ---------------------------------------------------------------------------
+console.log("\n[pickPersonality]");
+{
+  const personality = pickPersonality();
+  assert("文字列を返す", typeof personality === "string" && personality.length > 0);
+  assert("ASCII のみ（Pollinations プロンプトに安全）",
+    /^[\x20-\x7E]+$/.test(personality));
+}
+
+{
+  // 除外すべき攻撃的・神経質ワードが含まれていないこと
+  const FORBIDDEN = ["aggress", "fearful", "anxious", "nervous", "attack", "hostile", "impulsive", "erratic"];
+  let violations = 0;
+  for (let i = 0; i < 200; i++) {
+    const p = pickPersonality().toLowerCase();
+    if (FORBIDDEN.some(w => p.includes(w))) violations++;
+  }
+  assert("攻撃的・神経質ワードが含まれない", violations === 0);
+}
+
+{
+  // 1000回試行して全5タイプが出現すること
+  const seen = new Set();
+  for (let i = 0; i < 1000; i++) seen.add(pickPersonality());
+  assert("1000回試行で全5タイプが出現する", seen.size === 5);
+}
+
+{
+  // Cantankerous（ツンデレ・weight=3）が10%以下であること
+  const tsundere = "sitting with back slightly turned, dignified aloof expression, secretly glancing back";
+  let count = 0;
+  for (let i = 0; i < 1000; i++) {
+    if (pickPersonality() === tsundere) count++;
+  }
+  assert(`Cantankerous の出現率が10%以下 (実測: ${count}/1000)`, count <= 100);
+}
+
+{
+  // Human Cat（weight=35）が Cantankerous（weight=3）より多く出現すること
+  const humanCat     = "gazing lovingly at viewer, sitting close, soft gentle expression";
+  const cantankerous = "sitting with back slightly turned, dignified aloof expression, secretly glancing back";
+  let humanCount = 0;
+  let tsundereCount = 0;
+  for (let i = 0; i < 1000; i++) {
+    const p = pickPersonality();
+    if (p === humanCat)     humanCount++;
+    if (p === cantankerous) tsundereCount++;
+  }
+  assert(
+    `Human Cat(w=35) の出現数が Cantankerous(w=3) より多い (${humanCount} vs ${tsundereCount})`,
+    humanCount > tsundereCount
+  );
 }
 
 // ---------------------------------------------------------------------------

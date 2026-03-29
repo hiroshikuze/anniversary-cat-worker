@@ -128,6 +128,29 @@ localStorage.setItem('bypassToken', '<シークレット値>')
 - ペルソナ文字列は**ASCIIのみ**（Pollinations APIのURL埋め込みで安全）
 - ペルソナのカスタマイズ・追加は`CAT_PERSONAS`配列を編集するだけでよい
 
+---
+
+## 猫の性格（CAT_PERSONALITIES / pickPersonality）
+
+`worker/index.js`の`CAT_PERSONALITIES`配列と`pickPersonality()`関数で、猫のポーズ・表情・テーマアイテムとの関わり方をランダムに決定する。毛柄（`CAT_PERSONAS`）とは**独立したランダム選択**であり、両者を組み合わせることで「オレンジタビーのHunter Cat」など多様な組み合わせが生まれる。
+
+### 性格タイプと重み
+
+リンカーン大学Finka(2017)の5タイプ分類をベースに、本サービスのトーン（記念日・かわいい）に合わせて調整。攻撃的・神経質・触られ嫌い・衝動的なタイプは除外し、ツンデレ（Cantankerous）はRareとして残した。
+
+| タイプ | 重み | 確率 | プロンプト的表現 |
+| --- | --- | --- | --- |
+| Human Cat（甘えん坊） | 35 | 35% | 見つめる・寄り添う・穏やか表情 |
+| Hunter Cat（遊び好き） | 30 | 30% | 前傾姿勢・明るい目・テーマアイテムに手を伸ばす |
+| Inquisitive Cat（好奇心旺盛） | 25 | 25% | 大きな目・身を乗り出してテーマアイテムを調べる |
+| Cat's Cat（マイペース） | 7 | 7% | セルフグルーミング・落ち着いた佇まい |
+| Cantankerous Cat（ツンデレ） | 3 | 3% | 背を向けつつそっと振り返る・気品ある表情 |
+
+### 設計方針
+
+- `pickPersonality()`は`handleGenerate()`内で`pickPersona()`と同じタイミングで**1回だけ**呼び出す
+- 性格文字列は**ASCIIのみ**（Pollinations APIのURL埋め込みで安全）
+- 攻撃性・神経質・衝動性に関連する表現は意図的に除外している
 
 ---
 
