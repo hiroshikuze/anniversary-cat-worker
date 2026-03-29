@@ -17,6 +17,8 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
+import { pickPersona } from "../worker/index.js";
+
 let passed = 0;
 let failed = 0;
 
@@ -740,6 +742,50 @@ function calcWatermarkLayout(imgWidth, imgHeight, textWidth, position = "bottom-
   assert("bottom-right 512px: bgY が 0 以上", layout.bgY >= 0);
   assert("bottom-right 512px: bgX + bgW が imgWidth 以内", layout.bgX + layout.bgW <= 512);
   assert("bottom-right 512px: bgY + bgH が imgHeight 以内", layout.bgY + layout.bgH <= 512);
+}
+
+// ---------------------------------------------------------------------------
+// pickPersona
+// ---------------------------------------------------------------------------
+console.log("\n[pickPersona]");
+{
+  const persona = pickPersona();
+  assert("文字列を返す", typeof persona === "string" && persona.length > 0);
+  assert("ASCII のみ（Pollinations プロンプトに安全）",
+    /^[\x20-\x7E]+$/.test(persona));
+}
+
+{
+  // 1000回試行して全ペルソナが少なくとも1回出現することを確認
+  const seen = new Set();
+  for (let i = 0; i < 1000; i++) seen.add(pickPersona());
+  assert("1000回試行で Ultra Rare 以外の全ペルソナが出現する（レパートリー確認）",
+    seen.size >= 10);
+}
+
+{
+  // Ultra Rare（weight=1）が1000回中に高頻度で出ないこと（上限10%）
+  const ultraRare = "smoke-patterned Persian, pale undercoat with dark silver tips";
+  let count = 0;
+  for (let i = 0; i < 1000; i++) {
+    if (pickPersona() === ultraRare) count++;
+  }
+  assert(`Ultra Rare の出現率が10%以下 (実測: ${count}/1000)`, count <= 100);
+}
+
+{
+  // 最頻出ペルソナ（weight=20）が最低頻出ペルソナ（weight=1）より多く出現すること
+  const mostCommon = "orange mackerel tabby with white chest, amber eyes";
+  const ultraRare  = "smoke-patterned Persian, pale undercoat with dark silver tips";
+  let commonCount = 0;
+  let rareCount = 0;
+  for (let i = 0; i < 1000; i++) {
+    const p = pickPersona();
+    if (p === mostCommon) commonCount++;
+    if (p === ultraRare)  rareCount++;
+  }
+  assert(`Common(w=20) の出現数がUltra Rare(w=1)より多い (${commonCount} vs ${rareCount})`,
+    commonCount > rareCount);
 }
 
 // ---------------------------------------------------------------------------

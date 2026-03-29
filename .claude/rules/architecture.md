@@ -107,6 +107,29 @@ localStorage.setItem('bypassToken', '<シークレット値>')
 
 ---
 
+## 猫ペルソナ（CAT_PERSONAS / pickPersona）
+
+`worker/index.js`の`CAT_PERSONAS`配列と`pickPersona()`関数で、生成される猫の毛柄・品種をランダムに決定する。
+
+### レアリティ設計
+
+猫の毛柄遺伝的頻度に基づいた重み付き確率を採用。景品表示法の射幸心規制は**金銭・景品を伴う商取引**が前提のため、無料の画像生成サービスである本サービスは非該当。
+
+| レアリティ | 重み合計 | 確率 | 例 |
+| --- | --- | --- | --- |
+| Common | 60 | 60% | オレンジタビー、白黒タキシード等 |
+| Uncommon | 25 | 25% | トーティシェル、スコティッシュフォールド等 |
+| Rare | 12 | 12% | 三毛、ベンガル |
+| Ultra Rare | 3 | 3% | オスのトーティ（約1/3000匹）、スモークペルシャ |
+
+### 設計方針
+
+- `pickPersona()`は`handleGenerate()`内で**1回だけ**呼び出し、GeminiプロンプトとPollinationsプロンプトの**両方に同じペルソナ**を渡す（フォールバック時も見た目が揃う）
+- ペルソナ文字列は**ASCIIのみ**（Pollinations APIのURL埋め込みで安全）
+- ペルソナのカスタマイズ・追加は`CAT_PERSONAS`配列を編集するだけでよい
+
+---
+
 ## Geminiモデル管理
 
 ### 画像生成モデル（`worker/index.js`の`KNOWN_CANDIDATES`）

@@ -296,7 +296,39 @@ function arrayBufferToBase64(buffer) {
   return btoa(binary);
 }
 
-function buildPollinationsUrl(theme, description, model = "flux") {
+// ---------------------------------------------------------------------------
+// 猫ペルソナ（重み付き確率でランダム選択）
+// ---------------------------------------------------------------------------
+const CAT_PERSONAS = [
+  // Common (weight 60)
+  { weight: 20, desc: "orange mackerel tabby with white chest, amber eyes" },
+  { weight: 15, desc: "gray and black classic tabby, swirling coat pattern" },
+  { weight: 10, desc: "black and white tuxedo cat" },
+  { weight: 10, desc: "silver tabby with distinct striped markings" },
+  { weight:  5, desc: "cream solid-colored cat with soft fluffy coat" },
+  // Uncommon (weight 25)
+  { weight: 10, desc: "tortoiseshell cat with brindled black and orange fur" },
+  { weight:  8, desc: "gray Scottish Fold with folded ears and round face" },
+  { weight:  7, desc: "white Ragdoll with blue eyes and fluffy long coat" },
+  // Rare (weight 12)
+  { weight:  7, desc: "calico cat with white, black, and orange tri-color patches" },
+  { weight:  5, desc: "Bengal cat with leopard-like spotted rosette pattern" },
+  // Ultra Rare (weight 3)
+  { weight:  2, desc: "male tortoiseshell cat, extremely rare coloring" },
+  { weight:  1, desc: "smoke-patterned Persian, pale undercoat with dark silver tips" },
+];
+
+export function pickPersona() {
+  const total = CAT_PERSONAS.reduce((s, p) => s + p.weight, 0);
+  let r = Math.random() * total;
+  for (const p of CAT_PERSONAS) {
+    r -= p.weight;
+    if (r <= 0) return p.desc;
+  }
+  return CAT_PERSONAS[0].desc;
+}
+
+function buildPollinationsUrl(theme, description, persona, model = "flux") {
   // Pollinations API のプロンプトは ASCII のみ使用
   // 日本語等の非ASCII文字はURLパス内でサーバー側エラー(500)の原因になるためフィルタリング
   const toAscii = (s) => (s ?? "").replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
@@ -304,7 +336,7 @@ function buildPollinationsUrl(theme, description, model = "flux") {
   const descAscii  = toAscii(description).slice(0, 30);
   const subject    = themeAscii || descAscii || "anniversary";
   const prompt =
-    `kawaii watercolor cat, ${subject}, pastel colors, white background, kawaii style`;
+    `kawaii watercolor ${persona}, ${subject}, pastel colors, white background, kawaii style`;
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
@@ -319,8 +351,10 @@ async function handleGenerate(body, apiKey) {
   const { theme, description } = body;
   if (!theme) throw new Error("theme フィールドが必要です");
 
+  const persona = pickPersona();
   const prompt =
     `Create a cute kawaii watercolor style cat character illustration. ` +
+    `Cat appearance: ${persona}. ` +
     `Theme: ${theme}. ` +
     (description ? `Background: ${description}. ` : "") +
     `Style: soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ` +
@@ -383,7 +417,7 @@ async function handleGenerate(body, apiKey) {
     const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
     return Promise.any(
       MODELS.map(async (model) => {
-        const url = buildPollinationsUrl(theme, description, model);
+        const url = buildPollinationsUrl(theme, description, persona, model);
         console.log(`[pollinations] trying model=${model}`);
         const imgRes = await fetch(url, { signal: AbortSignal.timeout(POLLINATIONS_TIMEOUT_MS) });
         if (!imgRes.ok) throw new Error(`status=${imgRes.status}`);
