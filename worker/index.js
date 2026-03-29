@@ -296,15 +296,74 @@ function arrayBufferToBase64(buffer) {
   return btoa(binary);
 }
 
-function buildPollinationsUrl(theme, description, model = "flux") {
+// ---------------------------------------------------------------------------
+// 猫ペルソナ（重み付き確率でランダム選択）
+// ---------------------------------------------------------------------------
+const CAT_PERSONAS = [
+  // Common (weight 60)
+  { weight: 20, desc: "orange mackerel tabby with white chest, amber eyes" },
+  { weight: 15, desc: "gray and black classic tabby, swirling coat pattern" },
+  { weight: 10, desc: "black and white tuxedo cat" },
+  { weight: 10, desc: "silver tabby with distinct striped markings" },
+  { weight:  5, desc: "cream solid-colored cat with soft fluffy coat" },
+  // Uncommon (weight 25)
+  { weight: 10, desc: "tortoiseshell cat with brindled black and orange fur" },
+  { weight:  8, desc: "gray Scottish Fold with folded ears and round face" },
+  { weight:  7, desc: "white Ragdoll with blue eyes and fluffy long coat" },
+  // Rare (weight 12)
+  { weight:  7, desc: "calico cat with white, black, and orange tri-color patches" },
+  { weight:  5, desc: "Bengal cat with leopard-like spotted rosette pattern" },
+  // Ultra Rare (weight 3)
+  { weight:  2, desc: "male tortoiseshell cat, extremely rare coloring" },
+  { weight:  1, desc: "smoke-patterned Persian, pale undercoat with dark silver tips" },
+  // Omakase: AIに外見を自由に決めさせる (weight 10)
+  { weight: 10, desc: null },
+];
+
+export function pickPersona() {
+  const total = CAT_PERSONAS.reduce((s, p) => s + p.weight, 0);
+  let r = Math.random() * total;
+  for (const p of CAT_PERSONAS) {
+    r -= p.weight;
+    if (r <= 0) return p.desc;
+  }
+  return CAT_PERSONAS[0].desc;
+}
+
+// ---------------------------------------------------------------------------
+// 猫の性格（重み付き確率でランダム選択・毛柄とは独立）
+// ---------------------------------------------------------------------------
+// Finka(2017) リンカーン大学5タイプを参考に、本サービスのトーン（記念日・かわいい）に合わせ調整。
+// 攻撃的・神経質・触られ嫌い・衝動的なタイプは除外。ツンデレはRare(3%)。
+const CAT_PERSONALITIES = [
+  { weight: 35, desc: "gazing lovingly at viewer, sitting close, soft gentle expression" },
+  { weight: 30, desc: "crouching in playful pounce position, alert bright eyes, paw reaching for theme item" },
+  { weight: 25, desc: "leaning forward with wide curious eyes, carefully investigating the theme item" },
+  { weight:  7, desc: "grooming itself serenely, self-contained and peaceful" },
+  { weight:  3, desc: "sitting with back slightly turned, dignified aloof expression, secretly glancing back" },
+  // Omakase: AIにポーズ・表情を自由に決めさせる (weight 10)
+  { weight: 10, desc: null },
+];
+
+export function pickPersonality() {
+  const total = CAT_PERSONALITIES.reduce((s, p) => s + p.weight, 0);
+  let r = Math.random() * total;
+  for (const p of CAT_PERSONALITIES) {
+    r -= p.weight;
+    if (r <= 0) return p.desc;
+  }
+  return CAT_PERSONALITIES[0].desc;
+}
+
+function buildPollinationsUrl(theme, description, persona, personality, model = "flux") {
   // Pollinations API のプロンプトは ASCII のみ使用
   // 日本語等の非ASCII文字はURLパス内でサーバー側エラー(500)の原因になるためフィルタリング
   const toAscii = (s) => (s ?? "").replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
   const themeAscii = toAscii(theme);
   const descAscii  = toAscii(description).slice(0, 30);
   const subject    = themeAscii || descAscii || "anniversary";
-  const prompt =
-    `kawaii watercolor cat, ${subject}, pastel colors, white background, kawaii style`;
+  const parts = ["kawaii watercolor", persona ?? "cat", personality, subject, "pastel colors, white background, kawaii style"];
+  const prompt = parts.filter(Boolean).join(", ");
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
@@ -319,8 +378,12 @@ async function handleGenerate(body, apiKey) {
   const { theme, description } = body;
   if (!theme) throw new Error("theme フィールドが必要です");
 
+  const persona      = pickPersona();
+  const personality  = pickPersonality();
   const prompt =
     `Create a cute kawaii watercolor style cat character illustration. ` +
+    (persona      ? `Cat appearance: ${persona}. `           : "") +
+    (personality  ? `Cat personality and pose: ${personality}. ` : "") +
     `Theme: ${theme}. ` +
     (description ? `Background: ${description}. ` : "") +
     `Style: soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ` +
@@ -383,7 +446,7 @@ async function handleGenerate(body, apiKey) {
     const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
     return Promise.any(
       MODELS.map(async (model) => {
-        const url = buildPollinationsUrl(theme, description, model);
+        const url = buildPollinationsUrl(theme, description, persona, personality, model);
         console.log(`[pollinations] trying model=${model}`);
         const imgRes = await fetch(url, { signal: AbortSignal.timeout(POLLINATIONS_TIMEOUT_MS) });
         if (!imgRes.ok) throw new Error(`status=${imgRes.status}`);

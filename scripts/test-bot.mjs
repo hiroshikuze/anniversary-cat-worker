@@ -17,6 +17,8 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
+import { pickPersona, pickPersonality } from "../worker/index.js";
+
 let passed = 0;
 let failed = 0;
 
@@ -740,6 +742,112 @@ function calcWatermarkLayout(imgWidth, imgHeight, textWidth, position = "bottom-
   assert("bottom-right 512px: bgY が 0 以上", layout.bgY >= 0);
   assert("bottom-right 512px: bgX + bgW が imgWidth 以内", layout.bgX + layout.bgW <= 512);
   assert("bottom-right 512px: bgY + bgH が imgHeight 以内", layout.bgY + layout.bgH <= 512);
+}
+
+// ---------------------------------------------------------------------------
+// pickPersona
+// ---------------------------------------------------------------------------
+console.log("\n[pickPersona]");
+{
+  // null（おまかせ）または ASCII 文字列を返す
+  const results = new Set(Array.from({ length: 200 }, () => pickPersona()));
+  const strings = [...results].filter(v => v !== null);
+  assert("文字列またはnullを返す", [...results].every(v => v === null || typeof v === "string"));
+  assert("文字列はASCIIのみ（Pollinations プロンプトに安全）",
+    strings.every(s => /^[\x20-\x7E]+$/.test(s)));
+}
+
+{
+  // 1000回試行して全ペルソナ（null含む）が少なくとも1回出現する
+  const seen = new Set();
+  for (let i = 0; i < 1000; i++) seen.add(pickPersona());
+  assert("1000回試行で Ultra Rare 以外の全ペルソナ（null含む）が出現する",
+    seen.size >= 10);
+  assert("1000回試行でおまかせ(null)が出現する", seen.has(null));
+}
+
+{
+  // Ultra Rare（weight=1）が1000回中に高頻度で出ないこと（上限10%）
+  const ultraRare = "smoke-patterned Persian, pale undercoat with dark silver tips";
+  let count = 0;
+  for (let i = 0; i < 1000; i++) {
+    if (pickPersona() === ultraRare) count++;
+  }
+  assert(`Ultra Rare の出現率が10%以下 (実測: ${count}/1000)`, count <= 100);
+}
+
+{
+  // 最頻出ペルソナ（weight=20）が最低頻出ペルソナ（weight=1）より多く出現すること
+  const mostCommon = "orange mackerel tabby with white chest, amber eyes";
+  const ultraRare  = "smoke-patterned Persian, pale undercoat with dark silver tips";
+  let commonCount = 0;
+  let rareCount = 0;
+  for (let i = 0; i < 1000; i++) {
+    const p = pickPersona();
+    if (p === mostCommon) commonCount++;
+    if (p === ultraRare)  rareCount++;
+  }
+  assert(`Common(w=20) の出現数がUltra Rare(w=1)より多い (${commonCount} vs ${rareCount})`,
+    commonCount > rareCount);
+}
+
+// ---------------------------------------------------------------------------
+// pickPersonality
+// ---------------------------------------------------------------------------
+console.log("\n[pickPersonality]");
+{
+  // null（おまかせ）または ASCII 文字列を返す
+  const results = new Set(Array.from({ length: 200 }, () => pickPersonality()));
+  const strings = [...results].filter(v => v !== null);
+  assert("文字列またはnullを返す", [...results].every(v => v === null || typeof v === "string"));
+  assert("文字列はASCIIのみ（Pollinations プロンプトに安全）",
+    strings.every(s => /^[\x20-\x7E]+$/.test(s)));
+}
+
+{
+  // 除外すべき攻撃的・神経質ワードが含まれていないこと（null はスキップ）
+  const FORBIDDEN = ["aggress", "fearful", "anxious", "nervous", "attack", "hostile", "impulsive", "erratic"];
+  let violations = 0;
+  for (let i = 0; i < 200; i++) {
+    const p = pickPersonality();
+    if (p !== null && FORBIDDEN.some(w => p.toLowerCase().includes(w))) violations++;
+  }
+  assert("攻撃的・神経質ワードが含まれない", violations === 0);
+}
+
+{
+  // 1000回試行して全5タイプ＋null が出現すること
+  const seen = new Set();
+  for (let i = 0; i < 1000; i++) seen.add(pickPersonality());
+  assert("1000回試行で全5タイプ＋おまかせ(null)が出現する", seen.size === 6);
+  assert("1000回試行でおまかせ(null)が出現する", seen.has(null));
+}
+
+{
+  // Cantankerous（ツンデレ・weight=3）が10%以下であること
+  const tsundere = "sitting with back slightly turned, dignified aloof expression, secretly glancing back";
+  let count = 0;
+  for (let i = 0; i < 1000; i++) {
+    if (pickPersonality() === tsundere) count++;
+  }
+  assert(`Cantankerous の出現率が10%以下 (実測: ${count}/1000)`, count <= 100);
+}
+
+{
+  // Human Cat（weight=35）が Cantankerous（weight=3）より多く出現すること
+  const humanCat     = "gazing lovingly at viewer, sitting close, soft gentle expression";
+  const cantankerous = "sitting with back slightly turned, dignified aloof expression, secretly glancing back";
+  let humanCount = 0;
+  let tsundereCount = 0;
+  for (let i = 0; i < 1000; i++) {
+    const p = pickPersonality();
+    if (p === humanCat)     humanCount++;
+    if (p === cantankerous) tsundereCount++;
+  }
+  assert(
+    `Human Cat(w=35) の出現数が Cantankerous(w=3) より多い (${humanCount} vs ${tsundereCount})`,
+    humanCount > tsundereCount
+  );
 }
 
 // ---------------------------------------------------------------------------
