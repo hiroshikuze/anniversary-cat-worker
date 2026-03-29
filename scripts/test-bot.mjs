@@ -13,7 +13,7 @@ import { updateMetaInR2 } from "../worker/r2-storage.js";
 import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN } from "../worker/suzuri.js";
 
 import {
-  buildPostText, buildHashtagFacets, buildUrlFacets, notifyDiscord, runBot,
+  buildPostText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
@@ -58,6 +58,51 @@ console.log("\n[buildPostText]");
 }
 
 // ---------------------------------------------------------------------------
+// buildThemeTag
+// ---------------------------------------------------------------------------
+console.log("\n[buildThemeTag]");
+{
+  // 正常系: 日本語テーマ
+  assert("日本語テーマ: #を先頭に付与する",         buildThemeTag("世界猫の日") === "#世界猫の日");
+  assert("英数字テーマ: そのままタグ化する",         buildThemeTag("CatDay") === "#CatDay");
+
+  // 正規化: 空白・記号を除去
+  assert("スペース除去: 「ねこ の 日」→「#ねこの日」", buildThemeTag("ねこ の 日") === "#ねこの日");
+  assert("中黒除去: 「ロールプレイング・ゲームの日」→記号除去", buildThemeTag("ロールプレイング・ゲームの日") === "#ロールプレイングゲームの日");
+  assert("全角スペース除去",                        buildThemeTag("ね\u3000こ") === "#ねこ");
+
+  // 境界値: 空・記号のみ
+  assert("空文字はnullを返す",    buildThemeTag("") === null);
+  assert("nullはnullを返す",      buildThemeTag(null) === null);
+  assert("記号のみはnullを返す",  buildThemeTag("！？・。") === null);
+
+  // 境界値: 30文字超はトリム
+  const longTheme = "あ".repeat(35);
+  const tag = buildThemeTag(longTheme);
+  assert("31文字以上は#込みで31文字にトリム（30文字＋#）", tag !== null && tag.length === 31);
+}
+
+// ---------------------------------------------------------------------------
+// buildPostText: テーマタグ追加
+// ---------------------------------------------------------------------------
+console.log("\n[buildPostText: テーマタグ]");
+{
+  const text = buildPostText("ねこの日", "猫を愛でる記念日です");
+  assert("テーマタグ #ねこの日 が含まれる", text.includes("#ねこの日"));
+
+  // 300 grapheme以内に収まること（テーマタグ追加後）
+  const graphemes = [...new Intl.Segmenter().segment(text)];
+  assert(`テーマタグ追加後も300 grapheme以内 (実測: ${graphemes.length})`, graphemes.length <= 300);
+}
+
+{
+  // テーマが記号のみの場合はタグ行に追加されない
+  const text = buildPostText("！？", "説明文");
+  assert("テーマが記号のみの場合: #は追加されない",
+    !/#！/.test(text) && text.includes("#猫"));
+}
+
+// ---------------------------------------------------------------------------
 // buildHashtagFacets
 // ---------------------------------------------------------------------------
 console.log("\n[buildHashtagFacets]");
@@ -67,7 +112,7 @@ console.log("\n[buildHashtagFacets]");
   const encoder = new TextEncoder();
   const textBytes = encoder.encode(text);
 
-  assert("facets の件数が5件（#AIart #cat #kitten #ほのぼの #猫）", facets.length === 5);
+  assert("facets の件数が5件（固定タグのみ、additionalTags未指定）", facets.length === 5);
 
   for (const facet of facets) {
     const { byteStart, byteEnd } = facet.index;
@@ -83,6 +128,37 @@ console.log("\n[buildHashtagFacets]");
       facet.features[0].$type === "app.bsky.richtext.facet#tag"
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// buildHashtagFacets: additionalTags（テーマタグ）
+// ---------------------------------------------------------------------------
+console.log("\n[buildHashtagFacets: additionalTags]");
+{
+  const themeTag = buildThemeTag("ねこの日");
+  const text     = buildPostText("ねこの日", "説明文");
+  const facets   = buildHashtagFacets(text, [themeTag]);
+  const encoder  = new TextEncoder();
+  const textBytes = encoder.encode(text);
+
+  assert("テーマタグ込みで6件になる", facets.length === 6);
+
+  // テーマタグのバイト位置が正確か
+  const themeFacet = facets.find(f => f.features[0].tag === "ねこの日");
+  assert("テーマタグのfacetが存在する", themeFacet !== undefined);
+  if (themeFacet) {
+    const { byteStart, byteEnd } = themeFacet.index;
+    const extracted = new TextDecoder().decode(textBytes.slice(byteStart, byteEnd));
+    assert(`"#ねこの日" のバイト位置が正確（extracted="${extracted}"）`, extracted === "#ねこの日");
+    assert("$type が app.bsky.richtext.facet#tag", themeFacet.features[0].$type === "app.bsky.richtext.facet#tag");
+  }
+}
+
+{
+  // additionalTags=[] の場合は従来通り5件
+  const text   = buildPostText("テスト", "説明文");
+  const facets = buildHashtagFacets(text, []);
+  assert("additionalTags=[] は固定5件のまま", facets.length === 5);
 }
 
 // ---------------------------------------------------------------------------
