@@ -184,7 +184,7 @@ const KNOWN_CANDIDATES = [
 
 - Botアカウント: `@nyanmusu.bsky.social`
 - 投稿スケジュール: 月〜金 19:00 JST（UTC 10:00）、Cron式: `0 10 * * 2-6`
-- ハッシュタグ: `#AIart #cat #kitten #ほのぼの #猫`（AT Protocol facets形式で付与）
+- ハッシュタグ: `#AIart #cat #kitten #ほのぼの #猫`（固定）＋テーマ由来の動的タグ1件（AT Protocol facets形式で付与）
 - エラー時: リトライなし（`/generate`内部にPollinationsフォールバックあり）
 
 ### 投稿テキスト形式
@@ -196,10 +196,28 @@ const KNOWN_CANDIDATES = [
 あなたも今日のにゃんバーサリーを作ってみませんか？
 https://hiroshikuze.github.io/anniversary-cat-worker/
 
-#AIart #cat #kitten #ほのぼの #猫
+#AIart #cat #kitten #ほのぼの #猫 #{theme正規化}
 ```
 
-300 grapheme以内に収まる設計（実測 ~200 grapheme）。
+300 grapheme以内に収まる設計（実測 ~210 grapheme）。
+
+### テーマタグ正規化（`buildThemeTag`）
+
+`research.theme`から記念日テーマをハッシュタグ文字列へ変換する。
+
+- Unicode文字・数字・アンダースコア以外（空白・句読点・記号等）を除去
+- 空文字になる場合は`null`を返し、タグ行に追加しない
+- 最大30文字でトリム
+- 例: `"世界猫の日"` → `#世界猫の日`、`"ロールプレイング・ゲームの日"` → `#ロールプレイングゲームの日`
+
+### 画像altテキスト形式
+
+```text
+にゃんバーサリー - 「{theme}」の日！{description}（AIが生成した水彩画風の猫イラスト）
+```
+
+- descriptionが空の場合は従来形式: `にゃんバーサリー - 「{theme}」をテーマにAIが生成した水彩画風の猫イラスト`
+- テーマと記念日説明を含めることで、スクリーンリーダーユーザーへの情報提供と検索流入の両立を図る
 
 ### Bluesky AT Protocolエンドポイント
 

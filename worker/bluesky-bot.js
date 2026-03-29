@@ -41,29 +41,48 @@ const HASHTAGS     = HASHTAG_LIST.join(" ");
 // ---------------------------------------------------------------------------
 
 /**
+ * テーマ文字列をBlueskyハッシュタグ文字列（#付き）に変換する。
+ * Unicode文字・数字・アンダースコア以外（空白・記号等）を除去し、最大30文字でトリム。
+ * 空文字になる場合は null を返す。
+ * @param {string|null} theme
+ * @returns {string|null}
+ */
+export function buildThemeTag(theme) {
+  if (!theme) return null;
+  const normalized = theme.replace(/[^\p{L}\p{N}_]/gu, "");
+  if (!normalized) return null;
+  return `#${normalized.slice(0, 30)}`;
+}
+
+/**
  * Bluesky 投稿テキストを生成する。
- * Bluesky の上限は 300 grapheme。この形式では最大 ~220 grapheme 程度に収まる。
+ * Bluesky の上限は 300 grapheme。この形式では最大 ~210 grapheme 程度に収まる。
  * @param {string} theme
  * @param {string} description
  * @param {string} [pageUrl] - CTA に使う URL（デフォルト: SITE_URL）
  */
 export function buildPostText(theme, description, pageUrl = SITE_URL) {
-  const header = `今日は「${theme}」の日！🐱`;
-  const body   = description ? `\n${description}` : "";
-  const cta    = `\n\nあなたも今日のにゃんバーサリーを作ってみませんか？\n${pageUrl}`;
-  const tags   = `\n\n${HASHTAGS}`;
+  const header   = `今日は「${theme}」の日！🐱`;
+  const body     = description ? `\n${description}` : "";
+  const cta      = `\n\nあなたも今日のにゃんバーサリーを作ってみませんか？\n${pageUrl}`;
+  const themeTag = buildThemeTag(theme);
+  const allTags  = themeTag ? `${HASHTAGS} ${themeTag}` : HASHTAGS;
+  const tags     = `\n\n${allTags}`;
   return header + body + cta + tags;
 }
 
 /**
  * テキスト中のハッシュタグを AT Protocol の facets 形式（UTF-8 バイト位置）に変換する。
  * JavaScript 文字列は UTF-16 のため、バイト位置計算に TextEncoder を使う。
+ * @param {string} text
+ * @param {string[]} [additionalTags] - 固定リスト以外に検索するタグ（例: テーマタグ）
  */
-export function buildHashtagFacets(text) {
+export function buildHashtagFacets(text, additionalTags = []) {
   const encoder = new TextEncoder();
   const facets  = [];
+  const allTags = [...HASHTAG_LIST, ...additionalTags];
 
-  for (const tag of HASHTAG_LIST) {
+  for (const tag of allTags) {
     let searchFrom = 0;
     while (true) {
       const idx = text.indexOf(tag, searchFrom);
@@ -244,11 +263,11 @@ async function uploadBlob(accessJwt, imageBytes, mimeType) {
 }
 
 /** テキスト・画像・ファセットを含む投稿レコードを作成する */
-async function createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl = SITE_URL) {
+async function createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl = SITE_URL, themeTag = null) {
   const record = {
     $type:     "app.bsky.feed.post",
     text,
-    facets:    [...buildHashtagFacets(text), ...buildUrlFacets(text, pageUrl)],
+    facets:    [...buildHashtagFacets(text, themeTag ? [themeTag] : []), ...buildUrlFacets(text, pageUrl)],
     embed:     {
       $type:  "app.bsky.embed.images",
       images: [{
@@ -393,9 +412,13 @@ export async function runBot(env, handleResearch, handleGenerate) {
     const mimeType   = shrunk.mimeType;
     const blobRef    = await uploadBlob(accessJwt, imageBytes, mimeType);
 
-    const text    = buildPostText(research.theme, research.description ?? "", pageUrl);
-    const altText = `にゃんバーサリー - 「${research.theme}」をテーマにAIが生成した水彩画風の猫イラスト`;
-    const postResult = await createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl);
+    const themeTag = buildThemeTag(research.theme);
+    const text     = buildPostText(research.theme, research.description ?? "", pageUrl);
+    const desc     = research.description ?? "";
+    const altText  = desc
+      ? `にゃんバーサリー - 「${research.theme}」の日！${desc}（AIが生成した水彩画風の猫イラスト）`
+      : `にゃんバーサリー - 「${research.theme}」をテーマにAIが生成した水彩画風の猫イラスト`;
+    const postResult = await createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl, themeTag);
 
     console.log(`${prefix} Bluesky 投稿 完了 uri=${postResult.uri ?? "(不明)"} identifier=${env.BLUESKY_IDENTIFIER}`);
 
