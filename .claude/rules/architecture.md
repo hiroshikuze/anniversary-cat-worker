@@ -128,6 +128,7 @@ localStorage.setItem('bypassToken', '<シークレット値>')
 - ペルソナ文字列は**ASCIIのみ**（Pollinations APIのURL埋め込みで安全）
 - ペルソナのカスタマイズ・追加は`CAT_PERSONAS`配列を編集するだけでよい
 
+
 ---
 
 ## Geminiモデル管理
