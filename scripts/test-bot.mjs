@@ -749,18 +749,21 @@ function calcWatermarkLayout(imgWidth, imgHeight, textWidth, position = "bottom-
 // ---------------------------------------------------------------------------
 console.log("\n[pickPersona]");
 {
-  const persona = pickPersona();
-  assert("文字列を返す", typeof persona === "string" && persona.length > 0);
-  assert("ASCII のみ（Pollinations プロンプトに安全）",
-    /^[\x20-\x7E]+$/.test(persona));
+  // null（おまかせ）または ASCII 文字列を返す
+  const results = new Set(Array.from({ length: 200 }, () => pickPersona()));
+  const strings = [...results].filter(v => v !== null);
+  assert("文字列またはnullを返す", [...results].every(v => v === null || typeof v === "string"));
+  assert("文字列はASCIIのみ（Pollinations プロンプトに安全）",
+    strings.every(s => /^[\x20-\x7E]+$/.test(s)));
 }
 
 {
-  // 1000回試行して全ペルソナが少なくとも1回出現することを確認
+  // 1000回試行して全ペルソナ（null含む）が少なくとも1回出現する
   const seen = new Set();
   for (let i = 0; i < 1000; i++) seen.add(pickPersona());
-  assert("1000回試行で Ultra Rare 以外の全ペルソナが出現する（レパートリー確認）",
+  assert("1000回試行で Ultra Rare 以外の全ペルソナ（null含む）が出現する",
     seen.size >= 10);
+  assert("1000回試行でおまかせ(null)が出現する", seen.has(null));
 }
 
 {
@@ -793,28 +796,31 @@ console.log("\n[pickPersona]");
 // ---------------------------------------------------------------------------
 console.log("\n[pickPersonality]");
 {
-  const personality = pickPersonality();
-  assert("文字列を返す", typeof personality === "string" && personality.length > 0);
-  assert("ASCII のみ（Pollinations プロンプトに安全）",
-    /^[\x20-\x7E]+$/.test(personality));
+  // null（おまかせ）または ASCII 文字列を返す
+  const results = new Set(Array.from({ length: 200 }, () => pickPersonality()));
+  const strings = [...results].filter(v => v !== null);
+  assert("文字列またはnullを返す", [...results].every(v => v === null || typeof v === "string"));
+  assert("文字列はASCIIのみ（Pollinations プロンプトに安全）",
+    strings.every(s => /^[\x20-\x7E]+$/.test(s)));
 }
 
 {
-  // 除外すべき攻撃的・神経質ワードが含まれていないこと
+  // 除外すべき攻撃的・神経質ワードが含まれていないこと（null はスキップ）
   const FORBIDDEN = ["aggress", "fearful", "anxious", "nervous", "attack", "hostile", "impulsive", "erratic"];
   let violations = 0;
   for (let i = 0; i < 200; i++) {
-    const p = pickPersonality().toLowerCase();
-    if (FORBIDDEN.some(w => p.includes(w))) violations++;
+    const p = pickPersonality();
+    if (p !== null && FORBIDDEN.some(w => p.toLowerCase().includes(w))) violations++;
   }
   assert("攻撃的・神経質ワードが含まれない", violations === 0);
 }
 
 {
-  // 1000回試行して全5タイプが出現すること
+  // 1000回試行して全5タイプ＋null が出現すること
   const seen = new Set();
   for (let i = 0; i < 1000; i++) seen.add(pickPersonality());
-  assert("1000回試行で全5タイプが出現する", seen.size === 5);
+  assert("1000回試行で全5タイプ＋おまかせ(null)が出現する", seen.size === 6);
+  assert("1000回試行でおまかせ(null)が出現する", seen.has(null));
 }
 
 {

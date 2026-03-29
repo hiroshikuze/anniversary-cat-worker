@@ -316,6 +316,8 @@ const CAT_PERSONAS = [
   // Ultra Rare (weight 3)
   { weight:  2, desc: "male tortoiseshell cat, extremely rare coloring" },
   { weight:  1, desc: "smoke-patterned Persian, pale undercoat with dark silver tips" },
+  // Omakase: AIに外見を自由に決めさせる (weight 10)
+  { weight: 10, desc: null },
 ];
 
 export function pickPersona() {
@@ -339,6 +341,8 @@ const CAT_PERSONALITIES = [
   { weight: 25, desc: "leaning forward with wide curious eyes, carefully investigating the theme item" },
   { weight:  7, desc: "grooming itself serenely, self-contained and peaceful" },
   { weight:  3, desc: "sitting with back slightly turned, dignified aloof expression, secretly glancing back" },
+  // Omakase: AIにポーズ・表情を自由に決めさせる (weight 10)
+  { weight: 10, desc: null },
 ];
 
 export function pickPersonality() {
@@ -358,8 +362,8 @@ function buildPollinationsUrl(theme, description, persona, personality, model = 
   const themeAscii = toAscii(theme);
   const descAscii  = toAscii(description).slice(0, 30);
   const subject    = themeAscii || descAscii || "anniversary";
-  const prompt =
-    `kawaii watercolor ${persona}, ${personality}, ${subject}, pastel colors, white background, kawaii style`;
+  const parts = ["kawaii watercolor", persona ?? "cat", personality, subject, "pastel colors, white background, kawaii style"];
+  const prompt = parts.filter(Boolean).join(", ");
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
@@ -378,8 +382,8 @@ async function handleGenerate(body, apiKey) {
   const personality  = pickPersonality();
   const prompt =
     `Create a cute kawaii watercolor style cat character illustration. ` +
-    `Cat appearance: ${persona}. ` +
-    `Cat personality and pose: ${personality}. ` +
+    (persona      ? `Cat appearance: ${persona}. `           : "") +
+    (personality  ? `Cat personality and pose: ${personality}. ` : "") +
     `Theme: ${theme}. ` +
     (description ? `Background: ${description}. ` : "") +
     `Style: soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ` +
