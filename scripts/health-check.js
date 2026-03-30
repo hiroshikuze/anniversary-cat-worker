@@ -253,8 +253,8 @@ async function checkPollinations() {
     "https://image.pollinations.ai/prompt/cat?model=flux&width=64&height=64&seed=1&nologo=true";
 
   const { ok: reached, res, error } = await safeFetch(url);
-  if (!check("Pollinations API へ到達できる", reached, error)) return;
-  // フォールバックサービスのため HTTP 異常・非画像レスポンスは警告扱い（CI 失敗にしない）
+  // フォールバックサービスのため、到達不能・HTTP 異常・非画像レスポンスはすべて警告扱い（CI 失敗にしない）
+  if (!reached) { warn(`Pollinations API へ到達できない: ${error}`); return; }
   if (!res.ok) { warn(`HTTP ${res.status}: Pollinations が一時的に利用不可の可能性あり`); return; }
   const ct = res.headers.get("Content-Type") ?? "";
   if (!ct.startsWith("image/")) warn(`画像でないレスポンス: Content-Type=${ct}（一時障害の可能性）`);
