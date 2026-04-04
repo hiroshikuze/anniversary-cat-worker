@@ -365,15 +365,10 @@ export async function runBot(env, handleResearch, handleGenerate) {
       try {
         const imgMime = generated.mimeType || "image/png";
 
-        // fal.ai アップスケール（best-effort: 失敗時は元画像で継続）
-        // CDN URLをそのままSUZURIに渡すことでCPU時間を節約する
-        let suzuriTexture = `data:${imgMime};base64,${generated.imageData}`;
-        try {
-          const upscaled = await upscaleWithFal(generated.imageData, imgMime, env);
-          if (upscaled.cdnUrl) suzuriTexture = upscaled.cdnUrl;
-        } catch (e) {
-          console.warn(`${prefix} fal.ai アップスケール失敗（元画像で継続）: ${e.message}`);
-        }
+        // TODO(fal.ai): 非同期アーキテクチャ実装後に有効化する
+        // ctx.waitUntil() + ポーリング方式で t-shirt+sticker グループのみ高解像度化する計画あり
+        // 詳細: .claude/rules/architecture.md「fal.ai AuraSRアップスケーリング」参照
+        const suzuriTexture = `data:${imgMime};base64,${generated.imageData}`;
 
         const suzuriResult = await createSuzuriProducts(suzuriTexture, research.theme, env);
         materialId     = suzuriResult.materialId;

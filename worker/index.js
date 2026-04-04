@@ -644,15 +644,10 @@ export default {
           return Response.json({ error: "imageData, mimeType, theme が必要です" }, { status: 400, headers: corsH });
         }
 
-        // fal.ai アップスケール（best-effort: 失敗時は元画像で継続）
-        // CDN URLをそのままSUZURIに渡すことでCPU時間を節約する
-        let suzuriTexture = `data:${mimeType};base64,${imageData}`;
-        try {
-          const upscaled = await upscaleWithFal(imageData, mimeType, env);
-          if (upscaled.cdnUrl) suzuriTexture = upscaled.cdnUrl;
-        } catch (e) {
-          console.warn(`[suzuri-create] fal.ai アップスケール失敗（元画像で継続）: ${e.message}`);
-        }
+        // TODO(fal.ai): 非同期アーキテクチャ実装後に有効化する
+        // ctx.waitUntil() + ポーリング方式で t-shirt+sticker グループのみ高解像度化する計画あり
+        // 詳細: .claude/rules/architecture.md「fal.ai AuraSRアップスケーリング」参照
+        const suzuriTexture = `data:${mimeType};base64,${imageData}`;
 
         const suzuriResult = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null);
         if (r2Id && env.IMAGE_BUCKET) {
