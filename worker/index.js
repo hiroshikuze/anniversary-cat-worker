@@ -12,6 +12,7 @@
 import { runBot } from "./bluesky-bot.js";
 import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2 } from "./r2-storage.js";
 import { createSuzuriProducts, deleteSuzuriMaterial } from "./suzuri.js";
+import { upscaleWithFal } from "./fal.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -642,7 +643,19 @@ export default {
         if (!imageData || !mimeType || !theme) {
           return Response.json({ error: "imageData, mimeType, theme が必要です" }, { status: 400, headers: corsH });
         }
-        const dataUri = `data:${mimeType};base64,${imageData}`;
+
+        // fal.ai アップスケール（best-effort: 失敗時は元画像で継続）
+        let suzuriImageData = imageData;
+        let suzuriMime = mimeType;
+        try {
+          const upscaled = await upscaleWithFal(imageData, mimeType, env);
+          suzuriImageData = upscaled.imageData;
+          suzuriMime      = upscaled.mimeType;
+        } catch (e) {
+          console.warn(`[suzuri-create] fal.ai アップスケール失敗（元画像で継続）: ${e.message}`);
+        }
+
+        const dataUri = `data:${suzuriMime};base64,${suzuriImageData}`;
         const suzuriResult = await createSuzuriProducts(dataUri, theme, env, slugs ?? null);
         if (r2Id && env.IMAGE_BUCKET) {
           try {

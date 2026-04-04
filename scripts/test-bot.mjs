@@ -18,6 +18,7 @@ import {
 } from "../worker/bluesky-bot.js";
 
 import { pickPersona, pickPersonality } from "../worker/index.js";
+import { upscaleWithFal, _arrayBufferToBase64 } from "../worker/fal.js";
 
 let passed = 0;
 let failed = 0;
@@ -44,6 +45,7 @@ console.log("\n[buildPostText]");
   assert("サイトURLが含まれる", text.includes("hiroshikuze.github.io/anniversary-cat-worker/"));
   assert("ハッシュタグ #cat が含まれる", text.includes("#cat"));
   assert("ハッシュタグ #猫 が含まれる", text.includes("#猫"));
+  assert("CTA に #にゃんバーサリー が含まれる", text.includes("#にゃんバーサリー"));
 
   // Bluesky の上限は 300 grapheme
   const graphemes = [...new Intl.Segmenter().segment(text)];
@@ -112,7 +114,8 @@ console.log("\n[buildHashtagFacets]");
   const encoder = new TextEncoder();
   const textBytes = encoder.encode(text);
 
-  assert("facets の件数が5件（固定タグのみ、additionalTags未指定）", facets.length === 5);
+  // #にゃんバーサリー が CTA(1回) + タグ末尾(1回) = 2回出現するため固定facetは7件
+  assert("facets の件数が7件（固定タグのみ、additionalTags未指定）", facets.length === 7);
 
   for (const facet of facets) {
     const { byteStart, byteEnd } = facet.index;
@@ -141,7 +144,7 @@ console.log("\n[buildHashtagFacets: additionalTags]");
   const encoder  = new TextEncoder();
   const textBytes = encoder.encode(text);
 
-  assert("テーマタグ込みで6件になる", facets.length === 6);
+  assert("テーマタグ込みで8件になる（固定7＋テーマタグ1）", facets.length === 8);
 
   // テーマタグのバイト位置が正確か
   const themeFacet = facets.find(f => f.features[0].tag === "ねこの日");
@@ -155,10 +158,10 @@ console.log("\n[buildHashtagFacets: additionalTags]");
 }
 
 {
-  // additionalTags=[] の場合は従来通り5件
+  // additionalTags=[] の場合は固定7件のまま
   const text   = buildPostText("テスト", "説明文");
   const facets = buildHashtagFacets(text, []);
-  assert("additionalTags=[] は固定5件のまま", facets.length === 5);
+  assert("additionalTags=[] は固定7件のまま", facets.length === 7);
 }
 
 // ---------------------------------------------------------------------------
@@ -924,6 +927,106 @@ console.log("\n[pickPersonality]");
     `Human Cat(w=35) の出現数が Cantankerous(w=3) より多い (${humanCount} vs ${tsundereCount})`,
     humanCount > tsundereCount
   );
+}
+
+// ---------------------------------------------------------------------------
+// upscaleWithFal
+// ---------------------------------------------------------------------------
+console.log("\n[upscaleWithFal]");
+
+{
+  // FAL_KEY 未設定: fetch を呼ばずそのまま返す
+  let fetchCalled = false;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => { fetchCalled = true; return {}; };
+  const result = await upscaleWithFal("abc123", "image/png", {});
+  globalThis.fetch = origFetch;
+  assert("FAL_KEY 未設定: fetch を呼ばない", !fetchCalled);
+  assert("FAL_KEY 未設定: 元のimageDataをそのまま返す", result.imageData === "abc123");
+  assert("FAL_KEY 未設定: 元のmimeTypeをそのまま返す", result.mimeType === "image/png");
+}
+
+{
+  // FAL_KEY 設定・正常系: fal.ai → CDN URL → base64 を返す
+  const fakeBytes = new Uint8Array([1, 2, 3, 4]);
+  const origFetch = globalThis.fetch;
+  let falCallCount = 0;
+  globalThis.fetch = async (url) => {
+    falCallCount++;
+    if (url.includes("fal.run")) {
+      return {
+        ok: true,
+        json: async () => ({ image: { url: "https://cdn.fal.ai/test.png" } }),
+      };
+    }
+    // CDN fetch
+    return {
+      ok: true,
+      headers: { get: () => "image/png" },
+      arrayBuffer: async () => fakeBytes.buffer,
+    };
+  };
+  const result = await upscaleWithFal("abc", "image/png", { FAL_KEY: "test-key" });
+  globalThis.fetch = origFetch;
+  assert("正常系: fal.ai API + CDN の2回fetchする", falCallCount === 2);
+  assert("正常系: upscaled base64が返る", typeof result.imageData === "string" && result.imageData.length > 0);
+  assert("正常系: mimeTypeが返る", result.mimeType === "image/png");
+  // base64デコードして元バイト列と一致するか確認
+  const decoded = Buffer.from(result.imageData, "base64");
+  assert("正常系: デコードしたバイト列が元データと一致", Buffer.compare(decoded, Buffer.from(fakeBytes)) === 0);
+}
+
+{
+  // fal.ai HTTPエラー時: エラーをthrow
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false, status: 500,
+    text: async () => "Internal Server Error",
+  });
+  let threw = false;
+  try {
+    await upscaleWithFal("abc", "image/png", { FAL_KEY: "test-key" });
+  } catch {
+    threw = true;
+  }
+  globalThis.fetch = origFetch;
+  assert("fal.ai HTTP 500: エラーをthrowする", threw);
+}
+
+{
+  // CDN URLなしのレスポンス時: エラーをthrow
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ image: {} }), // urlなし
+  });
+  let threw = false;
+  try {
+    await upscaleWithFal("abc", "image/png", { FAL_KEY: "test-key" });
+  } catch {
+    threw = true;
+  }
+  globalThis.fetch = origFetch;
+  assert("CDN URLなし: エラーをthrowする", threw);
+}
+
+// ---------------------------------------------------------------------------
+// _arrayBufferToBase64
+// ---------------------------------------------------------------------------
+console.log("\n[_arrayBufferToBase64]");
+{
+  const bytes = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
+  const result = _arrayBufferToBase64(bytes.buffer);
+  assert("'Hello' の base64 が正しい", result === btoa("Hello"));
+}
+
+{
+  // チャンクサイズ境界を越えるサイズ（8193バイト）でも正常動作
+  const bytes = new Uint8Array(8193).fill(42);
+  const result = _arrayBufferToBase64(bytes.buffer);
+  const decoded = Buffer.from(result, "base64");
+  assert("8193バイト: デコード後のバイト数が一致", decoded.length === 8193);
+  assert("8193バイト: デコード後の値がすべて42", decoded.every(b => b === 42));
 }
 
 // ---------------------------------------------------------------------------

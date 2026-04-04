@@ -275,6 +275,7 @@
         outOfStockToast:    "この商品は現在在庫切れです",
         expiredText:        "この記念日画像は期限切れです（7日間保存）",
         createNewBtn:       "🎨 今日の記念日で作る",
+        newGenerateBtn:     "✨ 新しく生成",
         dateLocale:         "ja-JP",
       },
       en: {
@@ -308,6 +309,7 @@
         outOfStockToast:    "This item is currently out of stock",
         expiredText:        "This anniversary image has expired (stored for 7 days)",
         createNewBtn:       "🎨 Create Today's Anniversary",
+        newGenerateBtn:     "✨ Generate New",
         dateLocale:         "en-US",
       },
     };
@@ -343,6 +345,12 @@
     function toggleLang() {
       currentLang = currentLang === "ja" ? "en" : "ja";
       applyLang();
+      // 動的生成されたグッズボタンはdata-i18n外なので言語切り替え時に再描画
+      if (lastProducts) showGoods(lastProducts);
+      // 共有ビュー中のresultボタンも再描画
+      if (isSharedView && !document.getElementById("g-result").classList.contains("hidden")) {
+        updateResultButtons();
+      }
     }
 
     // ----------------------------------------------------------
@@ -366,8 +374,11 @@
     // ----------------------------------------------------------
     // 状態
     // ----------------------------------------------------------
-    let researchData = null;
-    let lastImageUrl = null;
+    let researchData    = null;
+    let lastImageUrl    = null;
+    let isSharedView    = false;   // 共有URLから遷移した場合true
+    let lastProducts    = null;    // 言語切り替え時のgoods再描画用
+    let currentSharedId = null;    // 現在表示中のr2Id（共有URL生成に使用）
 
     // ----------------------------------------------------------
     // 初期化
@@ -459,6 +470,27 @@
       ["waiting", "loading", "result", "error", "expired"].forEach((s) => {
         document.getElementById("g-" + s).classList.toggle("hidden", s !== state);
       });
+      if (state === "result") updateResultButtons();
+    }
+
+    // 共有URLか通常生成かでresultボタンを切り替える
+    function updateResultButtons() {
+      const btn = document.querySelector("#g-result .btn-secondary");
+      if (!btn) return;
+      if (isSharedView) {
+        btn.setAttribute("data-i18n", "newGenerateBtn");
+        btn.textContent = t("newGenerateBtn");
+        btn.onclick = function () {
+          isSharedView    = false;
+          currentSharedId = null;
+          history.replaceState(null, "", window.location.pathname);
+          startResearch();
+        };
+      } else {
+        btn.setAttribute("data-i18n", "regenerateBtn");
+        btn.textContent = t("regenerateBtn");
+        btn.onclick = startGenerate;
+      }
     }
 
     // ----------------------------------------------------------
@@ -484,6 +516,7 @@
     }
 
     function showGoods(products) {
+      lastProducts = products;
       const listEl = document.getElementById("g-goods-list");
       listEl.innerHTML = "";
       let hasAny = false;
@@ -519,6 +552,8 @@
     // 共有URLから画像を読み込む（?id=bot/YYYY-MM-DD 等）
     // ----------------------------------------------------------
     async function loadSharedImage(id) {
+      isSharedView    = true;
+      currentSharedId = id;
       showGenerate("loading");
       try {
         const res = await fetch(`${WORKER_URL}/image/${id}`);
@@ -635,8 +670,12 @@
         showGenerate("error");
         return;
       }
-      researchData = null;
-      lastImageUrl = null;
+      researchData    = null;
+      lastImageUrl    = null;
+      lastProducts    = null;
+      isSharedView    = false;
+      currentSharedId = null;
+      history.replaceState(null, "", window.location.pathname);
       document.getElementById("g-goods").classList.add("hidden");
       showGenerate("loading");
 
@@ -695,6 +734,12 @@
           descEl.removeAttribute("href");
           descEl.classList.remove("underline");
         }
+        // URL を共有可能な ?id= 形式に更新（R2保存成功時のみ）
+        if (data.id) {
+          currentSharedId = data.id;
+          history.replaceState(null, "", "?id=" + data.id);
+        }
+
         showGenerate("result");
 
         // ウォーターマーク合成 → SUZURI登録（best-effort: 失敗しても表示は維持）
@@ -766,7 +811,8 @@
       const file = new File([blob], fileName, { type: "image/png" });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
-          const SITE_URL = "https://hiroshikuze.github.io/anniversary-cat-worker/";
+          const BASE_URL  = "https://hiroshikuze.github.io/anniversary-cat-worker/";
+          const SITE_URL  = currentSharedId ? BASE_URL + "?id=" + currentSharedId : BASE_URL;
           const X_URL_CHARS = 23; // X はURLの実長に関わらず23文字としてカウント
           const X_LIMIT = 280;
           const desc = researchData?.description ?? "";
