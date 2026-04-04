@@ -311,6 +311,12 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 - **位置**: `position`引数で制御。`'bottom-right'`（右下）または`'bottom-center'`（中央下）。商品グループごとに使い分ける
 - **場所**: `frontend/index.html` `applyWatermark(imageData, mimeType, position)` / `_calcWatermarkLayout(imgW, imgH, textW, position)` / `worker/index.js` `/suzuri-create`ハンドラ
 
+### 10. fal.ai AuraSRのCDN画像をbase64変換してWorkers CPU時間超過（2026-04）
+
+- **原因**: `upscaleWithFal()`がfal.ai CDN URLから画像をfetch→ArrayBuffer→base64変換していた。4096×4096 PNG（約4MB）の変換がWorkers CPU時間上限（Paid Bundled: 50ms）を超過
+- **修正**: CDNダウンロードを廃止。`upscaleWithFal()`は`{ cdnUrl, mimeType }`を返すだけにし、CDN URLを直接SUZURIの`texture`フィールドに渡す（SUZURI APIはURLを受け付ける）
+- **場所**: `worker/fal.js` `upscaleWithFal()` / `worker/index.js` / `worker/bluesky-bot.js`
+
 ---
 
 ## 将来の拡張に関する設計方針メモ
@@ -455,59 +461,73 @@ DELETE /api/v1/materials/{material_id}
 
 ---
 
-### fal.ai AuraSRアップスケーリング（未実装・実装予定）
+### fal.ai AuraSRアップスケーリング（実装済み・一時無効化推奨）
 
 #### 目的
 
 Gemini生成画像（通常1024px前後）をSUZURI推奨解像度（3000×3000px以上）に引き上げ、Tシャツ等の印刷品質を改善する。
+
+#### 現状ステータス（2026-04）
+
+`worker/fal.js`として実装済み。`worker/index.js`（`/suzuri-create`）と`worker/bluesky-bot.js`（`runBot()`）から呼び出されている。ただし以下の問題により、呼び出しは常にタイムアウトしてベストエフォートフォールバック（元画像でSUZURI登録）している状態。
+
+**問題の根本**: Cloudflare Workers Paid Bundledプランのwall-clock時間制限（約30秒）により、同期ハンドラ内でfal.aiの処理完了を待つ設計では原理的に解決できない。
+
+```text
+タイムアウトまでの流れ:
+POST /suzuri-create → fal.ai API呼び出し（base64 JPEGペイロード送信 + 処理待ち）
+→ 30秒でAbortSignal発火 → warn ログ出力 → 元画像でSUZURI登録（outcome: ok）
+```
+
+**結果**: 以前より生成に30秒余分にかかるようになったが品質は改善されていない（UX悪化）。
+
+**暫定対策**: fal.ai呼び出し部分をコメントアウトして以前の速度に戻す（グッズが売れてから本格対応する）。
 
 #### 技術仕様（2026-04調査済み）
 
 | 項目 | 内容 |
 | --- | --- |
 | 使用モデル | `fal-ai/aura-sr`（4倍アップスケール・GANベース） |
-| レイテンシ | 1024px入力 → 約0.25秒（同期モード） |
-| 入力 | URLまたはbase64 |
-| 出力 | CDN URL（WorkerがfetchしてR2/SUZURIへ渡す） |
-| メモリ | 3000×3000 base64 ≈ 34MB → Workers 128MB制限内 ✅ |
+| レイテンシ | 1024px入力 → 約0.25秒（公称）。実測では30秒超 |
+| 入力 | URLまたはbase64 data URI |
+| 出力 | CDN URL（`{ cdnUrl, mimeType }`を返し、SUZURIに直接URL渡し） |
 | Cloudflare Workers対応 | Cloudflare AI Gatewayと公式統合済み ✅ |
 | 認証 | `Authorization: Key <FAL_KEY>` ヘッダー |
-| 料金 | AuraSRはほぼ無料〜格安（従量課金） |
-
-#### 実装位置
-
-```text
-【ユーザーフロー】
-フロント（ウォーターマーク合成済み）
-  → POST /suzuri-create
-    → fal.ai AuraSR（4倍アップスケール）  ← 追加
-    → SUZURI API へ高解像度画像をアップロード
-
-【Botフロー】
-runBot()
-  → handleGenerate()
-  → fal.ai AuraSR（4倍アップスケール）  ← 追加
-  → createSuzuriProducts()
-```
+| 料金 | 従量課金（残高不足の場合はstatus=403） |
 
 #### 必要なシークレット
 
-| シークレット名 | 登録先 |
-| --- | --- |
-| `FAL_KEY` | Cloudflare Workers（設定 → 変数とシークレット） |
-| `FAL_KEY` | GitHub Actions（Settings → Secrets → Actions） |
+| シークレット名 | 登録先 | 状態 |
+| --- | --- | --- |
+| `FAL_KEY` | Cloudflare Workers（設定 → 変数とシークレット） | 登録済み |
+| `FAL_KEY` | GitHub Actions（Settings → Secrets → Actions） | 登録済み |
 
 取得先: `fal.ai` ダッシュボード → API Keys → Add key
 
-#### 実装順序
+#### 本格対応に必要な非同期アーキテクチャ
 
-ドキュメント更新 → `scripts/test-bot.mjs`にテスト追加 → `worker/index.js`・`worker/bluesky-bot.js`に実装
+同期ハンドラ内では解決できないため、将来的には以下のいずれかが必要:
+
+```text
+【案A: fal.ai Webhook + Cloudflare Queues】
+POST /suzuri-create
+  → fal.ai キューにジョブ投稿（即時レスポンス）
+  → fal.aiがWebhookでWorkerを呼び出す
+  → Worker がSUZURI登録
+  ※ Cloudflare Queues（月額追加費用）が必要
+
+【案B: fal.ai Storage経由】
+POST /suzuri-create
+  → fal.ai Storage APIに画像をアップロード → URL取得
+  → fal.ai AuraSRにURLを渡す（ペイロード削減）
+  ※ 同期処理のまま。ペイロード削減だけなので根本解決にはならない可能性あり
+```
 
 #### 注意事項
 
-- fal.aiはCDN URLで画像を返すため、WorkerがそのURLをfetchしてbase64変換する1ステップが必要
 - `FAL_KEY`未設定時はアップスケールをスキップしてそのままSUZURI登録する（best-effortで継続）
-- 非同期キュー（Queue API）は不要。同期モード（`run`エンドポイント）で十分
+- CDN URLを直接SUZURIに渡す設計（base64変換はしない）→ Workers CPU時間節約
+- 残高不足時はstatus=403「Exhausted balance」エラー。`fal.ai/dashboard/billing`でチャージ
 
 ---
 
@@ -540,5 +560,4 @@ runBot()
 
 | 項目 | 詳細 | 場所 |
 | --- | --- | --- |
-| ENモードでグッズボタンが日本語 | `showGoods()`が一度DOMを書き出した後、言語切り替えで再描画されない（`data-i18n`属性なし） | `frontend/index.html` `showGoods()` / `toggleLang()` |
-| BlueskyのCTAに`#にゃんバーサリー`タグを追加 | `HASHTAG_LIST`に`"#にゃんバーサリー"`を追加し、CTA文を「あなたも今日の #にゃんバーサリー を作ってみませんか？」に変更 | `worker/bluesky-bot.js` `HASHTAG_LIST` / `buildPostText()` |
+| fal.ai無効化（UX改善） | タイムアウト待ち30秒がかかるようになったため、fal.ai呼び出しを一時コメントアウトして以前の速度に戻す | `worker/index.js` `/suzuri-create`ハンドラ / `worker/bluesky-bot.js` `runBot()` |
