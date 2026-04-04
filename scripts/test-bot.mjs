@@ -715,6 +715,58 @@ function makeMockBucket(initialMeta) {
 }
 
 // ---------------------------------------------------------------------------
+// updateMetaInR2: productsマージ（スラッグ単位 upsert）
+// ---------------------------------------------------------------------------
+console.log("\n[updateMetaInR2: productsマージ]");
+
+{
+  // 既存products（centerグループ）に新しいproducts（rightグループ）をマージ
+  const existing = [
+    { slug: "can-badge", sampleUrl: "https://suzuri.jp/cb", available: true },
+    { slug: "acrylic-keychain", sampleUrl: "https://suzuri.jp/ak", available: true },
+  ];
+  const bucket = makeMockBucket({ theme: "テスト", materialId: 10, products: existing });
+  const newProducts = [
+    { slug: "t-shirt", sampleUrl: "https://suzuri.jp/ts", available: true },
+    { slug: "sticker", sampleUrl: "https://suzuri.jp/st", available: true },
+  ];
+  await updateMetaInR2(bucket, "test-id", { products: newProducts });
+  const result = bucket._read("test-id/meta.json");
+  assert("productsマージ: 全4スラッグが存在する", result.products.length === 4);
+  assert("productsマージ: can-badge が保持される", result.products.some(p => p.slug === "can-badge"));
+  assert("productsマージ: acrylic-keychain が保持される", result.products.some(p => p.slug === "acrylic-keychain"));
+  assert("productsマージ: t-shirt が追加される", result.products.some(p => p.slug === "t-shirt"));
+  assert("productsマージ: sticker が追加される", result.products.some(p => p.slug === "sticker"));
+  assert("productsマージ: materialId は変わらない", result.materialId === 10);
+}
+
+{
+  // 既存スラッグを上書き（available が false → true に更新される場合）
+  const bucket = makeMockBucket({
+    theme: "テスト",
+    products: [{ slug: "t-shirt", sampleUrl: "https://suzuri.jp/old", available: false }],
+  });
+  await updateMetaInR2(bucket, "test-id", {
+    products: [{ slug: "t-shirt", sampleUrl: "https://suzuri.jp/new", available: true }],
+  });
+  const result = bucket._read("test-id/meta.json");
+  assert("productsマージ: 既存スラッグは新しい値で上書きされる", result.products.length === 1);
+  assert("productsマージ: 上書き後のsampleUrlが新しい値", result.products[0].sampleUrl === "https://suzuri.jp/new");
+  assert("productsマージ: 上書き後のavailableがtrue", result.products[0].available === true);
+}
+
+{
+  // 既存productsが空の場合: そのまま新しいproductsになる
+  const bucket = makeMockBucket({ theme: "テスト", products: [] });
+  await updateMetaInR2(bucket, "test-id", {
+    products: [{ slug: "t-shirt", sampleUrl: "https://suzuri.jp/ts", available: true }],
+  });
+  const result = bucket._read("test-id/meta.json");
+  assert("productsマージ: 既存空でも新productが追加される", result.products.length === 1);
+  assert("productsマージ: 既存空でもt-shirtが存在する", result.products[0].slug === "t-shirt");
+}
+
+// ---------------------------------------------------------------------------
 // _calcWatermarkLayout（frontend/index.html の applyWatermark 座標計算ロジック）
 // ※ ブラウザCanvasなしで検証するため、同じ純粋関数をここで定義してテストする
 // ---------------------------------------------------------------------------
