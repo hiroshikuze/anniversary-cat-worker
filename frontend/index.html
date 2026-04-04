@@ -273,6 +273,8 @@
         goodsLabel:         "🛍️ グッズを買う（SUZURI）",
         goodsExpiry:        "共有リンクとグッズ購入は生成後7日間のみご利用いただけます",
         outOfStockToast:    "この商品は現在在庫切れです",
+        preparingToast:     "まもなく準備完了です。しばらくお待ちください",
+        preparingBtn:       "準備中…",
         expiredText:        "この記念日画像は期限切れです（7日間保存）",
         createNewBtn:       "🎨 今日の記念日で作る",
         newGenerateBtn:     "✨ 新しく生成",
@@ -307,6 +309,8 @@
         goodsLabel:         "🛍️ Buy Goods (SUZURI)",
         goodsExpiry:        "Sharing links and goods are available for 7 days after generation",
         outOfStockToast:    "This item is currently out of stock",
+        preparingToast:     "Almost ready. Please wait a moment.",
+        preparingBtn:       "Preparing…",
         expiredText:        "This anniversary image has expired (stored for 7 days)",
         createNewBtn:       "🎨 Create Today's Anniversary",
         newGenerateBtn:     "✨ Generate New",
@@ -531,13 +535,24 @@
           a.className = "btn-secondary py-2 px-3 rounded-xl text-sm font-medium text-center flex items-center justify-center gap-1";
           a.textContent = `${icon} ${name}`;
           listEl.appendChild(a);
+        } else if (p.queued) {
+          // バックグラウンド処理中: 「準備中…」グレーアウトボタン
+          const btn = document.createElement("button");
+          btn.className = "btn-disabled py-2 px-3 rounded-xl text-sm font-medium text-center flex items-center justify-center gap-1 w-full";
+          btn.dataset.queuedSlug = p.slug;
+          btn.textContent = `${icon} ${t("preparingBtn")}`;
+          btn.setAttribute("aria-disabled", "true");
+          btn.addEventListener("click", () => {
+            showToast(t("preparingToast"));
+          });
+          listEl.appendChild(btn);
         } else {
           const btn = document.createElement("button");
           btn.className = "btn-disabled py-2 px-3 rounded-xl text-sm font-medium text-center flex items-center justify-center gap-1 w-full";
           btn.textContent = `${icon} ${name}`;
           btn.setAttribute("aria-disabled", "true");
           btn.addEventListener("click", () => {
-            showToast(translations[currentLang].outOfStockToast);
+            showToast(t("outOfStockToast"));
           });
           listEl.appendChild(btn);
         }
@@ -546,6 +561,43 @@
       if (hasAny) {
         document.getElementById("g-goods").classList.remove("hidden");
       }
+    }
+
+    // ----------------------------------------------------------
+    // SUZURI バックグラウンド登録ポーリング
+    // ----------------------------------------------------------
+    function startPollingSuzuri(r2Id, slugsToWatch) {
+      const INTERVAL_MS   = 5_000;
+      const MAX_ATTEMPTS  = 12; // 60秒
+      let attempts = 0;
+
+      const poll = async () => {
+        attempts++;
+        try {
+          const res = await fetch(`${WORKER_URL}/meta/${r2Id}`);
+          if (res.ok) {
+            const meta = await res.json();
+            const found = (meta.products ?? []).filter(p => slugsToWatch.includes(p.slug));
+            if (found.length >= slugsToWatch.length) {
+              // 完了: lastProducts の該当スラッグを置き換えて再描画
+              const updated = (lastProducts ?? []).map(p => {
+                const match = found.find(f => f.slug === p.slug);
+                return match ?? p;
+              });
+              showGoods(updated);
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn("[poll] エラー:", e.message);
+        }
+        if (attempts < MAX_ATTEMPTS) {
+          setTimeout(poll, INTERVAL_MS);
+        }
+        // タイムアウト時はそのまま放置（準備中ボタンが残る）
+      };
+
+      setTimeout(poll, INTERVAL_MS);
     }
 
     // ----------------------------------------------------------
@@ -743,7 +795,8 @@
         showGenerate("result");
 
         // ウォーターマーク合成 → SUZURI登録（best-effort: 失敗しても表示は維持）
-        // 商品グループごとに位置を変えて並列実行
+        // right グループ（t-shirt/sticker）は Worker 側で ctx.waitUntil() バックグラウンド処理
+        // center グループ（can-badge/acrylic-keychain）は即時処理
         Promise.all([
           applyWatermark(data.imageData, data.mimeType, "bottom-right"),
           applyWatermark(data.imageData, data.mimeType, "bottom-center"),
@@ -759,15 +812,24 @@
             imageData: centerWm.imageData,
             mimeType:  centerWm.mimeType,
             theme:     researchData.theme,
-            r2Id:      null,
+            r2Id:      data.id ?? null,
             slugs:     CENTER_SLUGS,
           }),
         ])).then(([rightRes, centerRes]) => {
-          const products = [
-            ...(rightRes.status  === "fulfilled" ? rightRes.value?.products  ?? [] : []),
-            ...(centerRes.status === "fulfilled" ? centerRes.value?.products ?? [] : []),
-          ];
-          if (products.length > 0) showGoods(products);
+          // center グループ: 即時表示
+          const centerProducts = centerRes.status === "fulfilled"
+            ? centerRes.value?.products ?? [] : [];
+          // right グループ: queued:true なら「準備中」プレースホルダー
+          const rightQueued = rightRes.status === "fulfilled" && rightRes.value?.queued === true;
+          const rightProducts = rightRes.status === "fulfilled" && !rightQueued
+            ? rightRes.value?.products ?? []
+            : RIGHT_SLUGS.map(slug => ({ slug, sampleUrl: null, available: false, queued: rightQueued }));
+          const allProducts = [...rightProducts, ...centerProducts];
+          if (allProducts.length > 0) showGoods(allProducts);
+          // ポーリング開始（Worker バックグラウンド処理完了を待つ）
+          if (rightQueued && data.id) {
+            startPollingSuzuri(data.id, RIGHT_SLUGS);
+          }
         }).catch(e => {
           console.warn("[suzuri-create] 失敗:", e.message);
         });

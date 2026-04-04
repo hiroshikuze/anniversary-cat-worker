@@ -554,7 +554,7 @@ export default {
     })());
   },
 
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const origin = request.headers.get("Origin") ?? "";
     const corsH = makeCorsHeaders(origin, env.ALLOWED_ORIGIN ?? "");
     const url = new URL(request.url);
@@ -573,6 +573,15 @@ export default {
     if (request.method === "GET" && url.pathname.startsWith("/image/")) {
       const id = url.pathname.slice("/image/".length);
       return handleGetImage(id, env, corsH);
+    }
+
+    // GET: R2メタデータのみ取得（ポーリング用軽量エンドポイント）
+    if (request.method === "GET" && url.pathname.startsWith("/meta/")) {
+      const id = url.pathname.slice("/meta/".length);
+      if (!env.IMAGE_BUCKET) return new Response("Not Found", { status: 404, headers: corsH });
+      const meta = await getMetaFromR2(env.IMAGE_BUCKET, id);
+      if (!meta) return new Response("Not Found", { status: 404, headers: corsH });
+      return Response.json(meta, { headers: corsH });
     }
 
     if (request.method !== "POST") {
@@ -644,23 +653,48 @@ export default {
           return Response.json({ error: "imageData, mimeType, theme が必要です" }, { status: 400, headers: corsH });
         }
 
-        // TODO(fal.ai): 非同期アーキテクチャ実装後に有効化する
-        // ctx.waitUntil() + ポーリング方式で t-shirt+sticker グループのみ高解像度化する計画あり
-        // 詳細: .claude/rules/architecture.md「fal.ai AuraSRアップスケーリング」参照
-        const suzuriTexture = `data:${mimeType};base64,${imageData}`;
+        // t-shirt / sticker は fal.ai アップスケールを試みるため ctx.waitUntil() でバックグラウンド処理
+        // can-badge / acrylic-keychain は即時処理して先にレスポンスを返す
+        const RIGHT_SLUGS = ["t-shirt", "sticker"];
+        const isRightGroup = (slugs ?? []).some(s => RIGHT_SLUGS.includes(s));
 
-        const suzuriResult = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null);
-        if (r2Id && env.IMAGE_BUCKET) {
-          try {
-            await updateMetaInR2(env.IMAGE_BUCKET, r2Id, {
-              materialId: suzuriResult.materialId,
-              products:   suzuriResult.products,
-            });
-          } catch (e) {
-            console.warn(`[suzuri-create] R2メタ更新失敗: ${e.message}`);
+        if (isRightGroup) {
+          // バックグラウンドタスク: fal.ai → SUZURI登録 → R2マージ
+          ctx.waitUntil((async () => {
+            let suzuriTexture = `data:${mimeType};base64,${imageData}`;
+            try {
+              const upscaled = await upscaleWithFal(imageData, mimeType, env);
+              if (upscaled.cdnUrl) suzuriTexture = upscaled.cdnUrl;
+            } catch (e) {
+              console.warn(`[suzuri-create] fal.ai アップスケール失敗（元画像で継続）: ${e.message}`);
+            }
+            try {
+              const sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null);
+              if (r2Id && env.IMAGE_BUCKET) {
+                await updateMetaInR2(env.IMAGE_BUCKET, r2Id, { products: sr.products });
+              }
+              console.log(`[suzuri-create] right グループ完了 slugs=${slugs?.join(",")}`);
+            } catch (e) {
+              console.error(`[suzuri-create] right グループ失敗: ${e.message}`);
+            }
+          })());
+          result = { queued: true, slugs };
+        } else {
+          // center グループ: 即時処理
+          const suzuriTexture = `data:${mimeType};base64,${imageData}`;
+          const suzuriResult = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null);
+          if (r2Id && env.IMAGE_BUCKET) {
+            try {
+              await updateMetaInR2(env.IMAGE_BUCKET, r2Id, {
+                materialId: suzuriResult.materialId,
+                products:   suzuriResult.products,
+              });
+            } catch (e) {
+              console.warn(`[suzuri-create] R2メタ更新失敗: ${e.message}`);
+            }
           }
+          result = { products: suzuriResult.products, materialId: suzuriResult.materialId };
         }
-        result = { products: suzuriResult.products, materialId: suzuriResult.materialId };
       } else {
         return new Response("Not Found", { status: 404, headers: corsH });
       }

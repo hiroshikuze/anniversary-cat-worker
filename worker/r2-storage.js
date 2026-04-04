@@ -108,6 +108,8 @@ export async function deleteFromR2(bucket, id) {
 
 /**
  * R2のメタデータを部分更新する。画像は変更せずmeta.jsonのみ上書きする。
+ * products フィールドはスラッグ単位でマージ（上書きではなくupsert）する。
+ * 複数グループ（right/center）が別々に更新しても全商品が保持される。
  * @param {R2Bucket} bucket
  * @param {string} id
  * @param {object} updates - 既存メタに上書きするフィールド
@@ -115,7 +117,13 @@ export async function deleteFromR2(bucket, id) {
 export async function updateMetaInR2(bucket, id, updates) {
   const existing = await getMetaFromR2(bucket, id);
   if (!existing) return;
-  await bucket.put(`${id}/meta.json`, JSON.stringify({ ...existing, ...updates }), {
+  let merged = { ...existing, ...updates };
+  if (updates.products) {
+    const map = new Map((existing.products ?? []).map(p => [p.slug, p]));
+    for (const p of updates.products) map.set(p.slug, p);
+    merged.products = [...map.values()];
+  }
+  await bucket.put(`${id}/meta.json`, JSON.stringify(merged), {
     httpMetadata: { contentType: "application/json" },
   });
 }
