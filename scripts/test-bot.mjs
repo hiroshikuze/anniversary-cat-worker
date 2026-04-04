@@ -18,7 +18,7 @@ import {
 } from "../worker/bluesky-bot.js";
 
 import { pickPersona, pickPersonality } from "../worker/index.js";
-import { upscaleWithFal, _arrayBufferToBase64 } from "../worker/fal.js";
+import { upscaleWithFal } from "../worker/fal.js";
 
 let passed = 0;
 let failed = 0;
@@ -935,20 +935,19 @@ console.log("\n[pickPersonality]");
 console.log("\n[upscaleWithFal]");
 
 {
-  // FAL_KEY 未設定: fetch を呼ばずそのまま返す
+  // FAL_KEY 未設定: fetch を呼ばず cdnUrl=null を返す
   let fetchCalled = false;
   const origFetch = globalThis.fetch;
   globalThis.fetch = async () => { fetchCalled = true; return {}; };
   const result = await upscaleWithFal("abc123", "image/png", {});
   globalThis.fetch = origFetch;
   assert("FAL_KEY 未設定: fetch を呼ばない", !fetchCalled);
-  assert("FAL_KEY 未設定: 元のimageDataをそのまま返す", result.imageData === "abc123");
-  assert("FAL_KEY 未設定: 元のmimeTypeをそのまま返す", result.mimeType === "image/png");
+  assert("FAL_KEY 未設定: cdnUrl が null", result.cdnUrl === null);
+  assert("FAL_KEY 未設定: mimeType がそのまま返る", result.mimeType === "image/png");
 }
 
 {
-  // FAL_KEY 設定・正常系: fal.ai → CDN URL → base64 を返す
-  const fakeBytes = new Uint8Array([1, 2, 3, 4]);
+  // FAL_KEY 設定・正常系: fal.ai APIのみ呼び出し、CDN URLを返す（ダウンロードしない）
   const origFetch = globalThis.fetch;
   let falCallCount = 0;
   globalThis.fetch = async (url) => {
@@ -959,21 +958,13 @@ console.log("\n[upscaleWithFal]");
         json: async () => ({ image: { url: "https://cdn.fal.ai/test.png" } }),
       };
     }
-    // CDN fetch
-    return {
-      ok: true,
-      headers: { get: () => "image/png" },
-      arrayBuffer: async () => fakeBytes.buffer,
-    };
+    throw new Error("CDN fetch should not be called");
   };
   const result = await upscaleWithFal("abc", "image/png", { FAL_KEY: "test-key" });
   globalThis.fetch = origFetch;
-  assert("正常系: fal.ai API + CDN の2回fetchする", falCallCount === 2);
-  assert("正常系: upscaled base64が返る", typeof result.imageData === "string" && result.imageData.length > 0);
+  assert("正常系: fal.ai APIの1回だけfetchする（CDNダウンロードなし）", falCallCount === 1);
+  assert("正常系: cdnUrlが返る", result.cdnUrl === "https://cdn.fal.ai/test.png");
   assert("正常系: mimeTypeが返る", result.mimeType === "image/png");
-  // base64デコードして元バイト列と一致するか確認
-  const decoded = Buffer.from(result.imageData, "base64");
-  assert("正常系: デコードしたバイト列が元データと一致", Buffer.compare(decoded, Buffer.from(fakeBytes)) === 0);
 }
 
 {
@@ -1008,25 +999,6 @@ console.log("\n[upscaleWithFal]");
   }
   globalThis.fetch = origFetch;
   assert("CDN URLなし: エラーをthrowする", threw);
-}
-
-// ---------------------------------------------------------------------------
-// _arrayBufferToBase64
-// ---------------------------------------------------------------------------
-console.log("\n[_arrayBufferToBase64]");
-{
-  const bytes = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
-  const result = _arrayBufferToBase64(bytes.buffer);
-  assert("'Hello' の base64 が正しい", result === btoa("Hello"));
-}
-
-{
-  // チャンクサイズ境界を越えるサイズ（8193バイト）でも正常動作
-  const bytes = new Uint8Array(8193).fill(42);
-  const result = _arrayBufferToBase64(bytes.buffer);
-  const decoded = Buffer.from(result, "base64");
-  assert("8193バイト: デコード後のバイト数が一致", decoded.length === 8193);
-  assert("8193バイト: デコード後の値がすべて42", decoded.every(b => b === 42));
 }
 
 // ---------------------------------------------------------------------------

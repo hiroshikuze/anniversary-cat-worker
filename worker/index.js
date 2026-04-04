@@ -645,18 +645,16 @@ export default {
         }
 
         // fal.ai アップスケール（best-effort: 失敗時は元画像で継続）
-        let suzuriImageData = imageData;
-        let suzuriMime = mimeType;
+        // CDN URLをそのままSUZURIに渡すことでCPU時間を節約する
+        let suzuriTexture = `data:${mimeType};base64,${imageData}`;
         try {
           const upscaled = await upscaleWithFal(imageData, mimeType, env);
-          suzuriImageData = upscaled.imageData;
-          suzuriMime      = upscaled.mimeType;
+          if (upscaled.cdnUrl) suzuriTexture = upscaled.cdnUrl;
         } catch (e) {
           console.warn(`[suzuri-create] fal.ai アップスケール失敗（元画像で継続）: ${e.message}`);
         }
 
-        const dataUri = `data:${suzuriMime};base64,${suzuriImageData}`;
-        const suzuriResult = await createSuzuriProducts(dataUri, theme, env, slugs ?? null);
+        const suzuriResult = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null);
         if (r2Id && env.IMAGE_BUCKET) {
           try {
             await updateMetaInR2(env.IMAGE_BUCKET, r2Id, {

@@ -366,18 +366,16 @@ export async function runBot(env, handleResearch, handleGenerate) {
         const imgMime = generated.mimeType || "image/png";
 
         // fal.ai アップスケール（best-effort: 失敗時は元画像で継続）
-        let suzuriImageData = generated.imageData;
-        let suzuriMime = imgMime;
+        // CDN URLをそのままSUZURIに渡すことでCPU時間を節約する
+        let suzuriTexture = `data:${imgMime};base64,${generated.imageData}`;
         try {
           const upscaled = await upscaleWithFal(generated.imageData, imgMime, env);
-          suzuriImageData = upscaled.imageData;
-          suzuriMime      = upscaled.mimeType;
+          if (upscaled.cdnUrl) suzuriTexture = upscaled.cdnUrl;
         } catch (e) {
           console.warn(`${prefix} fal.ai アップスケール失敗（元画像で継続）: ${e.message}`);
         }
 
-        const dataUri = `data:${suzuriMime};base64,${suzuriImageData}`;
-        const suzuriResult = await createSuzuriProducts(dataUri, research.theme, env);
+        const suzuriResult = await createSuzuriProducts(suzuriTexture, research.theme, env);
         materialId     = suzuriResult.materialId;
         suzuriProducts = suzuriResult.products;
         console.log(`${prefix} SUZURI商品生成完了 materialId=${materialId}`);

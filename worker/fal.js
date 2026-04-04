@@ -10,18 +10,21 @@
 const FAL_API_URL = "https://fal.run/fal-ai/aura-sr";
 
 /**
- * base64画像を fal.ai AuraSR で4倍アップスケールして返す。
- * FAL_KEY 未設定時はそのまま返す（best-effort）。
+ * base64画像を fal.ai AuraSR で4倍アップスケールする。
+ * CDN URL をそのまま返す（base64ダウンロードは行わない）。
+ * Cloudflare Workers の CPU 時間制限対策：大きな画像の base64 変換は避ける。
+ * FAL_KEY 未設定時は cdnUrl=null を返す（呼び出し元が元画像で代替する）。
  *
- * @param {string} imageData - base64エンコードされた画像データ
+ * @param {string} imageData - base64エンコードされた画像データ（fal.aiへの入力）
  * @param {string} mimeType  - 例: "image/png", "image/jpeg"
  * @param {object} env       - Cloudflare Workers 環境変数（FAL_KEY を参照）
- * @returns {Promise<{imageData: string, mimeType: string}>}
+ * @returns {Promise<{cdnUrl: string|null, mimeType: string}>}
+ *   cdnUrl: アップスケール後のCDN URL。FAL_KEY未設定またはスキップ時はnull。
  */
 export async function upscaleWithFal(imageData, mimeType, env) {
   if (!env.FAL_KEY) {
     console.log("[fal] FAL_KEY 未設定 - アップスケールをスキップ");
-    return { imageData, mimeType };
+    return { cdnUrl: null, mimeType };
   }
 
   const dataUri = `data:${mimeType};base64,${imageData}`;
@@ -47,31 +50,6 @@ export async function upscaleWithFal(imageData, mimeType, env) {
     throw new Error(`fal.ai AuraSR: CDN URLが取得できません: ${JSON.stringify(data)}`);
   }
 
-  // CDN URL から画像を fetch して base64 変換
-  const imgRes = await fetch(cdnUrl, { signal: AbortSignal.timeout(30_000) });
-  if (!imgRes.ok) throw new Error(`fal.ai CDN fetch 失敗: status=${imgRes.status}`);
-
-  const buffer = await imgRes.arrayBuffer();
-  const upscaledBase64 = _arrayBufferToBase64(buffer);
-  const upscaledMime = imgRes.headers.get("content-type")?.split(";")[0] || "image/png";
-
-  console.log(`[fal] AuraSR 完了 bytes=${buffer.byteLength}`);
-  return { imageData: upscaledBase64, mimeType: upscaledMime };
-}
-
-/**
- * ArrayBuffer を base64 文字列に変換する（Cloudflare Workers 対応）。
- * スプレッド演算子は大きな配列でスタックオーバーフローするため、チャンク処理する。
- * テスト用にエクスポート。
- * @param {ArrayBuffer} buffer
- * @returns {string}
- */
-export function _arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const CHUNK = 8192;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
+  console.log(`[fal] AuraSR 完了 cdnUrl=${cdnUrl}`);
+  return { cdnUrl, mimeType: "image/png" };
 }
