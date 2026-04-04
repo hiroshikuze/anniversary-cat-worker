@@ -541,3 +541,4 @@ runBot()
 | 項目 | 詳細 | 場所 |
 | --- | --- | --- |
 | ENモードでグッズボタンが日本語 | `showGoods()`が一度DOMを書き出した後、言語切り替えで再描画されない（`data-i18n`属性なし） | `frontend/index.html` `showGoods()` / `toggleLang()` |
+| BlueskyのCTAに`#にゃんバーサリー`タグを追加 | `HASHTAG_LIST`に`"#にゃんバーサリー"`を追加し、CTA文を「あなたも今日の #にゃんバーサリー を作ってみませんか？」に変更 | `worker/bluesky-bot.js` `HASHTAG_LIST` / `buildPostText()` |
