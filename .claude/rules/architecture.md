@@ -452,3 +452,93 @@ DELETE /api/v1/materials/{material_id}
 #### 透過処理
 
 背景除去には外部API（remove.bg等）が必要。追加コスト・処理時間が発生するため後回しでよい。Tシャツは透過不要なので商品種別によって制御する。
+
+---
+
+### fal.ai AuraSRアップスケーリング（未実装・実装予定）
+
+#### 目的
+
+Gemini生成画像（通常1024px前後）をSUZURI推奨解像度（3000×3000px以上）に引き上げ、Tシャツ等の印刷品質を改善する。
+
+#### 技術仕様（2026-04調査済み）
+
+| 項目 | 内容 |
+| --- | --- |
+| 使用モデル | `fal-ai/aura-sr`（4倍アップスケール・GANベース） |
+| レイテンシ | 1024px入力 → 約0.25秒（同期モード） |
+| 入力 | URLまたはbase64 |
+| 出力 | CDN URL（WorkerがfetchしてR2/SUZURIへ渡す） |
+| メモリ | 3000×3000 base64 ≈ 34MB → Workers 128MB制限内 ✅ |
+| Cloudflare Workers対応 | Cloudflare AI Gatewayと公式統合済み ✅ |
+| 認証 | `Authorization: Key <FAL_KEY>` ヘッダー |
+| 料金 | AuraSRはほぼ無料〜格安（従量課金） |
+
+#### 実装位置
+
+```text
+【ユーザーフロー】
+フロント（ウォーターマーク合成済み）
+  → POST /suzuri-create
+    → fal.ai AuraSR（4倍アップスケール）  ← 追加
+    → SUZURI API へ高解像度画像をアップロード
+
+【Botフロー】
+runBot()
+  → handleGenerate()
+  → fal.ai AuraSR（4倍アップスケール）  ← 追加
+  → createSuzuriProducts()
+```
+
+#### 必要なシークレット
+
+| シークレット名 | 登録先 |
+| --- | --- |
+| `FAL_KEY` | Cloudflare Workers（設定 → 変数とシークレット） |
+| `FAL_KEY` | GitHub Actions（Settings → Secrets → Actions） |
+
+取得先: `fal.ai` ダッシュボード → API Keys → Add key
+
+#### 実装順序
+
+ドキュメント更新 → `scripts/test-bot.mjs`にテスト追加 → `worker/index.js`・`worker/bluesky-bot.js`に実装
+
+#### 注意事項
+
+- fal.aiはCDN URLで画像を返すため、WorkerがそのURLをfetchしてbase64変換する1ステップが必要
+- `FAL_KEY`未設定時はアップスケールをスキップしてそのままSUZURI登録する（best-effortで継続）
+- 非同期キュー（Queue API）は不要。同期モード（`run`エンドポイント）で十分
+
+---
+
+### 共有URL機能（未実装・実装予定）
+
+#### 概要
+
+ユーザーが生成した画像にも`?id=user/{uuid}`付きの共有URLを付与し、そのURLを受け取った人が同じ画像・SUZURIグッズ購入画面を見られるようにする。
+
+#### ボタン仕様（共有URLから遷移した場合）
+
+| ボタン | 動作 | 備考 |
+| --- | --- | --- |
+| 「✨ 新しく生成」 | `startResearch()`呼び出し | 通常の「🔄 もう一度生成」と差し替え |
+| 「共有する」/「保存する」 | 現行のまま | `?id=`付きURLを共有 |
+| SUZURIグッズ4ボタン | 現行のまま | `data.products`があれば表示 |
+| ~~「グッズを生成」~~ | **非表示** | `data.products`がある場合は重複作成防止のため非表示 |
+
+- `bot/YYYY-MM-DD`（Bluesky経由）と`user/{uuid}`（ユーザー共有）の両方に適用
+- `loadSharedImage()`実行時にフラグを立てて出し分け
+
+#### SUZURI重複作成の防止
+
+- 判定基準: R2 meta.jsonの`products`フィールドの有無（SUZURIのAPIは「登録済み確認」エンドポイント非提供）
+- `data.products?.length > 0`の場合はグッズ生成ボタンを非表示にする
+
+---
+
+### 未対応バグ・改善項目（次回実装時にまとめて対応）
+
+| 項目 | 詳細 | 場所 |
+| --- | --- | --- |
+| ENモードでグッズボタンが日本語 | `showGoods()`が一度DOMを書き出した後、言語切り替えで再描画されない（`data-i18n`属性なし） | `frontend/index.html` `showGoods()` / `toggleLang()` |
+| BlueskyのCTAに`#にゃんバーサリー`タグを追加 | `HASHTAG_LIST`に`"#にゃんバーサリー"`を追加し、CTA文を「あなたも今日の #にゃんバーサリー を作ってみませんか？」に変更 | `worker/bluesky-bot.js` `HASHTAG_LIST` / `buildPostText()` |

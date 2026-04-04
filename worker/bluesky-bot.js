@@ -15,6 +15,7 @@
 
 import { saveToR2 } from "./r2-storage.js";
 import { createSuzuriProducts } from "./suzuri.js";
+import { upscaleWithFal } from "./fal.js";
 
 // Photonは動的importで遅延ロード（Node.jsテスト環境での.wasmロード失敗を回避）
 let _photonReady = false;
@@ -33,7 +34,7 @@ const BLUESKY_API            = "https://bsky.social/xrpc";
 const SITE_URL               = "https://hiroshikuze.github.io/anniversary-cat-worker/";
 export const BLUESKY_MAX_IMAGE_BYTES = 976_000; // Bluesky上限 1,000,000 bytes に余裕を持たせた値
 
-const HASHTAG_LIST = ["#AIart", "#cat", "#kitten", "#ほのぼの", "#猫"];
+const HASHTAG_LIST = ["#AIart", "#cat", "#kitten", "#ほのぼの", "#猫", "#にゃんバーサリー"];
 const HASHTAGS     = HASHTAG_LIST.join(" ");
 
 // ---------------------------------------------------------------------------
@@ -64,7 +65,7 @@ export function buildThemeTag(theme) {
 export function buildPostText(theme, description, pageUrl = SITE_URL) {
   const header   = `今日は「${theme}」の日！🐱`;
   const body     = description ? `\n${description}` : "";
-  const cta      = `\n\nあなたも今日のにゃんバーサリーを作ってみませんか？\n${pageUrl}`;
+  const cta      = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${pageUrl}`;
   const themeTag = buildThemeTag(theme);
   const allTags  = themeTag ? `${HASHTAGS} ${themeTag}` : HASHTAGS;
   const tags     = `\n\n${allTags}`;
@@ -363,7 +364,19 @@ export async function runBot(env, handleResearch, handleGenerate) {
     if (env.SUZURI_API_KEY) {
       try {
         const imgMime = generated.mimeType || "image/png";
-        const dataUri = `data:${imgMime};base64,${generated.imageData}`;
+
+        // fal.ai アップスケール（best-effort: 失敗時は元画像で継続）
+        let suzuriImageData = generated.imageData;
+        let suzuriMime = imgMime;
+        try {
+          const upscaled = await upscaleWithFal(generated.imageData, imgMime, env);
+          suzuriImageData = upscaled.imageData;
+          suzuriMime      = upscaled.mimeType;
+        } catch (e) {
+          console.warn(`${prefix} fal.ai アップスケール失敗（元画像で継続）: ${e.message}`);
+        }
+
+        const dataUri = `data:${suzuriMime};base64,${suzuriImageData}`;
         const suzuriResult = await createSuzuriProducts(dataUri, research.theme, env);
         materialId     = suzuriResult.materialId;
         suzuriProducts = suzuriResult.products;

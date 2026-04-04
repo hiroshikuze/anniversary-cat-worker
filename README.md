@@ -36,6 +36,9 @@ AI-powered daily cat illustration generator inspired by today's anniversary.
 - **バックエンド**: Cloudflare Workers
 - **AI（記念日リサーチ）**: Google Gemini API（Grounding with Google Search）
 - **AI（画像生成）**: Google Gemini API / Pollinations.ai（フォールバック）
+- **AI（画像アップスケール）**: fal.ai AuraSR（SUZURI印刷用高解像度化）
+- **グッズ販売**: SUZURI API
+- **SNS投稿**: Bluesky AT Protocol
 
 ## ライセンス
 
