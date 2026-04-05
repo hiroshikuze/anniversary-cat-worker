@@ -68,6 +68,35 @@
   - CDN fetch結果0バイト時のbase64フォールバックガード追加
 - **教訓**: `Content-Length`を省くと一部のAPIクライアントがサイズ不明のストリームを正しく処理できないことがある。R2 objectのbodyをそのまま返す場合も`arrayBuffer()`で実体化してヘッダーを明示するのが安全
 
+### 2026-04 | AuraSR 4x PNG がSUZURI 20MB上限を超過（422エラー）
+
+- **状況**: fal.ai AuraSR 4xアップスケール後のPNGをSUZURIに送ると`status=422 画像must be in between 0バイト and 20メガバイト`
+- **原因**: 1024px入力→4096px PNG は~24MBになりSUZURIの20MB上限を超過する
+- **修正**: CDNから取得したbyteLengthが20MB超の場合はR2保存をスキップしてbase64フォールバックへ（`buf.byteLength <= 20_000_000`チェックを追加）
+- **場所**: `worker/index.js` `/suzuri-create`バックグラウンドタスクと`/resume-hires`の両方
+
+### 2026-04 | fal.aiモデル実測比較（400px入力・scripts/test-fal-models.mjs）
+
+- **目的**: AuraSR 4xが20MB超過するため、代替モデル・パラメータを調査
+- **実測結果**（入力: 400px JPEG → 出力推定1024px入力時を括弧内に記載）:
+
+| モデル | 出力解像度 | ファイルサイズ | 1024px入力推定 | 速度 |
+| --- | --- | --- | --- | --- |
+| AuraSR 4x | 1600px（4x） | 3.74 MB | ~24 MB ❌ | 3.2秒 |
+| AuraSR `upscaling_factor=2` | 1600px（**4x**） | 3.74 MB | ~24 MB ❌ | 3.2秒 |
+| ESRGAN | 800px（2x） | 0.99 MB | **~6 MB ✅** | **3.2秒** |
+| Clarity Upscaler | 800px（2x） | 1.01 MB | ~6 MB ✅ | 9.6秒（遅い） |
+
+- **確定事項**:
+  - `upscaling_factor: 2`は**完全に無視**される。AuraSRは4x固定モデル
+  - ESRGANはデフォルト2x（800px出力）・AuraSRと同速度・ファイルサイズ1/4
+  - Clarityは2xだが約3倍遅いため不採用候補
+  - fal.aiはURL直接指定だとWikipedia等の画像を取得できない（Bot制限）→base64 data URI形式で送る必要あり（本番も同方式）
+- **決定**: ESRGANに切り替え実施（`worker/fal.js` の `FAL_QUEUE_BASE` を `fal-ai/esrgan` に変更）
+  - AuraSRはほぼ毎回20MB超→base64フォールバックになるため実質アップスケールなし
+  - ESRGANは2048px/6MBで安定してSUZURIに高解像度登録できる
+  - 目標は「4x厳密」ではなく「Tシャツ印刷品質の向上」のためESRGAN 2xで十分
+
 ---
 
 ## 記録フォーマット

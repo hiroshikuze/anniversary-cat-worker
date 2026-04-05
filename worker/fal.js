@@ -1,14 +1,19 @@
 /**
- * worker/fal.js - fal.ai AuraSR アップスケーリング（Queue API方式）
+ * worker/fal.js - fal.ai ESRGAN アップスケーリング（Queue API方式）
  *
  * Queue APIでジョブを非同期投入し、request_idで結果を取得する。
  * fal.run（同期）と異なり、接続が切れても後からrequest_idで結果を参照できる。
  * FAL_KEY 未設定時はスキップして null を返す（best-effort）。
  *
+ * モデル選定理由:
+ *   AuraSR 4x: 1024px入力 → 4096px PNG ≈ 24MB → SUZURI 20MB上限超過で毎回フォールバック
+ *   ESRGAN 2x: 1024px入力 → 2048px PNG ≈ 6MB → SUZURI上限内で安定登録 ✅
+ *   目標は「4x厳密」ではなく「Tシャツ印刷品質の向上」のためESRGANで十分
+ *
  * 必要なシークレット: FAL_KEY
  */
 
-const FAL_QUEUE_BASE = "https://queue.fal.run/fal-ai/aura-sr";
+const FAL_QUEUE_BASE = "https://queue.fal.run/fal-ai/esrgan";
 
 /**
  * fal.ai Queue にアップスケールジョブを投入する。
@@ -88,9 +93,17 @@ export async function getFalResult(requestId, env) {
   }
 
   const result = await resultRes.json();
-  const cdnUrl = result?.image?.url;
+  // モデルによりレスポンス構造が異なるため複数パスを確認
+  const cdnUrl =
+    result?.image?.url ??
+    result?.images?.[0]?.url ??
+    result?.output?.image?.url ??
+    result?.output?.[0]?.url ??
+    result?.output?.url ??
+    result?.url ??
+    null;
   if (!cdnUrl) {
-    console.warn(`[fal] result: CDN URL が取得できません`);
+    console.warn(`[fal] result: CDN URL が取得できません result=${JSON.stringify(result).slice(0, 200)}`);
     return { status: "error" };
   }
 
