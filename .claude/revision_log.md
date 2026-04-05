@@ -29,14 +29,17 @@
 - **対処**: Cloudflareダッシュボード → コードを編集する → Scheduled → 送信 で手動発火。翌日以降は自動回復
 - **教訓**: Cron未発火はコードバグと区別するため、まずCloudflareのトリガーイベント履歴（設定タブ）を確認する。エントリ自体が存在しない場合はインフラ側の問題
 
-### 2026-04 | fal.ai AuraSRアップスケールがタイムアウトし続ける
+### 2026-04 | fal.ai AuraSRアップスケールがタイムアウトし続ける → ctx.waitUntil()で解決
 
-- **状況**: `POST /suzuri-create`でfal.ai AuraSRを呼び出すと毎回`AbortSignal.timeout(30_000)`が発火し、SUZURI登録は元画像で継続される（ベストエフォートフォールバック）
+- **状況**: `POST /suzuri-create`でfal.ai AuraSRを同期呼び出しすると毎回タイムアウト。SUZURI登録は元画像で継続されUXが悪化
 - **原因1**: fal.aiのバランス残高不足（初期エラー: status=403 "Exhausted balance"）
-- **原因2**: バランス補充後も、base64 JPEGペイロード（400〜700KB）をJSONで送信するためのネットワーク時間＋処理時間が30秒を超えることがある
-- **根本問題**: Cloudflare WorkersのWall-clock時間制限（Paid Bundledで約30秒）により、タイムアウトを延長しても解決しない。真の解決には非同期アーキテクチャ（fal.ai Webhook + Cloudflare Queues等）が必要
-- **暫定対処**: fal.ai呼び出しを一時無効化して以前の速度に戻す。グッズが売れてから非同期化を検討する
-- **教訓**: 同期Workerハンドラ内で外部API（特に画像処理系）を直列呼び出しする設計は、Wall-clock制限に引っかかるリスクがある。事前に処理時間を実測してから組み込む
+- **原因2**: Cloudflare WorkersのWall-clock時間制限（約30秒）により同期ハンドラ内では完了できない
+- **最終解決**: `ctx.waitUntil()`を使った非同期アーキテクチャに移行
+  - t-shirt+stickerグループ: バックグラウンドで処理、即座に`{ queued: true }`を返す
+  - can-badge+acrylic-keychainグループ: 従来通り同期処理
+  - フロントエンドが`GET /meta/:id`を5秒ごとにポーリングしてSUZURI URL完成を待つ
+- **追加修正**: fal.ai CDN URL（`v3b.fal.media`）を直接SUZURIに渡すと0バイトエラー。R2にバイナリ保存→`GET /hires/:id`経由でSUZURIに渡す方式で解決（動作確認済み）
+- **教訓**: 同期Workerハンドラ内で外部API（画像処理系）を直列呼び出しする設計はWall-clock制限に引っかかる。`ctx.waitUntil()`はI/O待ちにCPU時間が計上されないため有効。外部CDN URLを第三者APIに直接渡すのも避ける
 
 ---
 
