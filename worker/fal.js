@@ -36,7 +36,7 @@ export async function upscaleWithFal(imageData, mimeType, env) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ image_url: dataUri }),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(22_000),
   });
 
   if (!res.ok) {
