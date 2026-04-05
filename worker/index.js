@@ -12,7 +12,7 @@
 import { runBot } from "./bluesky-bot.js";
 import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2 } from "./r2-storage.js";
 import { createSuzuriProducts, deleteSuzuriMaterial } from "./suzuri.js";
-import { upscaleWithFal } from "./fal.js";
+import { submitFalJob, getFalResult } from "./fal.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -596,6 +596,71 @@ export default {
       });
     }
 
+    // GET /resume-hires/:id - fal.ai queue結果確認 → 必要なら SUZURI 登録を完了させる（安全網）
+    if (request.method === "GET" && url.pathname.startsWith("/resume-hires/")) {
+      const id = url.pathname.slice("/resume-hires/".length);
+      if (!id || !env.IMAGE_BUCKET) return new Response("Not Found", { status: 404, headers: corsH });
+      const meta = await getMetaFromR2(env.IMAGE_BUCKET, id);
+      if (!meta) return new Response("Not Found", { status: 404, headers: corsH });
+
+      // t-shirt がすでに登録済み → 重複防止
+      if ((meta.products ?? []).some(p => p.slug === "t-shirt")) {
+        return Response.json({ products: meta.products }, { headers: corsH });
+      }
+
+      if (!env.SUZURI_API_KEY) {
+        return Response.json({ error: "SUZURI_API_KEY 未設定" }, { status: 503, headers: corsH });
+      }
+
+      const RIGHT_SLUGS = ["t-shirt", "sticker"];
+      const workerOrigin = new URL(request.url).origin;
+      let suzuriTexture = null;
+
+      // fal.ai queue から結果を取得
+      if (meta.falRequestId && env.FAL_KEY) {
+        try {
+          const result = await getFalResult(meta.falRequestId, env);
+          if (result.status === "IN_QUEUE" || result.status === "IN_PROGRESS") {
+            console.log(`[resume-hires] fal まだ処理中 status=${result.status}`);
+            return Response.json({ stillProcessing: true }, { headers: corsH });
+          }
+          if (result.status === "COMPLETED" && result.cdnUrl) {
+            const cdnRes = await fetch(result.cdnUrl, { signal: AbortSignal.timeout(10_000) });
+            if (cdnRes.ok) {
+              const buf = await cdnRes.arrayBuffer();
+              if (buf.byteLength > 0) {
+                await env.IMAGE_BUCKET.put(`${id}/hires.png`, buf, {
+                  httpMetadata: { contentType: "image/png" },
+                });
+                suzuriTexture = `${workerOrigin}/hires/${id}`;
+                console.log(`[resume-hires] hires R2保存完了 → ${suzuriTexture}`);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn(`[resume-hires] fal result取得失敗: ${e.message}`);
+        }
+      }
+
+      // フォールバック: オリジナル画像を R2 から取得して base64 で登録
+      if (!suzuriTexture) {
+        const img = await getImageFromR2(env.IMAGE_BUCKET, id);
+        if (!img) return Response.json({ error: "画像データが見つかりません" }, { status: 404, headers: corsH });
+        suzuriTexture = `data:${img.mimeType};base64,${img.data}`;
+        console.log(`[resume-hires] base64フォールバック`);
+      }
+
+      try {
+        const sr = await createSuzuriProducts(suzuriTexture, meta.theme ?? "", env, RIGHT_SLUGS);
+        await updateMetaInR2(env.IMAGE_BUCKET, id, { products: sr.products });
+        console.log(`[resume-hires] SUZURI登録完了`);
+        return Response.json({ products: sr.products }, { headers: corsH });
+      } catch (e) {
+        console.error(`[resume-hires] SUZURI登録失敗: ${e.message}`);
+        return Response.json({ error: e.message }, { status: 500, headers: corsH });
+      }
+    }
+
     if (request.method !== "POST") {
       return new Response("Method Not Allowed", { status: 405, headers: corsH });
     }
@@ -671,37 +736,65 @@ export default {
         const isRightGroup = (slugs ?? []).some(s => RIGHT_SLUGS.includes(s));
 
         if (isRightGroup) {
-          // リクエスト元のオリジン（バックグラウンドタスク内では request にアクセスできないため事前取得）
           const workerOrigin = new URL(request.url).origin;
-          // バックグラウンドタスク: fal.ai → R2保存 → Worker URL → SUZURI登録 → R2マージ
-          ctx.waitUntil((async () => {
-            console.log(`[suzuri-create] bg 開始 imageDataLen=${imageData?.length ?? 0}`);
-            let suzuriTexture = `data:${mimeType};base64,${imageData}`;
+
+          // fal.ai Queue にジョブ投入（ctx.waitUntil 前に実行 → request_id を確実に R2 保存）
+          let falRequestId = null;
+          try {
+            const { requestId } = await submitFalJob(imageData, mimeType, env);
+            falRequestId = requestId;
+          } catch (e) {
+            console.warn(`[suzuri-create] fal queue投入失敗（base64で継続）: ${e.message}`);
+          }
+          if (falRequestId && r2Id && env.IMAGE_BUCKET) {
             try {
-              const upscaled = await upscaleWithFal(imageData, mimeType, env);
-              if (upscaled.cdnUrl && r2Id && env.IMAGE_BUCKET) {
-                // fal.ai CDN URL をそのままSUZURIに渡すと0バイトエラーになるため
-                // R2にバイナリ保存（I/Oのみ・CPU不要）→ Worker URL経由でSUZURIに渡す
-                const cdnRes = await fetch(upscaled.cdnUrl);
-                console.log(`[suzuri-create] CDN fetch status=${cdnRes.status}`);
-                if (cdnRes.ok) {
-                  const buf = await cdnRes.arrayBuffer();
-                  console.log(`[suzuri-create] CDN byteLength=${buf.byteLength}`);
-                  if (buf.byteLength > 0) {
-                    await env.IMAGE_BUCKET.put(`${r2Id}/hires.png`, buf, {
-                      httpMetadata: { contentType: "image/png" },
-                    });
-                    suzuriTexture = `${workerOrigin}/hires/${r2Id}`;
-                    console.log(`[suzuri-create] hires R2保存完了 → ${suzuriTexture}`);
-                  } else {
-                    console.warn(`[suzuri-create] CDN 0バイト → base64フォールバック`);
+              await updateMetaInR2(env.IMAGE_BUCKET, r2Id, { falRequestId });
+            } catch (e) {
+              console.warn(`[suzuri-create] falRequestId R2保存失敗: ${e.message}`);
+            }
+          }
+
+          // バックグラウンド: queue をポーリング（最大3回・5秒間隔）
+          // → 15秒以内に完了すれば高解像度 SUZURI、それ以外は base64 フォールバック
+          ctx.waitUntil((async () => {
+            console.log(`[suzuri-create] bg開始 falRequestId=${falRequestId ?? "none"}`);
+            let suzuriTexture = null;
+
+            if (falRequestId) {
+              for (let i = 0; i < 3; i++) {
+                await new Promise(r => setTimeout(r, 5_000));
+                try {
+                  const result = await getFalResult(falRequestId, env);
+                  if (result.status === "COMPLETED" && result.cdnUrl) {
+                    const cdnRes = await fetch(result.cdnUrl, { signal: AbortSignal.timeout(10_000) });
+                    console.log(`[suzuri-create] CDN fetch status=${cdnRes.status}`);
+                    if (cdnRes.ok) {
+                      const buf = await cdnRes.arrayBuffer();
+                      console.log(`[suzuri-create] CDN byteLength=${buf.byteLength}`);
+                      if (buf.byteLength > 0 && r2Id && env.IMAGE_BUCKET) {
+                        await env.IMAGE_BUCKET.put(`${r2Id}/hires.png`, buf, {
+                          httpMetadata: { contentType: "image/png" },
+                        });
+                        suzuriTexture = `${workerOrigin}/hires/${r2Id}`;
+                        console.log(`[suzuri-create] hires R2保存完了 → ${suzuriTexture}`);
+                      }
+                    }
+                    break;
                   }
+                  if (result.status === "FAILED" || result.status === "error") break;
+                  // IN_QUEUE or IN_PROGRESS: 次のポーリングへ
+                } catch (e) {
+                  console.warn(`[suzuri-create] poll ${i + 1} 失敗: ${e.message}`);
+                  break;
                 }
               }
-            } catch (e) {
-              console.warn(`[suzuri-create] fal.ai アップスケール失敗（元画像で継続）: ${e.message}`);
             }
-            console.log(`[suzuri-create] texture type=${suzuriTexture.startsWith("data:") ? "base64" : "url"} len=${suzuriTexture.length}`);
+
+            if (!suzuriTexture) {
+              suzuriTexture = `data:${mimeType};base64,${imageData}`;
+              console.log(`[suzuri-create] base64フォールバック`);
+            }
+            console.log(`[suzuri-create] texture type=${suzuriTexture.startsWith("data:") ? "base64" : "url"}`);
             try {
               const sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null);
               if (r2Id && env.IMAGE_BUCKET) {

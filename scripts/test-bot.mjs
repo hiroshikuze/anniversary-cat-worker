@@ -18,7 +18,7 @@ import {
 } from "../worker/bluesky-bot.js";
 
 import { pickPersona, pickPersonality } from "../worker/index.js";
-import { upscaleWithFal } from "../worker/fal.js";
+import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
 let failed = 0;
@@ -982,75 +982,110 @@ console.log("\n[pickPersonality]");
 }
 
 // ---------------------------------------------------------------------------
-// upscaleWithFal
+// submitFalJob / getFalResult（Queue API）
 // ---------------------------------------------------------------------------
-console.log("\n[upscaleWithFal]");
+console.log("\n[submitFalJob]");
 
 {
-  // FAL_KEY 未設定: fetch を呼ばず cdnUrl=null を返す
+  // FAL_KEY 未設定: fetch を呼ばず requestId=null を返す
   let fetchCalled = false;
   const origFetch = globalThis.fetch;
   globalThis.fetch = async () => { fetchCalled = true; return {}; };
-  const result = await upscaleWithFal("abc123", "image/png", {});
+  const result = await submitFalJob("abc123", "image/png", {});
   globalThis.fetch = origFetch;
   assert("FAL_KEY 未設定: fetch を呼ばない", !fetchCalled);
-  assert("FAL_KEY 未設定: cdnUrl が null", result.cdnUrl === null);
-  assert("FAL_KEY 未設定: mimeType がそのまま返る", result.mimeType === "image/png");
+  assert("FAL_KEY 未設定: requestId が null", result.requestId === null);
 }
 
 {
-  // FAL_KEY 設定・正常系: fal.ai APIのみ呼び出し、CDN URLを返す（ダウンロードしない）
+  // 正常系: queue投入してrequest_idを返す
   const origFetch = globalThis.fetch;
-  let falCallCount = 0;
   globalThis.fetch = async (url) => {
-    falCallCount++;
-    if (url.includes("fal.run")) {
-      return {
-        ok: true,
-        json: async () => ({ image: { url: "https://cdn.fal.ai/test.png" } }),
-      };
+    if (url.includes("queue.fal.run")) {
+      return { ok: true, json: async () => ({ request_id: "test-req-123" }) };
     }
-    throw new Error("CDN fetch should not be called");
+    throw new Error("unexpected fetch");
   };
-  const result = await upscaleWithFal("abc", "image/png", { FAL_KEY: "test-key" });
+  const result = await submitFalJob("abc", "image/png", { FAL_KEY: "test-key" });
   globalThis.fetch = origFetch;
-  assert("正常系: fal.ai APIの1回だけfetchする（CDNダウンロードなし）", falCallCount === 1);
-  assert("正常系: cdnUrlが返る", result.cdnUrl === "https://cdn.fal.ai/test.png");
-  assert("正常系: mimeTypeが返る", result.mimeType === "image/png");
+  assert("正常系: requestId が返る", result.requestId === "test-req-123");
 }
 
 {
-  // fal.ai HTTPエラー時: エラーをthrow
+  // HTTPエラー時: エラーをthrow
   const origFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({
-    ok: false, status: 500,
-    text: async () => "Internal Server Error",
-  });
+  globalThis.fetch = async () => ({ ok: false, status: 500, text: async () => "error" });
   let threw = false;
-  try {
-    await upscaleWithFal("abc", "image/png", { FAL_KEY: "test-key" });
-  } catch {
-    threw = true;
-  }
+  try { await submitFalJob("abc", "image/png", { FAL_KEY: "test-key" }); } catch { threw = true; }
   globalThis.fetch = origFetch;
-  assert("fal.ai HTTP 500: エラーをthrowする", threw);
+  assert("HTTP 500: エラーをthrowする", threw);
 }
 
 {
-  // CDN URLなしのレスポンス時: エラーをthrow
+  // request_id なしのレスポンス: エラーをthrow
   const origFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({
-    ok: true,
-    json: async () => ({ image: {} }), // urlなし
-  });
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
   let threw = false;
-  try {
-    await upscaleWithFal("abc", "image/png", { FAL_KEY: "test-key" });
-  } catch {
-    threw = true;
-  }
+  try { await submitFalJob("abc", "image/png", { FAL_KEY: "test-key" }); } catch { threw = true; }
   globalThis.fetch = origFetch;
-  assert("CDN URLなし: エラーをthrowする", threw);
+  assert("request_id なし: エラーをthrowする", threw);
+}
+
+console.log("\n[getFalResult]");
+
+{
+  // IN_QUEUE ステータス: cdnUrl なしで status だけ返す
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url.includes("/status")) {
+      return { ok: true, json: async () => ({ status: "IN_QUEUE" }) };
+    }
+    throw new Error("result fetch should not be called");
+  };
+  const result = await getFalResult("req-123", { FAL_KEY: "key" });
+  globalThis.fetch = origFetch;
+  assert("IN_QUEUE: status が返る", result.status === "IN_QUEUE");
+  assert("IN_QUEUE: cdnUrl がない", result.cdnUrl === undefined);
+}
+
+{
+  // COMPLETED: cdnUrl が返る
+  const origFetch = globalThis.fetch;
+  let callCount = 0;
+  globalThis.fetch = async (url) => {
+    callCount++;
+    if (url.includes("/status")) {
+      return { ok: true, json: async () => ({ status: "COMPLETED" }) };
+    }
+    // result fetch
+    return { ok: true, json: async () => ({ image: { url: "https://cdn.fal.ai/hires.png" } }) };
+  };
+  const result = await getFalResult("req-123", { FAL_KEY: "key" });
+  globalThis.fetch = origFetch;
+  assert("COMPLETED: 2回fetchする（status + result）", callCount === 2);
+  assert("COMPLETED: cdnUrl が返る", result.cdnUrl === "https://cdn.fal.ai/hires.png");
+  assert("COMPLETED: mimeType が返る", result.mimeType === "image/png");
+}
+
+{
+  // status check HTTPエラー: error を返す（throw しない）
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 404 });
+  const result = await getFalResult("req-123", { FAL_KEY: "key" });
+  globalThis.fetch = origFetch;
+  assert("status check 失敗: error を返す", result.status === "error");
+}
+
+{
+  // COMPLETED だが CDN URL なし: error を返す
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url.includes("/status")) return { ok: true, json: async () => ({ status: "COMPLETED" }) };
+    return { ok: true, json: async () => ({ image: {} }) };
+  };
+  const result = await getFalResult("req-123", { FAL_KEY: "key" });
+  globalThis.fetch = origFetch;
+  assert("CDN URL なし: error を返す", result.status === "error");
 }
 
 // ---------------------------------------------------------------------------

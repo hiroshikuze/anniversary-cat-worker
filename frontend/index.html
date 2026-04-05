@@ -567,17 +567,18 @@
     // SUZURI バックグラウンド登録ポーリング
     // ----------------------------------------------------------
     function startPollingSuzuri(r2Id, slugsToWatch) {
-      const INTERVAL_MS   = 5_000;
-      const MAX_ATTEMPTS  = 12; // 60秒
+      const INTERVAL_MS  = 5_000;
+      const MAX_ATTEMPTS = 12; // 60秒
       let attempts = 0;
+      let lastMeta = null;
 
       const poll = async () => {
         attempts++;
         try {
           const res = await fetch(`${WORKER_URL}/meta/${r2Id}`);
           if (res.ok) {
-            const meta = await res.json();
-            const found = (meta.products ?? []).filter(p => slugsToWatch.includes(p.slug));
+            lastMeta = await res.json();
+            const found = (lastMeta.products ?? []).filter(p => slugsToWatch.includes(p.slug));
             if (found.length >= slugsToWatch.length) {
               // 完了: lastProducts の該当スラッグを置き換えて再描画
               const updated = (lastProducts ?? []).map(p => {
@@ -593,11 +594,41 @@
         }
         if (attempts < MAX_ATTEMPTS) {
           setTimeout(poll, INTERVAL_MS);
+          return;
         }
-        // タイムアウト時はそのまま放置（準備中ボタンが残る）
+        // 60秒タイムアウト: falRequestId があれば resume-hires で最終試行
+        if (lastMeta?.falRequestId) {
+          await resumeHires(r2Id, lastMeta, slugsToWatch);
+        }
       };
 
       setTimeout(poll, INTERVAL_MS);
+    }
+
+    // ポーリングタイムアウト後の最終試行: /resume-hires で SUZURI 登録を完了させる
+    async function resumeHires(r2Id, meta, slugsToWatch) {
+      console.log("[resume-hires] 最終試行開始");
+      try {
+        const res = await fetch(`${WORKER_URL}/resume-hires/${r2Id}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.stillProcessing) {
+          console.log("[resume-hires] まだ処理中 → あきらめ");
+          return;
+        }
+        if (data.products?.length > 0) {
+          const found = data.products.filter(p => slugsToWatch.includes(p.slug));
+          if (found.length > 0) {
+            const updated = (lastProducts ?? []).map(p => {
+              const match = found.find(f => f.slug === p.slug);
+              return match ?? p;
+            });
+            showGoods(updated);
+          }
+        }
+      } catch (e) {
+        console.warn("[resume-hires] エラー:", e.message);
+      }
     }
 
     // ----------------------------------------------------------
