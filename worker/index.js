@@ -628,12 +628,14 @@ export default {
             const cdnRes = await fetch(result.cdnUrl, { signal: AbortSignal.timeout(10_000) });
             if (cdnRes.ok) {
               const buf = await cdnRes.arrayBuffer();
-              if (buf.byteLength > 0) {
+              if (buf.byteLength > 0 && buf.byteLength <= 20_000_000) {
                 await env.IMAGE_BUCKET.put(`${id}/hires.png`, buf, {
                   httpMetadata: { contentType: "image/png" },
                 });
                 suzuriTexture = `${workerOrigin}/hires/${id}`;
                 console.log(`[resume-hires] hires R2保存完了 → ${suzuriTexture}`);
+              } else if (buf.byteLength > 20_000_000) {
+                console.warn(`[resume-hires] hires 20MB超のためbase64フォールバック byteLength=${buf.byteLength}`);
               }
             }
           }
@@ -771,12 +773,14 @@ export default {
                     if (cdnRes.ok) {
                       const buf = await cdnRes.arrayBuffer();
                       console.log(`[suzuri-create] CDN byteLength=${buf.byteLength}`);
-                      if (buf.byteLength > 0 && r2Id && env.IMAGE_BUCKET) {
+                      if (buf.byteLength > 0 && buf.byteLength <= 20_000_000 && r2Id && env.IMAGE_BUCKET) {
                         await env.IMAGE_BUCKET.put(`${r2Id}/hires.png`, buf, {
                           httpMetadata: { contentType: "image/png" },
                         });
                         suzuriTexture = `${workerOrigin}/hires/${r2Id}`;
                         console.log(`[suzuri-create] hires R2保存完了 → ${suzuriTexture}`);
+                      } else if (buf.byteLength > 20_000_000) {
+                        console.warn(`[suzuri-create] hires 20MB超のためbase64フォールバック byteLength=${buf.byteLength}`);
                       }
                     }
                     break;
