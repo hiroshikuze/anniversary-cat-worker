@@ -30,9 +30,8 @@ const SMALL_JPEG_B64 =
   "DRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIy" +
   "MjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AJQAB/9k=";
 
-// テスト用画像URL（パブリックな猫画像）
-// ローカルJPEGの方が実態に近い場合は差し替えてください
-const TEST_IMAGE_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/1200px-Cat03.jpg";
+// テスト用画像URL（小さめの猫画像 ~400px）
+const TEST_IMAGE_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/400px-Cat03.jpg";
 
 const FAL_QUEUE_BASE = "https://queue.fal.run";
 const MODELS = [
@@ -75,7 +74,7 @@ async function submitJob(modelId, body) {
   return data.request_id;
 }
 
-async function pollResult(modelId, requestId, timeoutMs = 120_000) {
+async function pollResult(modelId, requestId, timeoutMs = 180_000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     await new Promise(r => setTimeout(r, 3_000));
@@ -117,8 +116,18 @@ for (const model of MODELS) {
     const requestId = await submitJob(model.id, model.body);
     process.stdout.write(`投入完了 (${requestId.slice(0, 8)}...) ポーリング中`);
     const { result, elapsedMs } = await pollResult(model.id, requestId);
-    const cdnUrl = result?.image?.url ?? result?.images?.[0]?.url;
-    if (!cdnUrl) throw new Error("CDN URL が取得できません");
+    // モデルによりレスポンス構造が異なるため候補を全探索
+    const cdnUrl =
+      result?.image?.url ??
+      result?.images?.[0]?.url ??
+      result?.output?.image?.url ??
+      result?.output?.[0]?.url ??
+      result?.url;
+    console.log(`  → result keys: ${Object.keys(result ?? {}).join(", ")}`);
+    if (!cdnUrl) {
+      console.log(`  → raw result: ${JSON.stringify(result).slice(0, 300)}`);
+      throw new Error("CDN URL が取得できません");
+    }
 
     process.stdout.write(` 完了\n  → CDN URL: ${cdnUrl}\n  → サイズ計測中... `);
     const { bytes, mimeType } = await measureOutputSize(cdnUrl);
