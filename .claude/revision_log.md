@@ -41,6 +41,18 @@
 - **追加修正**: fal.ai CDN URL（`v3b.fal.media`）を直接SUZURIに渡すと0バイトエラー。R2にバイナリ保存→`GET /hires/:id`経由でSUZURIに渡す方式で解決（動作確認済み）
 - **教訓**: 同期Workerハンドラ内で外部API（画像処理系）を直列呼び出しする設計はWall-clock制限に引っかかる。`ctx.waitUntil()`はI/O待ちにCPU時間が計上されないため有効。外部CDN URLを第三者APIに直接渡すのも避ける
 
+### 2026-04 | fal.ai → R2 → `/hires/:id` → SUZURI パイプライン動作確認完了
+
+- **状況**: ctx.waitUntil()方式に移行後、Cloudflareログで`[suzuri-create] right グループ完了 slugs=t-shirt,sticker`が確認され、Tシャツ画像が高解像度（AuraSR 4倍アップスケール）でSUZURIに登録されることを本番環境で確認
+- **完了確認ログ**:
+  - `[suzuri] POST /materials 完了 materialId=... products=[17,147]`（缶バッジ・キーホルダー即時）
+  - `[suzuri-create] right グループ完了 slugs=t-shirt,sticker`（バックグラウンド完了）
+- **追加修正（同セッション）**:
+  - `GET /hires/:id`: `obj.body`→`arrayBuffer()`化＋`Content-Length`ヘッダー追加（SUZURIからのfetchで不明サイズになることを防止）
+  - `/suzuri-create`バックグラウンドタスク: 詳細ログ追加（開始・CDN status・byteLength・texture type）
+  - CDN fetch結果0バイト時のbase64フォールバックガード追加
+- **教訓**: `Content-Length`を省くと一部のAPIクライアントがサイズ不明のストリームを正しく処理できないことがある。R2 objectのbodyをそのまま返す場合も`arrayBuffer()`で実体化してヘッダーを明示するのが安全
+
 ---
 
 ## 記録フォーマット
