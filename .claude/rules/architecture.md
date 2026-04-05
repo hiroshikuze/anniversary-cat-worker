@@ -478,9 +478,9 @@ Gemini生成画像（通常1024px前後）をSUZURI推奨解像度（3000×3000p
 
 #### 現状ステータス（2026-04）
 
-`worker/fal.js`として実装済み。同期ハンドラ内での直接呼び出しはwall-clock制限により常にタイムアウトしていたため、`ctx.waitUntil()`を使った非同期アーキテクチャに移行した。
+`worker/fal.js`として実装済み。Queue API方式を採用（`queue.fal.run`）。
 
-#### アーキテクチャ（ctx.waitUntil()方式）
+#### アーキテクチャ（Queue API + ctx.waitUntil()方式）
 
 フロントエンドが2リクエストを並列送信し、ユーザーの待ち時間を最小化する。
 
@@ -490,25 +490,41 @@ Gemini生成画像（通常1024px前後）をSUZURI推奨解像度（3000×3000p
   → r2Id付きで呼び出し → R2 meta.json に products を書き込む
 
 【Request B】slugs=["t-shirt","sticker"]（bottom-right画像・fal.ai挑戦）
-  → Worker が ctx.waitUntil() でバックグラウンド処理を開始
+  → fal.ai Queue にジョブ投入（<1s）→ request_id を R2 meta.json に保存
   → 即返答（{ queued: true }）← ユーザーを待たせない
-  → バックグラウンド: fal.ai → SUZURI登録 → R2 meta.json に products をスラッグ単位でマージ
-  → 失敗時: 元画像でSUZURI登録（ベストエフォートフォールバック）
+  → ctx.waitUntil() バックグラウンド:
+      queue ステータスを5秒間隔で最大3回ポーリング（15秒）
+      15秒以内に完了 → CDN URL → R2 hires.png → Worker URL → 高解像度SUZURI登録
+      完了しない → base64フォールバックでSUZURI登録（~3秒、計~20秒で完了）
+  → R2 meta.json に products をスラッグ単位でマージ
 
 【フロントエンドのポーリング】
   → Request B の queued:true を受け取ったら polling 開始
   → GET /meta/{r2Id} を5秒間隔で最大12回（60秒）確認
-  → products に t-shirt エントリが現れたらボタンを有効化
-  → 60秒超過 → ボタンを「準備できませんでした」状態に更新
+  → products に t-shirt エントリが現れたらボタンを有効化（通常~20秒で完了）
+  → 60秒超過かつ meta.falRequestId あり → GET /resume-hires/{r2Id} を呼ぶ（安全網）
 ```
+
+#### /resume-hires/:id エンドポイント（安全網）
+
+ctx.waitUntil()が途中終了した稀なケース向け。フロントの60秒ポーリングが失敗した後に呼ばれる。
+
+| レスポンス | 意味 |
+| --- | --- |
+| `{ products: [...] }` | 登録完了（t-shirt既存 or 今回登録成功） |
+| `{ stillProcessing: true }` | fal.ai がまだ処理中（CDN TTL内なら後で再試行も可） |
+| `{ error: "..." }` | 画像データなし等の致命的エラー |
+
+処理順序: ①t-shirt重複チェック（既存なら即返却）→ ②fal.ai queue結果取得 → ③R2オリジナル画像でbase64フォールバック → ④SUZURI登録
 
 #### ポーリング中のボタン表示
 
 | 状態 | t-shirt / sticker ボタン |
 | --- | --- |
 | queued中 | 「準備中…」グレーアウト（クリック不可） |
-| 登録完了 | 通常のSUZURI遷移ボタン |
-| 60秒タイムアウト | 「準備できませんでした」（クリック不可）。フォールバック画像で登録成功の場合も通常ボタンに切り替わる |
+| 登録完了（通常~20秒） | 通常のSUZURI遷移ボタン |
+| 60秒タイムアウト→resume完了 | 通常のSUZURI遷移ボタン |
+| resume→stillProcessing | 「準備できませんでした」（クリック不可） |
 
 #### productsマージロジック（r2-storage.js）
 
@@ -537,7 +553,8 @@ Gemini生成画像（通常1024px前後）をSUZURI推奨解像度（3000×3000p
 | 使用モデル | `fal-ai/aura-sr`（4倍アップスケール・GANベース） |
 | レイテンシ | 1024px入力 → 約0.25秒（公称）。実測では30秒超のことあり |
 | 入力 | base64 data URI（フロントCanvas合成後のJPEG） |
-| 出力 | CDN URL（`{ cdnUrl, mimeType }`を返し、SUZURIに直接URL渡し） |
+| API方式 | Queue API（`queue.fal.run`）。submitFalJob()でジョブ投入→getFalResult()で結果取得 |
+| 出力 | CDN URL（R2経由でSUZURIに渡す） |
 | Cloudflare Workers対応 | Cloudflare AI Gatewayと公式統合済み ✅ |
 | 認証 | `Authorization: Key <FAL_KEY>` ヘッダー |
 | 料金 | 従量課金（残高不足の場合はstatus=403） |

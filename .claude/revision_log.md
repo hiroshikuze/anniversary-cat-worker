@@ -41,6 +41,21 @@
 - **追加修正**: fal.ai CDN URL（`v3b.fal.media`）を直接SUZURIに渡すと0バイトエラー。R2にバイナリ保存→`GET /hires/:id`経由でSUZURIに渡す方式で解決（動作確認済み）
 - **教訓**: 同期Workerハンドラ内で外部API（画像処理系）を直列呼び出しする設計はWall-clock制限に引っかかる。`ctx.waitUntil()`はI/O待ちにCPU時間が計上されないため有効。外部CDN URLを第三者APIに直接渡すのも避ける
 
+### 2026-04 | fal.ai Queue API移行（wall-clock超過でcatchも動かない問題の根本解決）
+
+- **状況**: `ctx.waitUntil()`内でfal.run（同期）を呼ぶと、Cloudflare WorkersのWall-clock予算（~28秒）が尽きる前にAbortSignal（30秒）が発火せず、catchブロックも実行されずWorkerが強制終了
+- **証拠**: Cloudflareログで`[suzuri-create] bg 開始`は出るが`[fal] AuraSR 完了`も`アップスケール失敗`も出ない
+- **原因の構造**: レスポンス送信後のctx.waitUntil()のwall-clock予算は約28秒。fal.ai（fal.run）は30秒タイムアウト設定だが、Workerが28秒で強制終了するためfetchのAbortSignalも発火しない
+- **解決**: `fal.run`（同期）→`queue.fal.run`（Queue API）に移行
+  - ジョブ投入（<1秒）でrequest_idを取得し、ctx.waitUntil前にR2へ保存
+  - ctx.waitUntil()内で5秒×3回ポーリング（計15秒）→ 未完了はbase64フォールバック
+  - フロントの60秒ポーリングタイムアウト後、`meta.falRequestId`があれば`GET /resume-hires/:id`を呼ぶ（安全網）
+- **教訓**:
+  - `ctx.waitUntil()`のwall-clock予算はレスポンス送信後の残り時間（≒28秒）。fal.run 30秒タイムアウトはこれを超える
+  - Cloudflareログでcatchブロックのログが出ない＝強制終了（コードのバグではない）
+  - Queue APIはジョブIDで後から結果を参照できるため、Wall-clock超過に本質的に強い
+  - request_idの保存はctx.waitUntil()より前に行うことで「IDだけでも確実に残る」保証を得る
+
 ### 2026-04 | fal.ai → R2 → `/hires/:id` → SUZURI パイプライン動作確認完了
 
 - **状況**: ctx.waitUntil()方式に移行後、Cloudflareログで`[suzuri-create] right グループ完了 slugs=t-shirt,sticker`が確認され、Tシャツ画像が高解像度（AuraSR 4倍アップスケール）でSUZURIに登録されることを本番環境で確認
