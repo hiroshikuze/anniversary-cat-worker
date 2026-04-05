@@ -97,6 +97,16 @@
   - ESRGANは2048px/6MBで安定してSUZURIに高解像度登録できる
   - 目標は「4x厳密」ではなく「Tシャツ印刷品質の向上」のためESRGAN 2xで十分
 
+### 2026-04 | fal.ai運用イベントのDiscord通知追加
+
+- **対応内容**: 以下の4イベントでDiscordに通知するよう実装
+  - 403（残高不足）: `fal.js`の`submitFalJob()`内で検出 → `notifyFalDiscord()`
+  - ジョブFAILED: `fal.js`の`getFalResult()`内で検出 → `notifyFalDiscord()`
+  - ポーリング3回未完了→base64フォールバック: `index.js`の`ctx.waitUntil()`内 → `notifyDiscord()`
+  - 出力20MB超→base64フォールバック: `index.js`の`/suzuri-create`と`/resume-hires`両方 → `notifyDiscord()`
+- **制約**: 残高$0.5以下の「事前通知」はfal.aiのREST APIが非公開のため未実装。残高0（403）になって初めて通知が届く
+- **補完策**: fal.aiダッシュボード（`fal.ai/dashboard/billing`）でメール通知を設定しておくことを推奨
+
 ---
 
 ## 記録フォーマット

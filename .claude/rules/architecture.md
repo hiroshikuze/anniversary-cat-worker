@@ -326,6 +326,32 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 - **教訓**: 外部CDN URLを第三者APIの`texture`等に直接渡す設計は、アクセス制限・TTL・リダイレクト等で失敗するリスクがある。自分で管理するURL（R2経由）に変換してから渡す
 - **場所**: `worker/index.js` `/suzuri-create`ハンドラ / `GET /hires/:id`エンドポイント
 
+### 12. AuraSR 4xがSUZURI 20MB上限を常に超過し実質アップスケールなしに（2026-04）
+
+- **原因**: AuraSR 4xは1024px入力→4096px PNG≈24MBとなりSUZURIの20MB上限を超過。`upscaling_factor: 2`パラメータは**完全に無視**され、常に4x出力になる
+- **修正**: `fal-ai/aura-sr` → `fal-ai/esrgan`に切り替え（`worker/fal.js` `FAL_QUEUE_BASE`）。ESRGANは2x（2048px/≈6MB）でSUZURI上限内に収まる
+- **モデル比較実測**（400px JPEG入力で計測）:
+
+| モデル | 出力 | 1024px推定 | 速度 |
+| --- | --- | --- | --- |
+| AuraSR 4x | 1600px | ~24 MB ❌ | 3.2秒 |
+| ESRGAN 2x | 800px | **~6 MB ✅** | 3.2秒 |
+| Clarity 2x | 800px | ~6 MB ✅ | 9.6秒（遅い） |
+
+- **教訓**: アップスケールの目的は「印刷品質の向上」であり倍率の厳密さではない。SUZURI上限（20MB）を超えるモデルは結局フォールバックになり効果なし。切り替え前にサイズを実測すること
+- **場所**: `worker/fal.js` `FAL_QUEUE_BASE`
+
+### 13. fal.ai運用イベントのDiscord通知（2026-04）
+
+- **対応内容**: fal.ai関連の以下イベントでDiscordに通知するよう追加
+  - 403エラー（残高不足の可能性）→ チャージURLを含む警告通知
+  - ジョブFAILED → requestIdを含む通知
+  - ポーリング3回未完了→base64フォールバック → requestIdを含む警告
+  - 出力20MB超→base64フォールバック → byteLengthを含む警告
+- **実装**: `worker/fal.js`に`notifyFalDiscord()`ヘルパーを追加。`worker/index.js`では`bluesky-bot.js`の`notifyDiscord()`をimportして使用
+- **制約**: fal.aiのクレジット残高を事前取得するREST APIエンドポイントが非公開のため、残高が0になった時点（403）でのみ通知。事前通知（$0.5以下等）はfal.aiダッシュボードのメール通知で補完する
+- **場所**: `worker/fal.js` `notifyFalDiscord()` / `worker/index.js` ctx.waitUntil()ブロック・`/resume-hires`
+
 ---
 
 ## 将来の拡張に関する設計方針メモ
@@ -470,15 +496,26 @@ DELETE /api/v1/materials/{material_id}
 
 ---
 
-### fal.ai AuraSRアップスケーリング（実装済み・ctx.waitUntil()方式で有効化）
+### fal.ai ESRGANアップスケーリング（実装済み・ctx.waitUntil()方式で有効化）
 
 #### 目的
 
-Gemini生成画像（通常1024px前後）をSUZURI推奨解像度（3000×3000px以上）に引き上げ、Tシャツ等の印刷品質を改善する。
+Gemini生成画像（通常1024px前後）をSUZURI印刷に適した解像度に引き上げ、Tシャツ等の印刷品質を改善する。SUZURI推奨3000×3000px以上には届かないが、2048px（2倍）でも元画像比で品質が改善する。
 
 #### 現状ステータス（2026-04）
 
 `worker/fal.js`として実装済み。Queue API方式を採用（`queue.fal.run`）。
+
+#### モデル選定経緯（2026-04）
+
+当初AuraSR（4倍）を採用していたが、1024px入力→4096px PNG≈24MBとなりSUZURIの20MB上限を常に超過し、結果的にbase64フォールバック（元画像）になっていた。ESRGAN（2倍）に切り替えることで1024px→2048px PNG≈6MBとなり安定してSUZURIに高解像度登録できる。
+
+| モデル | 出力 | 1024px入力時サイズ | 速度 | 採否 |
+| --- | --- | --- | --- | --- |
+| AuraSR（4x） | 4096px PNG | ~24 MB ❌ SUZURI超過 | 3.2秒 | 廃止 |
+| AuraSR `upscaling_factor=2` | 4096px PNG（パラメータ無視） | ~24 MB ❌ | 3.2秒 | 廃止 |
+| **ESRGAN（2x）** | **2048px PNG** | **~6 MB ✅** | **3.2秒** | **採用** |
+| Clarity Upscaler（2x） | 2048px PNG | ~6 MB ✅ | 9.6秒 | 遅いため不採用 |
 
 #### アーキテクチャ（Queue API + ctx.waitUntil()方式）
 
@@ -550,8 +587,9 @@ ctx.waitUntil()が途中終了した稀なケース向け。フロントの60秒
 
 | 項目 | 内容 |
 | --- | --- |
-| 使用モデル | `fal-ai/aura-sr`（4倍アップスケール・GANベース） |
-| レイテンシ | 1024px入力 → 約0.25秒（公称）。実測では30秒超のことあり |
+| 使用モデル | `fal-ai/esrgan`（2倍アップスケール） |
+| 出力解像度 | 1024px → 2048px PNG（≈6MB・SUZURI 20MB上限内） |
+| レイテンシ | 実測 ~3.2秒（Queue API経由） |
 | 入力 | base64 data URI（フロントCanvas合成後のJPEG） |
 | API方式 | Queue API（`queue.fal.run`）。submitFalJob()でジョブ投入→getFalResult()で結果取得 |
 | 出力 | CDN URL（R2経由でSUZURIに渡す） |
@@ -572,7 +610,9 @@ ctx.waitUntil()が途中終了した稀なケース向け。フロントの60秒
 
 - `FAL_KEY`未設定時はアップスケールをスキップして元画像でSUZURI登録する（best-effortで継続）
 - CDN URLを直接SUZURIに渡す設計（base64変換はしない）→ Workers CPU時間節約
-- 残高不足時はstatus=403「Exhausted balance」エラー。`fal.ai/dashboard/billing`でチャージ
+- 残高不足時はstatus=403「Exhausted balance」エラー → Discordに通知＋`fal.ai/dashboard/billing`でチャージ
+- ジョブFAILED時・ポーリング未完了base64フォールバック時・出力20MB超時もDiscordに通知
+- fal.aiのクレジット残高をREST APIで事前取得するエンドポイントは非公開のため、0になった時点（403）でのみ通知が届く
 - bluesky-bot.jsの`runBot()`ではfal.ai呼び出しは引き続き無効（scheduledハンドラではctx.waitUntil()の効果が限定的）
 
 ---
@@ -604,6 +644,4 @@ ctx.waitUntil()が途中終了した稀なケース向け。フロントの60秒
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
 
-| 項目 | 詳細 | 場所 |
-| --- | --- | --- |
-| fal.ai無効化（UX改善） | タイムアウト待ち30秒がかかるようになったため、fal.ai呼び出しを一時コメントアウトして以前の速度に戻す | `worker/index.js` `/suzuri-create`ハンドラ / `worker/bluesky-bot.js` `runBot()` |
+現在、積み残し項目なし。

@@ -9,7 +9,7 @@
  *   ALLOWED_ORIGIN  ... GitHub Pages の URL（例: https://hiroshikuze.github.io）
  */
 
-import { runBot } from "./bluesky-bot.js";
+import { runBot, notifyDiscord } from "./bluesky-bot.js";
 import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2 } from "./r2-storage.js";
 import { createSuzuriProducts, deleteSuzuriMaterial } from "./suzuri.js";
 import { submitFalJob, getFalResult } from "./fal.js";
@@ -636,6 +636,8 @@ export default {
                 console.log(`[resume-hires] hires R2保存完了 → ${suzuriTexture}`);
               } else if (buf.byteLength > 20_000_000) {
                 console.warn(`[resume-hires] hires 20MB超のためbase64フォールバック byteLength=${buf.byteLength}`);
+                await notifyDiscord(env.DISCORD_WEBHOOK_URL,
+                  `fal.ai 出力画像が20MB超（SUZURI上限超過）\nbyteLength=${buf.byteLength}\nモデルの出力サイズを確認してください`);
               }
             }
           }
@@ -781,6 +783,8 @@ export default {
                         console.log(`[suzuri-create] hires R2保存完了 → ${suzuriTexture}`);
                       } else if (buf.byteLength > 20_000_000) {
                         console.warn(`[suzuri-create] hires 20MB超のためbase64フォールバック byteLength=${buf.byteLength}`);
+                        await notifyDiscord(env.DISCORD_WEBHOOK_URL,
+                          `fal.ai 出力画像が20MB超（SUZURI上限超過）\nbyteLength=${buf.byteLength}\nモデルの出力サイズを確認してください`);
                       }
                     }
                     break;
@@ -795,6 +799,11 @@ export default {
             }
 
             if (!suzuriTexture) {
+              // ポーリング3回未完了またはFAILED → base64で継続するが運営に通知
+              if (falRequestId) {
+                await notifyDiscord(env.DISCORD_WEBHOOK_URL,
+                  `fal.ai アップスケール未完了（base64フォールバック）\nrequestId=${falRequestId}\n3回×5秒ポーリングで完了せず。Cloudflareログを確認してください`);
+              }
               suzuriTexture = `data:${mimeType};base64,${imageData}`;
               console.log(`[suzuri-create] base64フォールバック`);
             }
