@@ -12,48 +12,52 @@
  * ⚠ このサンドボックスからは実行できません。ローカル環境で実行してください。
  */
 
-import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
-
 const FAL_KEY = process.env.FAL_KEY;
 if (!FAL_KEY) {
   console.error("FAL_KEY が設定されていません。export FAL_KEY=xxx を実行してください。");
   process.exit(1);
 }
 
-// テスト用の小さな画像（1x1 白ピクセルのJPEG base64）
-// 実際の生成画像に近いサイズに差し替えると精度が上がる
-const SMALL_JPEG_B64 =
-  "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U" +
-  "HRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgN" +
-  "DRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIy" +
-  "MjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AJQAB/9k=";
+// fal.ai はURLから直接画像を取得できないケースがあるため、
+// まずローカルでURLから画像を取得してbase64 data URIに変換する（本番と同じ方式）
+const TEST_IMAGE_SOURCE_URL =
+  "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/400px-Cat03.jpg";
 
-// テスト用画像URL（小さめの猫画像 ~400px）
-const TEST_IMAGE_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/400px-Cat03.jpg";
+async function loadTestImageAsDataUri() {
+  process.stdout.write(`テスト画像を取得中 (${TEST_IMAGE_SOURCE_URL})... `);
+  const res = await fetch(TEST_IMAGE_SOURCE_URL, {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; test-script)" },
+  });
+  if (!res.ok) throw new Error(`画像取得失敗: status=${res.status}`);
+  const buf = await res.arrayBuffer();
+  const mime = res.headers.get("content-type") ?? "image/jpeg";
+  const b64 = Buffer.from(buf).toString("base64");
+  console.log(`完了 (${(buf.byteLength / 1024).toFixed(0)} KB)`);
+  return `data:${mime};base64,${b64}`;
+}
 
 const FAL_QUEUE_BASE = "https://queue.fal.run";
+
 const MODELS = [
   {
     id: "fal-ai/aura-sr",
     label: "AuraSR 4x（現行）",
-    body: { image_url: TEST_IMAGE_URL },
+    makeBody: (imageDataUri) => ({ image_url: imageDataUri }),
   },
   {
     id: "fal-ai/aura-sr",
     label: "AuraSR upscaling_factor=2（2x試験）",
-    body: { image_url: TEST_IMAGE_URL, upscaling_factor: 2 },
+    makeBody: (imageDataUri) => ({ image_url: imageDataUri, upscaling_factor: 2 }),
   },
   {
     id: "fal-ai/esrgan",
     label: "ESRGAN（デフォルト）",
-    body: { image_url: TEST_IMAGE_URL },
+    makeBody: (imageDataUri) => ({ image_url: imageDataUri }),
   },
   {
     id: "fal-ai/clarity-upscaler",
     label: "Clarity Upscaler（デフォルト）",
-    body: { image_url: TEST_IMAGE_URL },
+    makeBody: (imageDataUri) => ({ image_url: imageDataUri }),
   },
 ];
 
@@ -68,7 +72,7 @@ async function submitJob(modelId, body) {
   });
   if (!res.ok) {
     const err = await res.text().catch(() => "");
-    throw new Error(`submit失敗 status=${res.status} ${err}`);
+    throw new Error(`submit失敗 status=${res.status} ${err.slice(0, 200)}`);
   }
   const data = await res.json();
   return data.request_id;
@@ -94,7 +98,20 @@ async function pollResult(modelId, requestId, timeoutMs = 180_000) {
     if (status === "FAILED") throw new Error("ジョブ失敗");
     process.stdout.write(".");
   }
-  throw new Error("タイムアウト（120秒）");
+  throw new Error("タイムアウト（180秒）");
+}
+
+function extractCdnUrl(result) {
+  // モデルによりレスポンス構造が異なるため候補を全探索
+  return (
+    result?.image?.url ??
+    result?.images?.[0]?.url ??
+    result?.output?.image?.url ??
+    result?.output?.[0]?.url ??
+    result?.output?.url ??
+    result?.url ??
+    null
+  );
 }
 
 async function measureOutputSize(cdnUrl) {
@@ -105,27 +122,31 @@ async function measureOutputSize(cdnUrl) {
   return { bytes: buf.byteLength, mimeType };
 }
 
+// メイン処理
 console.log("=== fal.ai アップスケールモデル比較 ===\n");
-console.log(`テスト画像: ${TEST_IMAGE_URL}\n`);
+
+let testImageDataUri;
+try {
+  testImageDataUri = await loadTestImageAsDataUri();
+} catch (e) {
+  console.error(`テスト画像の取得に失敗しました: ${e.message}`);
+  process.exit(1);
+}
 
 const results = [];
 
 for (const model of MODELS) {
   process.stdout.write(`\n[${model.label}] 投入中... `);
   try {
-    const requestId = await submitJob(model.id, model.body);
+    const body = model.makeBody(testImageDataUri);
+    const requestId = await submitJob(model.id, body);
     process.stdout.write(`投入完了 (${requestId.slice(0, 8)}...) ポーリング中`);
     const { result, elapsedMs } = await pollResult(model.id, requestId);
-    // モデルによりレスポンス構造が異なるため候補を全探索
-    const cdnUrl =
-      result?.image?.url ??
-      result?.images?.[0]?.url ??
-      result?.output?.image?.url ??
-      result?.output?.[0]?.url ??
-      result?.url;
-    console.log(`  → result keys: ${Object.keys(result ?? {}).join(", ")}`);
+
+    const cdnUrl = extractCdnUrl(result);
     if (!cdnUrl) {
-      console.log(`  → raw result: ${JSON.stringify(result).slice(0, 300)}`);
+      console.log(`\n  result keys: ${Object.keys(result ?? {}).join(", ")}`);
+      console.log(`  raw result: ${JSON.stringify(result).slice(0, 400)}`);
       throw new Error("CDN URL が取得できません");
     }
 
@@ -133,10 +154,10 @@ for (const model of MODELS) {
     const { bytes, mimeType } = await measureOutputSize(cdnUrl);
     const mb = (bytes / 1_000_000).toFixed(2);
     const sec = (elapsedMs / 1000).toFixed(1);
-
     const ok20mb = bytes <= 20_000_000 ? "✅" : "❌";
+
     console.log(`${bytes.toLocaleString()} bytes (${mb} MB) ${ok20mb}  形式: ${mimeType}  処理時間: ${sec}秒`);
-    results.push({ label: model.label, bytes, mb, mimeType, sec, ok20mb, cdnUrl });
+    results.push({ label: model.label, bytes, mb, mimeType, sec, ok20mb });
   } catch (e) {
     console.log(`\n  ❌ エラー: ${e.message}`);
     results.push({ label: model.label, error: e.message });
@@ -144,14 +165,14 @@ for (const model of MODELS) {
 }
 
 console.log("\n=== 結果サマリー ===");
-console.log("モデル                              | サイズ    | 20MB制限 | 形式    | 処理時間");
-console.log("-".repeat(80));
+console.log("モデル                                  | サイズ      | 20MB制限 | 形式              | 処理時間");
+console.log("-".repeat(90));
 for (const r of results) {
   if (r.error) {
-    console.log(`${r.label.padEnd(36)}| エラー: ${r.error}`);
+    console.log(`${r.label.padEnd(40)}| エラー: ${r.error}`);
   } else {
     console.log(
-      `${r.label.padEnd(36)}| ${(r.mb + " MB").padEnd(10)}| ${r.ok20mb}        | ${r.mimeType.padEnd(8)}| ${r.sec}秒`
+      `${r.label.padEnd(40)}| ${(r.mb + " MB").padEnd(12)}| ${r.ok20mb}        | ${r.mimeType.padEnd(18)}| ${r.sec}秒`
     );
   }
 }
