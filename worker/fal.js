@@ -15,10 +15,25 @@
 
 const FAL_QUEUE_BASE = "https://queue.fal.run/fal-ai/esrgan";
 
+/** fal.ai 関連の Discord 通知ヘルパー（env.DISCORD_WEBHOOK_URL を使用） */
+async function notifyFalDiscord(env, message) {
+  if (!env.DISCORD_WEBHOOK_URL) return;
+  try {
+    await fetch(env.DISCORD_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: `⚠️ にゃんバーサリーBot（fal.ai）\n${message}` }),
+    });
+  } catch (e) {
+    console.error("[fal] Discord通知失敗:", e.message);
+  }
+}
+
 /**
  * fal.ai Queue にアップスケールジョブを投入する。
  * 投入は即座に完了（数秒以内）し、request_id を返す。
  * FAL_KEY 未設定時は requestId=null を返す（呼び出し元が base64 で代替する）。
+ * 残高不足（403）の場合はDiscordに通知してthrowする。
  *
  * @param {string} imageData - base64 エンコードされた画像データ
  * @param {string} mimeType  - 例: "image/png", "image/jpeg"
@@ -44,6 +59,10 @@ export async function submitFalJob(imageData, mimeType, env) {
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
+    if (res.status === 403) {
+      // 残高不足の可能性が高い
+      await notifyFalDiscord(env, `fal.aiクレジット残高不足の可能性\nstatus=403 ${errText}\nhttps://fal.ai/dashboard/billing でチャージしてください`);
+    }
     throw new Error(`fal.ai queue投入失敗: status=${res.status} ${errText}`);
   }
 
@@ -59,6 +78,7 @@ export async function submitFalJob(imageData, mimeType, env) {
 
 /**
  * fal.ai Queue のジョブ状態を確認し、完了していれば CDN URL を返す。
+ * ジョブが FAILED の場合は Discord に通知する。
  *
  * @param {string} requestId - submitFalJob で取得した request_id
  * @param {object} env       - Cloudflare Workers 環境変数（FAL_KEY を参照）
@@ -79,6 +99,11 @@ export async function getFalResult(requestId, env) {
 
   const { status } = await statusRes.json();
   console.log(`[fal] queue status=${status} requestId=${requestId}`);
+
+  if (status === "FAILED") {
+    await notifyFalDiscord(env, `fal.ai ジョブ失敗\nrequestId=${requestId}\nhttps://fal.ai/dashboard で確認してください`);
+    return { status: "FAILED" };
+  }
 
   if (status !== "COMPLETED") return { status };
 
