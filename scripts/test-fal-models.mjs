@@ -114,12 +114,27 @@ function extractCdnUrl(result) {
   );
 }
 
-async function measureOutputSize(cdnUrl) {
+async function measureOutput(cdnUrl) {
   const res = await fetch(cdnUrl);
-  if (!res.ok) return { bytes: -1, mimeType: "unknown" };
+  if (!res.ok) return { bytes: -1, mimeType: "unknown", width: -1, height: -1 };
   const buf = await res.arrayBuffer();
   const mimeType = res.headers.get("content-type") ?? "unknown";
-  return { bytes: buf.byteLength, mimeType };
+  const { width, height } = parsePngDimensions(buf);
+  return { bytes: buf.byteLength, mimeType, width, height };
+}
+
+// PNG IHDRチャンクから幅・高さを取得（依存ライブラリなし）
+function parsePngDimensions(buf) {
+  const view = new DataView(buf);
+  // PNG signature: 8 bytes, IHDR chunk: 4(length)+4(type)+4(width)+4(height)
+  try {
+    if (view.getUint32(0) === 0x89504e47) { // PNG
+      const width  = view.getUint32(16);
+      const height = view.getUint32(20);
+      return { width, height };
+    }
+  } catch {}
+  return { width: -1, height: -1 };
 }
 
 // メイン処理
@@ -150,14 +165,17 @@ for (const model of MODELS) {
       throw new Error("CDN URL が取得できません");
     }
 
-    process.stdout.write(` 完了\n  → CDN URL: ${cdnUrl}\n  → サイズ計測中... `);
-    const { bytes, mimeType } = await measureOutputSize(cdnUrl);
+    process.stdout.write(` 完了\n  → CDN URL: ${cdnUrl}\n  → サイズ・解像度計測中... `);
+    const { bytes, mimeType, width, height } = await measureOutput(cdnUrl);
     const mb = (bytes / 1_000_000).toFixed(2);
     const sec = (elapsedMs / 1000).toFixed(1);
     const ok20mb = bytes <= 20_000_000 ? "✅" : "❌";
+    const dimStr = width > 0 ? `${width}×${height}px` : "不明";
+    // 入力400pxに対する倍率
+    const scaleStr = width > 0 ? `(${(width / 400).toFixed(1)}x)` : "";
 
-    console.log(`${bytes.toLocaleString()} bytes (${mb} MB) ${ok20mb}  形式: ${mimeType}  処理時間: ${sec}秒`);
-    results.push({ label: model.label, bytes, mb, mimeType, sec, ok20mb });
+    console.log(`${bytes.toLocaleString()} bytes (${mb} MB) ${ok20mb}  ${dimStr} ${scaleStr}  形式: ${mimeType}  処理時間: ${sec}秒`);
+    results.push({ label: model.label, bytes, mb, mimeType, sec, ok20mb, width, height, scaleStr });
   } catch (e) {
     console.log(`\n  ❌ エラー: ${e.message}`);
     results.push({ label: model.label, error: e.message });
@@ -165,14 +183,15 @@ for (const model of MODELS) {
 }
 
 console.log("\n=== 結果サマリー ===");
-console.log("モデル                                  | サイズ      | 20MB制限 | 形式              | 処理時間");
-console.log("-".repeat(90));
+console.log("モデル                                  | サイズ      | 20MB | 解像度            | 倍率  | 処理時間");
+console.log("-".repeat(95));
 for (const r of results) {
   if (r.error) {
     console.log(`${r.label.padEnd(40)}| エラー: ${r.error}`);
   } else {
+    const dim = r.width > 0 ? `${r.width}×${r.height}` : "不明";
     console.log(
-      `${r.label.padEnd(40)}| ${(r.mb + " MB").padEnd(12)}| ${r.ok20mb}        | ${r.mimeType.padEnd(18)}| ${r.sec}秒`
+      `${r.label.padEnd(40)}| ${(r.mb + " MB").padEnd(12)}| ${r.ok20mb}   | ${dim.padEnd(18)}| ${(r.scaleStr ?? "").padEnd(6)}| ${r.sec}秒`
     );
   }
 }
