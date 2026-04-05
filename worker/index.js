@@ -590,7 +590,10 @@ export default {
       if (!env.IMAGE_BUCKET) return new Response("Not Found", { status: 404, headers: corsH });
       const obj = await env.IMAGE_BUCKET.get(`${id}/hires.png`);
       if (!obj) return new Response("Not Found", { status: 404, headers: corsH });
-      return new Response(obj.body, { headers: { "Content-Type": "image/png", ...corsH } });
+      const buf = await obj.arrayBuffer();
+      return new Response(buf, {
+        headers: { "Content-Type": "image/png", "Content-Length": String(buf.byteLength), ...corsH },
+      });
     }
 
     if (request.method !== "POST") {
@@ -672,6 +675,7 @@ export default {
           const workerOrigin = new URL(request.url).origin;
           // バックグラウンドタスク: fal.ai → R2保存 → Worker URL → SUZURI登録 → R2マージ
           ctx.waitUntil((async () => {
+            console.log(`[suzuri-create] bg 開始 imageDataLen=${imageData?.length ?? 0}`);
             let suzuriTexture = `data:${mimeType};base64,${imageData}`;
             try {
               const upscaled = await upscaleWithFal(imageData, mimeType, env);
@@ -679,18 +683,25 @@ export default {
                 // fal.ai CDN URL をそのままSUZURIに渡すと0バイトエラーになるため
                 // R2にバイナリ保存（I/Oのみ・CPU不要）→ Worker URL経由でSUZURIに渡す
                 const cdnRes = await fetch(upscaled.cdnUrl);
+                console.log(`[suzuri-create] CDN fetch status=${cdnRes.status}`);
                 if (cdnRes.ok) {
                   const buf = await cdnRes.arrayBuffer();
-                  await env.IMAGE_BUCKET.put(`${r2Id}/hires.png`, buf, {
-                    httpMetadata: { contentType: "image/png" },
-                  });
-                  suzuriTexture = `${workerOrigin}/hires/${r2Id}`;
-                  console.log(`[suzuri-create] hires R2保存完了 → ${suzuriTexture}`);
+                  console.log(`[suzuri-create] CDN byteLength=${buf.byteLength}`);
+                  if (buf.byteLength > 0) {
+                    await env.IMAGE_BUCKET.put(`${r2Id}/hires.png`, buf, {
+                      httpMetadata: { contentType: "image/png" },
+                    });
+                    suzuriTexture = `${workerOrigin}/hires/${r2Id}`;
+                    console.log(`[suzuri-create] hires R2保存完了 → ${suzuriTexture}`);
+                  } else {
+                    console.warn(`[suzuri-create] CDN 0バイト → base64フォールバック`);
+                  }
                 }
               }
             } catch (e) {
               console.warn(`[suzuri-create] fal.ai アップスケール失敗（元画像で継続）: ${e.message}`);
             }
+            console.log(`[suzuri-create] texture type=${suzuriTexture.startsWith("data:") ? "base64" : "url"} len=${suzuriTexture.length}`);
             try {
               const sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null);
               if (r2Id && env.IMAGE_BUCKET) {
