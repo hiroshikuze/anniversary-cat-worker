@@ -584,6 +584,15 @@ export default {
       return Response.json(meta, { headers: corsH });
     }
 
+    // GET: fal.ai高解像度画像をR2から返す（SUZURI向け安定URL）
+    if (request.method === "GET" && url.pathname.startsWith("/hires/")) {
+      const id = url.pathname.slice("/hires/".length);
+      if (!env.IMAGE_BUCKET) return new Response("Not Found", { status: 404, headers: corsH });
+      const obj = await env.IMAGE_BUCKET.get(`${id}/hires.png`);
+      if (!obj) return new Response("Not Found", { status: 404, headers: corsH });
+      return new Response(obj.body, { headers: { "Content-Type": "image/png", ...corsH } });
+    }
+
     if (request.method !== "POST") {
       return new Response("Method Not Allowed", { status: 405, headers: corsH });
     }
@@ -659,12 +668,26 @@ export default {
         const isRightGroup = (slugs ?? []).some(s => RIGHT_SLUGS.includes(s));
 
         if (isRightGroup) {
-          // バックグラウンドタスク: fal.ai → SUZURI登録 → R2マージ
+          // リクエスト元のオリジン（バックグラウンドタスク内では request にアクセスできないため事前取得）
+          const workerOrigin = new URL(request.url).origin;
+          // バックグラウンドタスク: fal.ai → R2保存 → Worker URL → SUZURI登録 → R2マージ
           ctx.waitUntil((async () => {
             let suzuriTexture = `data:${mimeType};base64,${imageData}`;
             try {
               const upscaled = await upscaleWithFal(imageData, mimeType, env);
-              if (upscaled.cdnUrl) suzuriTexture = upscaled.cdnUrl;
+              if (upscaled.cdnUrl && r2Id && env.IMAGE_BUCKET) {
+                // fal.ai CDN URL をそのままSUZURIに渡すと0バイトエラーになるため
+                // R2にバイナリ保存（I/Oのみ・CPU不要）→ Worker URL経由でSUZURIに渡す
+                const cdnRes = await fetch(upscaled.cdnUrl);
+                if (cdnRes.ok) {
+                  const buf = await cdnRes.arrayBuffer();
+                  await env.IMAGE_BUCKET.put(`${r2Id}/hires.png`, buf, {
+                    httpMetadata: { contentType: "image/png" },
+                  });
+                  suzuriTexture = `${workerOrigin}/hires/${r2Id}`;
+                  console.log(`[suzuri-create] hires R2保存完了 → ${suzuriTexture}`);
+                }
+              }
             } catch (e) {
               console.warn(`[suzuri-create] fal.ai アップスケール失敗（元画像で継続）: ${e.message}`);
             }
