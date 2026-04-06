@@ -297,14 +297,14 @@ async function createPost(accessJwt, did, text, blobRef, mimeType, altText, page
 // Discord 通知
 // ---------------------------------------------------------------------------
 
-/** Discord Webhook にエラーメッセージを送信する */
-export async function notifyDiscord(webhookUrl, message) {
+/** Discord Webhook にメッセージを送信する。emoji省略時は❌（エラー用） */
+export async function notifyDiscord(webhookUrl, message, emoji = "❌") {
   if (!webhookUrl) return;
   try {
     await fetch(webhookUrl, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ content: `❌ にゃんバーサリーBot\n${message}` }),
+      body:    JSON.stringify({ content: `${emoji} にゃんバーサリーBot\n${message}` }),
     });
   } catch (e) {
     // Discord 通知失敗はログのみ（二重エラーを避ける）
@@ -350,7 +350,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
     // ── 2. 画像生成 ────────────────────────────────────────────────────────
     console.log(`${prefix} generate 開始`);
     const generated = await handleGenerate(
-      { theme: research.theme, description: research.description },
+      { theme: research.theme, description: research.description, visualHint: research.visualHint ?? null },
       apiKey
     );
     console.log(`${prefix} generate 完了 source=${generated.source}`);
@@ -426,6 +426,22 @@ export async function runBot(env, handleResearch, handleGenerate) {
     const postResult = await createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl, themeTag);
 
     console.log(`${prefix} Bluesky 投稿 完了 uri=${postResult.uri ?? "(不明)"} identifier=${env.BLUESKY_IDENTIFIER}`);
+
+    // ── 6. 生成内容を Discord に通知（プロンプト確認用） ────────────────────
+    try {
+      const lines = [
+        `✅ Bluesky投稿完了 ${dateStr}`,
+        `📅 テーマ: ${research.theme}`,
+        research.description ? `📝 説明: ${research.description}` : null,
+        research.visualHint  ? `🎨 視覚ヒント: ${research.visualHint}` : null,
+        generated.persona    ? `🐱 毛柄: ${generated.persona}`    : null,
+        generated.personality ? `😺 性格: ${generated.personality}` : null,
+        `🖼 ソース: ${generated.source}`,
+        generated.prompt     ? `\n📋 プロンプト:\n${generated.prompt}` : null,
+        `🔗 ${pageUrl}`,
+      ].filter(Boolean).join("\n");
+      await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, "✅");
+    } catch (_) { /* 通知失敗は無視 */ }
 
   } catch (err) {
     const msg = `${prefix} エラー: ${err.message}`;
