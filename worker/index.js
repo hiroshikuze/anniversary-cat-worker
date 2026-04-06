@@ -463,7 +463,7 @@ async function handleGenerate(body, apiKey) {
   try {
     const result = await Promise.any([tryGemini(), tryPollinations()]);
     console.log(`[generate] final source=${result.source}`);
-    return { ...result, persona, personality };
+    return { ...result, persona, personality, prompt };
   } catch (err) {
     // AggregateError から各失敗理由を取り出してログ・レスポンスに含める
     const reasons = err instanceof AggregateError
