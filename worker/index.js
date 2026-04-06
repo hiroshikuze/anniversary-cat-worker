@@ -160,10 +160,10 @@ async function handleResearch(body, apiKey) {
   const model = await selectBestModel(apiKey);
 
   const prompt =
-    `今日は${date}です。この日の日本の記念日・記念日・季節の花・重要なイベントを` +
+    `今日は${date}です。この日の日本の記念日・季節の花・重要なイベントを` +
     `Google検索で調べ、最も特徴的なものを1つ選んでください。` +
     `回答は以下のJSONのみ（マークダウン・説明文は不要）:\n` +
-    `{"theme":"記念日名","description":"50文字以内の説明","sourceUrl":"参照した実際のURL"}`;
+    `{"theme":"記念日名","description":"50文字以内の説明","visualHint":"このテーマをかわいい猫のイラストで表現するとき背景・小物・雰囲気として使える英語キーワードを5〜8語","sourceUrl":"参照した実際のURL"}`;
 
   const res = await fetchWithRetry(
     `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
@@ -381,12 +381,14 @@ async function handleGenerate(body, apiKey) {
 
   const persona      = pickPersona();
   const personality  = pickPersonality();
+  const visualHint   = body.visualHint ?? null;
   const prompt =
     `Create a cute kawaii watercolor style cat character illustration. ` +
     (persona      ? `Cat appearance: ${persona}. `           : "") +
     (personality  ? `Cat personality and pose: ${personality}. ` : "") +
     `Theme: ${theme}. ` +
-    (description ? `Background: ${description}. ` : "") +
+    (description  ? `Context: ${description}. `              : "") +
+    (visualHint   ? `Visual elements to incorporate: ${visualHint}. ` : "") +
     `Style: soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ` +
     `white background, Japanese kawaii style. ` +
     `The cat is holding or surrounded by items related to the theme. ` +

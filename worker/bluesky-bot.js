@@ -350,7 +350,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
     // ── 2. 画像生成 ────────────────────────────────────────────────────────
     console.log(`${prefix} generate 開始`);
     const generated = await handleGenerate(
-      { theme: research.theme, description: research.description },
+      { theme: research.theme, description: research.description, visualHint: research.visualHint ?? null },
       apiKey
     );
     console.log(`${prefix} generate 完了 source=${generated.source}`);
@@ -433,6 +433,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
         `✅ Bluesky投稿完了 ${dateStr}`,
         `📅 テーマ: ${research.theme}`,
         research.description ? `📝 説明: ${research.description}` : null,
+        research.visualHint  ? `🎨 視覚ヒント: ${research.visualHint}` : null,
         generated.persona    ? `🐱 毛柄: ${generated.persona}`    : null,
         generated.personality ? `😺 性格: ${generated.personality}` : null,
         `🖼 ソース: ${generated.source}`,
