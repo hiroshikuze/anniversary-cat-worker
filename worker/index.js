@@ -356,14 +356,15 @@ export function pickPersonality() {
   return CAT_PERSONALITIES[0].desc;
 }
 
-function buildPollinationsUrl(theme, description, persona, personality, model = "flux") {
+function buildPollinationsUrl(theme, description, persona, personality, model = "flux", visualHint = null) {
   // Pollinations API のプロンプトは ASCII のみ使用
   // 日本語等の非ASCII文字はURLパス内でサーバー側エラー(500)の原因になるためフィルタリング
   const toAscii = (s) => (s ?? "").replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
   const themeAscii = toAscii(theme);
   const descAscii  = toAscii(description).slice(0, 30);
-  const subject    = themeAscii || descAscii || "anniversary";
-  const parts = ["kawaii watercolor", persona ?? "cat", personality, subject, "pastel colors, white background, kawaii style"];
+  // theme・descriptionが日本語のみで空になった場合、visualHintをsubjectとして使う
+  const subject    = themeAscii || descAscii || visualHint?.split(",")[0]?.trim() || "anniversary";
+  const parts = ["kawaii watercolor", persona ?? "cat", personality, subject, visualHint, "pastel colors, white background, kawaii style"];
   const prompt = parts.filter(Boolean).join(", ");
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
@@ -449,7 +450,7 @@ async function handleGenerate(body, apiKey) {
     const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
     return Promise.any(
       MODELS.map(async (model) => {
-        const url = buildPollinationsUrl(theme, description, persona, personality, model);
+        const url = buildPollinationsUrl(theme, description, persona, personality, model, visualHint);
         console.log(`[pollinations] trying model=${model}`);
         const imgRes = await fetch(url, { signal: AbortSignal.timeout(POLLINATIONS_TIMEOUT_MS) });
         if (!imgRes.ok) throw new Error(`status=${imgRes.status}`);
