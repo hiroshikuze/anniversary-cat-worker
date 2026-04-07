@@ -107,6 +107,30 @@
 - **制約**: 残高$0.5以下の「事前通知」はfal.aiのREST APIが非公開のため未実装。残高0（403）になって初めて通知が届く
 - **補完策**: fal.aiダッシュボード（`fal.ai/dashboard/billing`）でメール通知を設定しておくことを推奨
 
+### 2026-04 | Bot投稿内容のDiscord通知・visualHint・Pollinations修正
+
+- **Bot投稿完了通知**: Bluesky投稿成功後にDiscordへ通知を追加
+  - テーマ・説明・視覚ヒント・猫の毛柄と性格・画像ソース・プロンプト全文・サイトURL
+  - `handleGenerate()`の戻り値に`persona`/`personality`/`prompt`を追加
+  - `notifyDiscord()`に`emoji`引数を追加（デフォルト`❌`、成功通知は`✅`）
+- **visualHint機能追加**: `handleResearch()`のJSON出力に`visualHint`フィールドを追加
+  - Geminiがテーマに合ったイラスト用英語キーワード5〜8語を返す
+  - `handleGenerate()`の`"Visual elements to incorporate:"`としてプロンプトに挿入
+  - Pollinationsフォールバック時も渡すよう`buildPollinationsUrl()`を更新
+- **Pollinationsのvisualhint未反映バグ修正**:
+  - **原因**: `buildPollinationsUrl()`に`visualHint`が渡されておらず、Pollinationsが勝った場合にvisualHintが完全に無視されていた
+  - **追加修正**: theme/descriptionが全日本語で空になった場合、`visualHint`の先頭語を`subject`として使用
+  - **場所**: `worker/index.js` `buildPollinationsUrl()`
+- **visualHintの精度について**: Geminiは記念日の視覚的特徴を「知っている」わけではなく、テーマ名から推測・創作する。一般的な記念日は精度高い。固有IPアニメ等は創作が混じる可能性あり。Discord通知でvisualHintを毎日確認できるため運用上は問題ない
+
+### 2026-04 | Cloudflare MCPサーバーのセットアップ試行
+
+- **目的**: ClaudeCodeからCloudflare Workersのログに直接アクセスし、Gemini失敗かPollinationsが速かっただけかを確認したかった
+- **設定**: `~/.claude.json`のプロジェクト設定に`@cloudflare/mcp-server-cloudflare`を追加（`claude mcp add`コマンドで追加）
+- **結果**: 未完了。このWeb/サンドボックス環境ではブラウザOAuthが使えないため`wrangler login`がタイムアウト
+- **解決策（未実施）**: CloudflareダッシュボードでAPIトークンを作成し、`~/.claude.json`の`mcpServers.cloudflare.env.CLOUDFLARE_API_TOKEN`に設定すれば使える
+- **代替手段**: Cloudflareダッシュボード → Workers & Pages → `anniversary-cat-worker` → ログ で手動確認
+
 ---
 
 ## 記録フォーマット
