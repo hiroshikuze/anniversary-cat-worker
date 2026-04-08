@@ -411,9 +411,6 @@ async function handleGenerate(body, apiKey) {
   }
 
   async function tryPollinations() {
-    // Gemini に先着機会を与えるため 5 秒待ってから開始する
-    // Gemini（discovery廃止後）は ~5-8 秒で完了するため、5 秒ヘッドスタートで互角〜有利になる
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
     // 1モデルあたり最大 20 秒。4モデル並列なので全体も最大 20 秒で完結する
     const POLLINATIONS_TIMEOUT_MS = 20_000;
     const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
@@ -432,17 +429,26 @@ async function handleGenerate(body, apiKey) {
     );
   }
 
+  // Gemini を優先し、失敗時のみ Pollinations にフォールバックする直列方式。
+  // 並列レース方式では Pollinations(~2s) が常に Gemini(~10-15s) に先着してしまうため変更。
   try {
-    const result = await Promise.any([tryGemini(), tryPollinations()]);
+    const result = await tryGemini();
     console.log(`[generate] final source=${result.source}`);
     return { ...result, persona, personality, prompt };
-  } catch (err) {
-    // AggregateError から各失敗理由を取り出してログ・レスポンスに含める
-    const reasons = err instanceof AggregateError
-      ? err.errors.map((e) => e?.message ?? String(e))
-      : [err?.message ?? String(err)];
-    console.error("[generate] ALL SOURCES FAILED:", reasons.join(" | "));
-    throw new Error(`画像生成に失敗しました（${reasons.join(" / ")}）`);
+  } catch (geminiErr) {
+    console.warn(`[generate] Gemini 失敗、Pollinations にフォールバック: ${geminiErr?.message ?? geminiErr}`);
+    try {
+      const result = await tryPollinations();
+      console.log(`[generate] final source=${result.source}`);
+      return { ...result, persona, personality, prompt };
+    } catch (err) {
+      // AggregateError から各失敗理由を取り出してログ・レスポンスに含める
+      const reasons = err instanceof AggregateError
+        ? err.errors.map((e) => e?.message ?? String(e))
+        : [err?.message ?? String(err)];
+      console.error("[generate] ALL SOURCES FAILED:", reasons.join(" | "));
+      throw new Error(`画像生成に失敗しました（${reasons.join(" / ")}）`);
+    }
   }
 }
 
