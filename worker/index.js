@@ -241,49 +241,15 @@ async function handleResearch(body, apiKey) {
 // ---------------------------------------------------------------------------
 // 画像生成モデルを動的に選択（キャッシュなし・毎回確認）
 // ---------------------------------------------------------------------------
-// 画像生成に使える Gemini モデルの候補リストを返す（優先度順）
-// 動的に発見したモデルを先頭に置き、既知の候補をフォールバックとして追加する
-async function listImageModelCandidates(apiKey) {
-  // コスパ重視の既知候補（新しい/安価なものを先に）
-  // 2026-03 時点の有効モデル: gemini-2.5-flash-image が現行 stable
-  const KNOWN_CANDIDATES = [
-    "gemini-2.5-flash-image",
-    "gemini-2.0-flash-exp",
-    "gemini-2.0-flash-preview-image-generation",
-  ];
-
-  let discovered = [];
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}&pageSize=100`
-    );
-    const data = await res.json();
-    const models = data.models ?? [];
-
-    // generateContent をサポートし、画像生成関連の名前を持つモデルを収集
-    discovered = models
-      .filter((m) => {
-        const methods = m.supportedGenerationMethods ?? [];
-        const name = m.name;
-        return (
-          methods.includes("generateContent") &&
-          (name.includes("image-generation") || name.includes("imagen") || name.includes("flash-exp"))
-        );
-      })
-      .map((m) => m.name.replace("models/", ""));
-
-    if (discovered.length > 0) {
-      console.log("[image-model] discovered:", discovered.join(", "));
-    } else {
-      console.warn("[image-model] discovery found no image models");
-    }
-  } catch (e) {
-    console.warn("[image-model] discovery failed:", e.message);
-  }
-
-  // 発見済みを先頭に、既知候補を後ろに（重複排除）
-  return [...new Set([...discovered, ...KNOWN_CANDIDATES])];
-}
+// 画像生成 Gemini モデルの既知候補リスト（優先度順）
+// Discovery API 呼び出しは tryGemini() のレイテンシ増加の原因になるため廃止。
+// モデルが廃止された場合は KNOWN_IMAGE_CANDIDATES を直接更新する。
+// 確認先: https://ai.google.dev/gemini-api/docs/models
+const KNOWN_IMAGE_CANDIDATES = [
+  "gemini-2.5-flash-image",              // 2026-03 現在の stable（メイン）
+  "gemini-2.0-flash-exp",                // フォールバック
+  "gemini-2.0-flash-preview-image-generation",  // 廃止済みの可能性あり
+];
 
 // ---------------------------------------------------------------------------
 // Pollinations.ai フォールバック（base64 画像を返す）
@@ -397,7 +363,7 @@ async function handleGenerate(body, apiKey) {
     `IMPORTANT: Do not include any text, letters, words, titles, captions, or typography in the image.`;
 
   async function tryGemini() {
-    const candidates = await listImageModelCandidates(apiKey);
+    const candidates = KNOWN_IMAGE_CANDIDATES;
     // 無限ループ防止: 最大 4 候補まで
     const MAX_TRIES = 4;
     let lastError;
@@ -445,6 +411,9 @@ async function handleGenerate(body, apiKey) {
   }
 
   async function tryPollinations() {
+    // Gemini に先着機会を与えるため 5 秒待ってから開始する
+    // Gemini（discovery廃止後）は ~5-8 秒で完了するため、5 秒ヘッドスタートで互角〜有利になる
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
     // 1モデルあたり最大 20 秒。4モデル並列なので全体も最大 20 秒で完結する
     const POLLINATIONS_TIMEOUT_MS = 20_000;
     const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
