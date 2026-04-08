@@ -330,8 +330,9 @@ function buildPollinationsUrl(theme, description, persona, personality, model = 
   const descAscii  = toAscii(description).slice(0, 30);
   // theme・descriptionが日本語のみで空になった場合、visualHintをsubjectとして使う
   const subject    = themeAscii || descAscii || visualHint?.split(",")[0]?.trim() || "anniversary";
-  // テーマ関連要素を先頭に置くことでPollinationsのFluxモデルでもテーマが反映されやすくなる
-  const parts = [subject, visualHint, "kawaii watercolor cat", persona ?? "cat", personality, "pastel colors, white background, kawaii style"];
+  // テーマ関連要素より先に「kawaii watercolor cat」を置き、サービスの根幹（水彩画風の可愛い猫）を先頭で宣言する
+  // 「kawaii watercolor cat」にcatが含まれるため persona が null のときの "cat" フォールバックは不要
+  const parts = ["kawaii watercolor cat", subject, visualHint, persona, personality, "pastel colors, white background, kawaii style"];
   const prompt = parts.filter(Boolean).join(", ");
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
