@@ -9,14 +9,17 @@
  *   Pollinations との競合設計（遅延時間・タイムアウト値）の根拠とする
  */
 
+import https from "node:https";
+
 const apiKey = process.env.GEMINI_API_KEY;
 if (!apiKey) {
   console.error("❌ GEMINI_API_KEY が未設定です");
   process.exit(1);
 }
 
-const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const MODEL = "gemini-2.5-flash-image";
+const HOST = "generativelanguage.googleapis.com";
+const PATH = `/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
 
 // 本番と同等のプロンプト（花まつりテーマで固定）
 const PROMPT =
@@ -31,6 +34,39 @@ const PROMPT =
   "High quality charming illustration. " +
   "IMPORTANT: Do not include any text, letters, words, titles, captions, or typography in the image.";
 
+const BODY = JSON.stringify({
+  contents: [{ parts: [{ text: PROMPT }] }],
+  generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
+});
+
+function httpsPost(host, path, body, timeoutMs = 60_000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      req.destroy(new Error(`タイムアウト (${timeoutMs}ms)`));
+    }, timeoutMs);
+
+    const req = https.request(
+      { hostname: host, path, method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } },
+      (res) => {
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          clearTimeout(timer);
+          const text = Buffer.concat(chunks).toString("utf8");
+          try {
+            resolve({ status: res.statusCode, data: JSON.parse(text) });
+          } catch {
+            reject(new Error(`JSON parse error: ${text.slice(0, 200)}`));
+          }
+        });
+      }
+    );
+    req.on("error", (e) => { clearTimeout(timer); reject(e); });
+    req.write(body);
+    req.end();
+  });
+}
+
 const TRIALS = 3;
 
 async function runTrial(trialNum) {
@@ -38,21 +74,11 @@ async function runTrial(trialNum) {
   const start = Date.now();
 
   try {
-    const res = await fetch(`${GEMINI_BASE}/${MODEL}:generateContent?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: PROMPT }] }],
-        generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
-      }),
-      signal: AbortSignal.timeout(60_000),
-    });
-
+    const { status, data } = await httpsPost(HOST, PATH, BODY, 60_000);
     const elapsed = Date.now() - start;
-    const data = await res.json();
 
-    if (!res.ok) {
-      const msg = data.error?.message ?? `status=${res.status}`;
+    if (status !== 200) {
+      const msg = data.error?.message ?? `status=${status}`;
       console.log(`❌ 失敗 (${elapsed}ms): ${msg}`);
       return { success: false, elapsed, error: msg };
     }
@@ -80,7 +106,6 @@ const results = [];
 for (let i = 1; i <= TRIALS; i++) {
   results.push(await runTrial(i));
   if (i < TRIALS) {
-    // API負荷軽減のため試行間に2秒待機
     await new Promise((r) => setTimeout(r, 2_000));
   }
 }
