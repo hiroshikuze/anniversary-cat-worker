@@ -368,7 +368,7 @@ async function handleGenerate(body, apiKey) {
     const MAX_TRIES = 4;
     let lastError;
     for (const model of candidates.slice(0, MAX_TRIES)) {
-      // 1モデルあたり最大 25 秒
+      // 1モデルあたり最大 15 秒（実測最大 ~10s + 余裕5s）
       const res = await fetchWithRetry(
         `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
         {
@@ -378,7 +378,7 @@ async function handleGenerate(body, apiKey) {
             contents: [{ parts: [{ text: prompt }] }],
             generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
           }),
-          signal: AbortSignal.timeout(25_000),
+          signal: AbortSignal.timeout(15_000),
         }
       );
       const data = await res.json();
@@ -411,9 +411,10 @@ async function handleGenerate(body, apiKey) {
   }
 
   async function tryPollinations() {
-    // Gemini に先着機会を与えるため 5 秒待ってから開始する
-    // Gemini（discovery廃止後）は ~5-8 秒で完了するため、5 秒ヘッドスタートで互角〜有利になる
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    // 実測値: Gemini は 6〜10 秒（avg 8s）で完了する（scripts/test-gemini-image-timing.mjs で計測）
+    // Pollinationsの turbo は ~2 秒で完了するため、10 秒遅延でGeminiが常に先着できる
+    // （10s + 2s = 12s > Gemini最大 10.2s）
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
     // 1モデルあたり最大 20 秒。4モデル並列なので全体も最大 20 秒で完結する
     const POLLINATIONS_TIMEOUT_MS = 20_000;
     const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
