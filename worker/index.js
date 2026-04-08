@@ -330,7 +330,9 @@ function buildPollinationsUrl(theme, description, persona, personality, model = 
   const descAscii  = toAscii(description).slice(0, 30);
   // theme・descriptionが日本語のみで空になった場合、visualHintをsubjectとして使う
   const subject    = themeAscii || descAscii || visualHint?.split(",")[0]?.trim() || "anniversary";
-  const parts = ["kawaii watercolor", persona ?? "cat", personality, subject, visualHint, "pastel colors, white background, kawaii style"];
+  // テーマ関連要素より先に「kawaii watercolor cat」を置き、サービスの根幹（水彩画風の可愛い猫）を先頭で宣言する
+  // 「kawaii watercolor cat」にcatが含まれるため persona が null のときの "cat" フォールバックは不要
+  const parts = ["kawaii watercolor cat", subject, visualHint, persona, personality, "pastel colors, white background, kawaii style"];
   const prompt = parts.filter(Boolean).join(", ");
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
@@ -358,7 +360,6 @@ async function handleGenerate(body, apiKey) {
     (visualHint   ? `Visual elements to incorporate: ${visualHint}. ` : "") +
     `Style: soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ` +
     `white background, Japanese kawaii style. ` +
-    `The cat is holding or surrounded by items related to the theme. ` +
     `High quality charming illustration. ` +
     `IMPORTANT: Do not include any text, letters, words, titles, captions, or typography in the image.`;
 
@@ -368,7 +369,7 @@ async function handleGenerate(body, apiKey) {
     const MAX_TRIES = 4;
     let lastError;
     for (const model of candidates.slice(0, MAX_TRIES)) {
-      // 1モデルあたり最大 25 秒
+      // 1モデルあたり最大 15 秒（実測最大 ~10s + 余裕5s）
       const res = await fetchWithRetry(
         `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
         {
@@ -378,7 +379,7 @@ async function handleGenerate(body, apiKey) {
             contents: [{ parts: [{ text: prompt }] }],
             generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
           }),
-          signal: AbortSignal.timeout(25_000),
+          signal: AbortSignal.timeout(15_000),
         }
       );
       const data = await res.json();
@@ -411,9 +412,7 @@ async function handleGenerate(body, apiKey) {
   }
 
   async function tryPollinations() {
-    // Gemini に先着機会を与えるため 5 秒待ってから開始する
-    // Gemini（discovery廃止後）は ~5-8 秒で完了するため、5 秒ヘッドスタートで互角〜有利になる
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    // 遅延なし: Phase制御（下記）でGemini優先ウィンドウを管理するためここでは即座に開始する
     // 1モデルあたり最大 20 秒。4モデル並列なので全体も最大 20 秒で完結する
     const POLLINATIONS_TIMEOUT_MS = 20_000;
     const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
@@ -432,12 +431,35 @@ async function handleGenerate(body, apiKey) {
     );
   }
 
+  // 2フェーズ方式:
+  //   Phase1（0〜12秒）: GeminiとPollinationsを同時に開始し、Gemini優先ウィンドウを設ける。
+  //                       実測: Gemini は 6〜10s（最大 10.2s）で完了するため 12s で先着できる。
+  //   Phase2（12秒〜）: ウィンドウ超過 or Gemini失敗 → 残っている方の先着を採用。
+  //                     世界的なネットワーク負荷増大時もどちらかが完了次第返せる。
+  const GEMINI_PRIORITY_MS = 12_000;
+  const geminiPromise     = tryGemini();
+  const pollinationsPromise = tryPollinations();
+
+  const phase1 = await Promise.race([
+    geminiPromise.then((r) => ({ winner: "gemini", result: r })),
+    new Promise((resolve) => setTimeout(() => resolve({ winner: "timeout" }), GEMINI_PRIORITY_MS)),
+  ]).catch((err) => ({ winner: "gemini-error", error: err }));
+
+  if (phase1.winner === "gemini") {
+    console.log("[generate] final source=gemini (phase1 priority window)");
+    return { ...phase1.result, persona, personality, prompt };
+  }
+  if (phase1.winner === "gemini-error") {
+    console.warn(`[generate] Gemini失敗 (phase1): ${phase1.error?.message}`);
+  } else {
+    console.log("[generate] phase1 timeout → phase2 先着優先");
+  }
+
   try {
-    const result = await Promise.any([tryGemini(), tryPollinations()]);
-    console.log(`[generate] final source=${result.source}`);
+    const result = await Promise.any([geminiPromise, pollinationsPromise]);
+    console.log(`[generate] final source=${result.source} (phase2)`);
     return { ...result, persona, personality, prompt };
   } catch (err) {
-    // AggregateError から各失敗理由を取り出してログ・レスポンスに含める
     const reasons = err instanceof AggregateError
       ? err.errors.map((e) => e?.message ?? String(e))
       : [err?.message ?? String(err)];
