@@ -62,7 +62,9 @@ export function buildThemeTag(theme) {
  * @param {string} [pageUrl] - CTA に使う URL（デフォルト: SITE_URL）
  */
 export function buildPostText(theme, description, pageUrl = SITE_URL) {
-  const header   = `今日は「${theme}」の日！🐱`;
+  const header   = theme.endsWith("の日")
+    ? `今日は「${theme}」！🐱`
+    : `今日は「${theme}」の日！🐱`;
   const body     = description ? `\n${description}` : "";
   const cta      = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${pageUrl}`;
   const themeTag = buildThemeTag(theme);
@@ -438,7 +440,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
         generated.personality ? `😺 性格: ${generated.personality}` : null,
         `🖼 ソース: ${generated.source}`,
         generated.prompt     ? `\n📋 プロンプト:\n${generated.prompt}` : null,
-        `🔗 ${pageUrl}`,
+        `\n📣 投稿テキスト（Mastodon・X・Instagram等に転載用）:\n${text}`,
       ].filter(Boolean).join("\n");
       await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, "✅");
     } catch (_) { /* 通知失敗は無視 */ }
