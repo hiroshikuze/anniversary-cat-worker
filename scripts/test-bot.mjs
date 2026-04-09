@@ -17,7 +17,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
-import { pickPersona, pickPersonality } from "../worker/index.js";
+import { pickPersona, pickPersonality, _twoPhaseRace } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -1086,6 +1086,57 @@ console.log("\n[getFalResult]");
   const result = await getFalResult("req-123", { FAL_KEY: "key" });
   globalThis.fetch = origFetch;
   assert("CDN URL なし: error を返す", result.status === "error");
+}
+
+// ---------------------------------------------------------------------------
+// _twoPhaseRace: 2フェーズ画像生成レース
+// テスト用に priorityMs を短くして動作を検証する
+// ---------------------------------------------------------------------------
+console.log("\n[_twoPhaseRace]");
+
+// ヘルパー: 指定ms後に解決/拒否するファクトリ関数
+const delayed = (ms, value) => () =>
+  new Promise((resolve) => setTimeout(() => resolve(value), ms));
+const delayedReject = (ms, msg) => () =>
+  new Promise((_, reject) => setTimeout(() => reject(new Error(msg)), ms));
+
+const GEMINI_IMG  = { source: "gemini",      imageData: "g", mimeType: "image/png" };
+const POLLI_IMG   = { source: "pollinations", imageData: "p", mimeType: "image/jpeg" };
+
+{
+  // Phase1: Geminiがウィンドウ内（100ms < 500ms）に到着 → Gemini採用
+  const result = await _twoPhaseRace(delayed(100, GEMINI_IMG), delayed(200, POLLI_IMG), 500);
+  assert("Phase1: Geminiがウィンドウ内に到着した場合はGeminiを採用", result.source === "gemini");
+}
+
+{
+  // Phase2: Geminiがウィンドウ超過（800ms > 500ms）→ Pollinations（既に完了済み）を即返却
+  const result = await _twoPhaseRace(delayed(800, GEMINI_IMG), delayed(50, POLLI_IMG), 500);
+  assert("Phase2: Geminiがウィンドウ超過時はPollinationsを採用", result.source === "pollinations");
+}
+
+{
+  // Phase2: Phase2開始後もGeminiがPollinationsより先に到着 → Gemini採用
+  // Gemini=600ms（ウィンドウ500msを超過するが、Phase2ではPollinationsの800msより先着）
+  const result = await _twoPhaseRace(delayed(600, GEMINI_IMG), delayed(800, POLLI_IMG), 500);
+  assert("Phase2: ウィンドウ超過後もGeminiがPollinationsより先ならGeminiを採用", result.source === "gemini");
+}
+
+{
+  // Phase1でGemini失敗 → Phase2でPollinationsを採用
+  const result = await _twoPhaseRace(delayedReject(50, "quota exceeded"), delayed(200, POLLI_IMG), 500);
+  assert("Phase1: Gemini失敗時はPhase2でPollinationsを採用", result.source === "pollinations");
+}
+
+{
+  // 両方失敗 → エラーをthrow
+  let threw = false;
+  try {
+    await _twoPhaseRace(delayedReject(50, "Gemini error"), delayedReject(100, "Pollinations error"), 500);
+  } catch {
+    threw = true;
+  }
+  assert("両方失敗時はエラーをthrowする", threw);
 }
 
 // ---------------------------------------------------------------------------
