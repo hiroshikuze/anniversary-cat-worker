@@ -19,9 +19,11 @@ anniversary-cat-worker/
 ├── frontend/
 │   └── index.html               ← フロントエンド（GitHub Pages）
 ├── scripts/
-│   ├── health-check.js          ← E2E診断スクリプト（GitHub Actionsで自動実行）
-│   ├── test-bot.mjs             ← bluesky-bot.jsのユニットテスト（外部API不要）
-│   └── test-suzuri-api.mjs      ← SUZURI API動作確認スクリプト
+│   ├── health-check.js              ← E2E診断スクリプト（GitHub Actionsで自動実行）
+│   ├── test-bot.mjs                 ← bluesky-bot.jsのユニットテスト（外部API不要）
+│   ├── test-suzuri-api.mjs          ← SUZURI API動作確認スクリプト
+│   ├── test-fal-models.mjs          ← fal.aiモデル比較スクリプト（FAL_KEY必要）
+│   └── test-gemini-image-timing.mjs ← Gemini画像生成の所要時間計測（GEMINI_API_KEY必要）
 └── wrangler.toml                ← Cloudflareデプロイ設定（Cron Trigger含む）
 ```
 
@@ -246,11 +248,35 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 
 ## Pollinations.aiフォールバック
 
-画像生成時、GeminiとPollinationsを並列実行（`Promise.any`）し、先に成功した方を返す。
+画像生成時、GeminiとPollinationsを**2フェーズ方式**で競合させる。
+
+### フェーズ設計（2026-04実測データに基づく）
+
+| フェーズ | 期間 | 動作 |
+| --- | --- | --- |
+| Phase1 | 0〜12秒 | GeminiとPollinationsを同時開始。12秒以内にGeminiが完了すればGeminiを採用 |
+| Phase2 | 12秒〜 | タイムアウトまたはGemini失敗時に移行。先に完了した方を採用 |
+
+**実装:** `_twoPhaseRace(tryGemini, tryPollinations, priorityMs=12_000)`として`worker/index.js`からexport。`priorityMs`を引数化することでユニットテストで短縮実行できる（`test-bot.mjs`で500msを使用）。
+
+**設計根拠（`scripts/test-gemini-image-timing.mjs`で計測）:**
+- Gemini所要時間: 最小6363ms / 最大10203ms / 平均8361ms
+- Pollinationsの`turbo`モデルは約2秒で完了
+- 12秒ウィンドウ: Gemini最大10.2s < 12s → 通常はGemini先着
+- Phase2開始時点でPollinationsは既に完了済み（t=2s）→ Phase2移行時は即返却
+
+**ネットワーク負荷増大時の挙動:**
+- 両者同時開始のため、どちらかが先に回復した時点で即返せる
+- Pollinations遅延方式（旧設計）と異なり、人工的な待機時間がない
+
+### Pollinationsプロンプト設計
 
 - 使用モデル: `flux` / `turbo` / `flux-realism` / `flux-anime`（4モデル同時並列）
 - **プロンプトはASCIIのみ**（日本語等の非ASCII文字はサーバー500エラーの原因になるためフィルタリング済み）
 - タイムアウト: 20秒/モデル
+- **プロンプト順序**: `kawaii watercolor cat, [subject/visualHint], [persona], [personality], [style]`
+  - 先頭に「kawaii watercolor cat」を置き、サービスの根幹（可愛い水彩猫）を宣言
+  - subject/visualHintをその直後に置くことでFluxモデルがテーマを構図の主軸として扱う（前半トークン重視の特性を利用）
 
 ---
 
@@ -641,6 +667,24 @@ ctx.waitUntil()が途中終了した稀なケース向け。フロントの60秒
 - `data.products?.length > 0`の場合はグッズ生成ボタンを非表示にする
 
 ---
+
+### 14. Pollinationsが常に先着し、Gemini画像が使われない（2026-04）
+
+- **原因1（フィルターバグ）**: `listImageModelCandidates()`のフィルター条件が`name.includes("image-generation") || name.includes("imagen") || name.includes("flash-exp")`だったため、`gemini-2.5-flash-image`（末尾が`-image`）が発見されず「discovery found no image models」警告が毎回発生
+- **原因2（Discovery APIオーバーヘッド）**: `tryGemini()`冒頭でモデル一覧APIを呼び出していたため、Gemini生成前に1〜2秒の余計なオーバーヘッドが発生
+- **原因3（Pollinations高速）**: Pollinationsの`turbo`モデルが約2秒で完了するため、並列レース（`Promise.any`）では常にPollinationsが先着
+- **修正**:
+  - `listImageModelCandidates()`を廃止し`KNOWN_IMAGE_CANDIDATES`定数に置き換え（Discovery API呼び出しを撤廃）
+  - `Promise.any`並列レースから**2フェーズ方式**に変更（上記「Pollinations.aiフォールバック」セクション参照）
+- **実測検証**: `scripts/test-gemini-image-timing.mjs`で3回計測し、12秒ウィンドウの設計根拠を確認してから実装（数値先行実装を避けた）
+- **場所**: `worker/index.js` `handleGenerate()` / `KNOWN_IMAGE_CANDIDATES` / `buildPollinationsUrl()`
+
+### 15. Geminiプロンプトの「holding or surrounded」制約がvisualHintと競合（2026-04）
+
+- **原因**: `visualHint`（例: `lotus flower, baby Buddha statue, sweet tea ceremony`）が場面・小道具を既に指定しているにもかかわらず、「The cat is holding or surrounded by items related to the theme.」という空間的制約が残っていた
+- **問題**: Geminiが「猫がお釈迦様の像を抱えている」等の不自然な構図に引き寄せられ、visualHintが意図する雰囲気・背景としての使い方ができなかった
+- **修正**: 該当文を削除。visualHintによる場面指示に一本化し、Geminiの構図判断を尊重する
+- **場所**: `worker/index.js` `handleGenerate()` `prompt`定数
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
 

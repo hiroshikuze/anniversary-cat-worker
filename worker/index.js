@@ -431,23 +431,35 @@ async function handleGenerate(body, apiKey) {
     );
   }
 
-  // 2フェーズ方式:
-  //   Phase1（0〜12秒）: GeminiとPollinationsを同時に開始し、Gemini優先ウィンドウを設ける。
-  //                       実測: Gemini は 6〜10s（最大 10.2s）で完了するため 12s で先着できる。
-  //   Phase2（12秒〜）: ウィンドウ超過 or Gemini失敗 → 残っている方の先着を採用。
-  //                     世界的なネットワーク負荷増大時もどちらかが完了次第返せる。
-  const GEMINI_PRIORITY_MS = 12_000;
-  const geminiPromise     = tryGemini();
+  // 2フェーズ方式の実行（ロジックは _twoPhaseRace に切り出し済み）
+  const result = await _twoPhaseRace(tryGemini, tryPollinations);
+  return { ...result, persona, personality, prompt };
+}
+
+// ---------------------------------------------------------------------------
+// 2フェーズ画像生成レース（テスト可能なようにexport）
+//
+// Phase1（0〜priorityMs）: Gemini優先ウィンドウ。時間内に完了すればGeminiを採用。
+// Phase2（priorityMs〜）:  ウィンドウ超過 or Gemini失敗 → 先着優先。
+//                          Pollinationsが既に完了済みの場合は即返却。
+//
+// 引数:
+//   tryGemini      - () => Promise<{imageData, mimeType, source}>
+//   tryPollinations - () => Promise<{imageData, mimeType, source}>
+//   priorityMs     - Gemini優先ウィンドウの長さ（ms）。デフォルト 12_000。
+// ---------------------------------------------------------------------------
+export async function _twoPhaseRace(tryGemini, tryPollinations, priorityMs = 12_000) {
+  const geminiPromise      = tryGemini();
   const pollinationsPromise = tryPollinations();
 
   const phase1 = await Promise.race([
     geminiPromise.then((r) => ({ winner: "gemini", result: r })),
-    new Promise((resolve) => setTimeout(() => resolve({ winner: "timeout" }), GEMINI_PRIORITY_MS)),
+    new Promise((resolve) => setTimeout(() => resolve({ winner: "timeout" }), priorityMs)),
   ]).catch((err) => ({ winner: "gemini-error", error: err }));
 
   if (phase1.winner === "gemini") {
     console.log("[generate] final source=gemini (phase1 priority window)");
-    return { ...phase1.result, persona, personality, prompt };
+    return phase1.result;
   }
   if (phase1.winner === "gemini-error") {
     console.warn(`[generate] Gemini失敗 (phase1): ${phase1.error?.message}`);
@@ -458,7 +470,7 @@ async function handleGenerate(body, apiKey) {
   try {
     const result = await Promise.any([geminiPromise, pollinationsPromise]);
     console.log(`[generate] final source=${result.source} (phase2)`);
-    return { ...result, persona, personality, prompt };
+    return result;
   } catch (err) {
     const reasons = err instanceof AggregateError
       ? err.errors.map((e) => e?.message ?? String(e))

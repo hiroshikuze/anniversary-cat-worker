@@ -131,6 +131,18 @@
 - **解決策（未実施）**: CloudflareダッシュボードでAPIトークンを作成し、`~/.claude.json`の`mcpServers.cloudflare.env.CLOUDFLARE_API_TOKEN`に設定すれば使える
 - **代替手段**: Cloudflareダッシュボード → Workers & Pages → `anniversary-cat-worker` → ログ で手動確認
 
+### 2026-04 | 実測データなしで実装→ロールバックの繰り返し（Gemini/Pollinations競合設計）
+
+- **状況**: Pollinationsが常に先着する問題の修正で、実測値なしに「5秒遅延→10秒遅延→直列方式」と複数回実装してはロールバックした
+- **経緯**:
+  1. 5秒遅延を実装 → ログで確認するとPollinationsがまだ勝っていた
+  2. 直列方式（Gemini優先→失敗時Pollinations）に変更 → ユーザーから「タイムアウトが原因でレース方式にしたのでは？」と指摘。ロールバック
+  3. `scripts/test-gemini-image-timing.mjs`でGemini実測（最小6363ms/最大10203ms/平均8361ms）→ 12秒ウィンドウの2フェーズ方式を実装
+- **教訓**:
+  - **外部APIの挙動に関わる設計値（タイムアウト・遅延）は必ず実測データから決める**
+  - 実測スクリプト（`test-gemini-image-timing.mjs`）を先に書いてユーザーに実行してもらう段取りを踏む
+  - 「数値を変えながら試す」ではなく「計測→設計→実装」の順序を守る
+
 ---
 
 ## 記録フォーマット
