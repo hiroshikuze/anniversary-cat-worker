@@ -438,6 +438,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
         generated.personality ? `😺 性格: ${generated.personality}` : null,
         `🖼 ソース: ${generated.source}`,
         generated.prompt     ? `\n📋 プロンプト:\n${generated.prompt}` : null,
+        `\n📣 投稿テキスト（Mastodon・X・Instagram等に転載用）:\n${text}`,
         `🔗 ${pageUrl}`,
       ].filter(Boolean).join("\n");
       await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, "✅");
