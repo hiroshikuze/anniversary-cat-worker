@@ -322,7 +322,7 @@ export function pickPersonality() {
   return CAT_PERSONALITIES[0].desc;
 }
 
-function buildPollinationsUrl(theme, description, persona, personality, model = "flux", visualHint = null) {
+function buildPollinationsPrompt(theme, description, persona, personality, visualHint = null) {
   // Pollinations API のプロンプトは ASCII のみ使用
   // 日本語等の非ASCII文字はURLパス内でサーバー側エラー(500)の原因になるためフィルタリング
   const toAscii = (s) => (s ?? "").replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
@@ -333,7 +333,11 @@ function buildPollinationsUrl(theme, description, persona, personality, model = 
   // テーマ関連要素より先に「kawaii watercolor cat」を置き、サービスの根幹（水彩画風の可愛い猫）を先頭で宣言する
   // 「kawaii watercolor cat」にcatが含まれるため persona が null のときの "cat" フォールバックは不要
   const parts = ["kawaii watercolor cat", subject, visualHint, persona, personality, "pastel colors, white background, kawaii style"];
-  const prompt = parts.filter(Boolean).join(", ");
+  return parts.filter(Boolean).join(", ");
+}
+
+function buildPollinationsUrl(theme, description, persona, personality, model = "flux", visualHint = null) {
+  const prompt = buildPollinationsPrompt(theme, description, persona, personality, visualHint);
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
@@ -431,9 +435,11 @@ async function handleGenerate(body, apiKey) {
     );
   }
 
+  const pollinationsPrompt = buildPollinationsPrompt(theme, description, persona, personality, visualHint);
+
   // 2フェーズ方式の実行（ロジックは _twoPhaseRace に切り出し済み）
   const result = await _twoPhaseRace(tryGemini, tryPollinations);
-  return { ...result, persona, personality, prompt };
+  return { ...result, persona, personality, prompt, pollinationsPrompt };
 }
 
 // ---------------------------------------------------------------------------
