@@ -439,7 +439,8 @@ export async function runBot(env, handleResearch, handleGenerate) {
         generated.persona    ? `🐱 毛柄: ${generated.persona}`    : null,
         generated.personality ? `😺 性格: ${generated.personality}` : null,
         `🖼 ソース: ${generated.source}`,
-        generated.prompt     ? `\n📋 プロンプト:\n${generated.prompt}` : null,
+        generated.prompt            ? `\n📋 Geminiプロンプト${generated.source === "gemini" ? "（採用）" : ""}:\n${generated.prompt}` : null,
+        generated.pollinationsPrompt ? `\n📋 Pollinationsプロンプト${generated.source === "pollinations" ? "（採用）" : ""}:\n${generated.pollinationsPrompt}` : null,
         `\n📣 投稿テキスト（Mastodon・X・Instagram等に転載用）:\n${text}`,
       ].filter(Boolean).join("\n");
       await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, "✅");
