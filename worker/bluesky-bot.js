@@ -62,7 +62,9 @@ export function buildThemeTag(theme) {
  * @param {string} [pageUrl] - CTA に使う URL（デフォルト: SITE_URL）
  */
 export function buildPostText(theme, description, pageUrl = SITE_URL) {
-  const header   = `今日は「${theme}」の日！🐱`;
+  const header   = theme.endsWith("の日")
+    ? `今日は「${theme}」！🐱`
+    : `今日は「${theme}」の日！🐱`;
   const body     = description ? `\n${description}` : "";
   const cta      = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${pageUrl}`;
   const themeTag = buildThemeTag(theme);
