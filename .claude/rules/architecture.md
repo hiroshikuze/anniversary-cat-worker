@@ -194,16 +194,22 @@ const KNOWN_CANDIDATES = [
 ### 投稿テキスト形式
 
 ```text
-今日は「{theme}」の日！🐱
+今日は「{theme}」の日！🐱       ← theme が「の日」で終わる場合は「の日」を省略
 {description}
 
-あなたも今日のにゃんバーサリーを作ってみませんか？
+あなたも今日の #にゃんバーサリー を作ってみませんか？
 https://hiroshikuze.github.io/anniversary-cat-worker/
 
-#AIart #cat #kitten #ほのぼの #猫 #{theme正規化}
+#AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー #{theme正規化}
 ```
 
 300 grapheme以内に収まる設計（実測 ~210 grapheme）。
+
+**「の日」重複防止ロジック（`buildPostText`）:**
+
+- `theme.endsWith("の日")` が true の場合 → `今日は「{theme}」！🐱`（重複なし）
+- false の場合 → `今日は「{theme}」の日！🐱`（通常通り付与）
+- 例: `"大仏の日"` → `今日は「大仏の日」！🐱` / `"お花見"` → `今日は「お花見」の日！🐱`
 
 ### テーマタグ正規化（`buildThemeTag`）
 
@@ -222,6 +228,29 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 
 - descriptionが空の場合は従来形式: `にゃんバーサリー - 「{theme}」をテーマにAIが生成した水彩画風の猫イラスト`
 - テーマと記念日説明を含めることで、スクリーンリーダーユーザーへの情報提供と検索流入の両立を図る
+
+### Discord成功通知フォーマット
+
+Bluesky投稿完了後に`notifyDiscord()`で送信される通知（Discord上限2,000文字・通常~1,200文字）。
+
+```text
+✅ にゃんバーサリーBot
+✅ Bluesky投稿完了 {dateStr}
+📅 テーマ: {theme}
+📝 説明: {description}           ← descriptionがある場合のみ
+🎨 視覚ヒント: {visualHint}      ← visualHintがある場合のみ
+🐱 毛柄: {persona}               ← personaがある場合のみ
+😺 性格: {personality}           ← personalityがある場合のみ
+🖼 ソース: {source}
+
+📋 プロンプト:
+{prompt}                         ← promptがある場合のみ
+
+📣 投稿テキスト（Mastodon・X・Instagram等に転載用）:
+{buildPostText()の出力全文}      ← Blueskyと同一テキスト・ハッシュタグ・URL含む
+```
+
+**設計意図**: 📣セクションをそのままコピーして他SNSに貼り付けられる。🔗行は投稿テキスト内にURLが含まれるため省略。
 
 ### Bluesky AT Protocolエンドポイント
 
