@@ -257,6 +257,8 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 | Phase1 | 0〜12秒 | GeminiとPollinationsを同時開始。12秒以内にGeminiが完了すればGeminiを採用 |
 | Phase2 | 12秒〜 | タイムアウトまたはGemini失敗時に移行。先に完了した方を採用 |
 
+**実装:** `_twoPhaseRace(tryGemini, tryPollinations, priorityMs=12_000)`として`worker/index.js`からexport。`priorityMs`を引数化することでユニットテストで短縮実行できる（`test-bot.mjs`で500msを使用）。
+
 **設計根拠（`scripts/test-gemini-image-timing.mjs`で計測）:**
 - Gemini所要時間: 最小6363ms / 最大10203ms / 平均8361ms
 - Pollinationsの`turbo`モデルは約2秒で完了
