@@ -123,6 +123,35 @@
     .lang-active   { color: #be185d; font-weight: 600; }
     .lang-inactive { color: #f9a8d4; }
     .lang-sep      { color: #fbcfe8; }
+
+    /* What's New ベルボタン */
+    .whatsnew-btn {
+      position: relative;
+      background: white;
+      border: 1px solid #fbcfe8;
+      border-radius: 9999px;
+      padding: 4px 10px;
+      font-size: 16px;
+      cursor: pointer;
+      box-shadow: 0 1px 4px rgba(244,114,182,0.1);
+      transition: box-shadow 0.2s;
+      line-height: 1;
+    }
+    .whatsnew-btn:hover { box-shadow: 0 2px 8px rgba(244,114,182,0.2); }
+    .whatsnew-badge {
+      position: absolute;
+      top: -3px;
+      right: -3px;
+      width: 10px;
+      height: 10px;
+      background: #be185d;
+      border-radius: 50%;
+      border: 2px solid white;
+    }
+    #whatsnew-overlay {
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
+    }
   </style>
 </head>
 
@@ -131,7 +160,10 @@
   <div class="max-w-md mx-auto px-4 py-10">
 
     <!-- 言語切り替え -->
-    <div class="flex justify-end mb-3">
+    <div class="flex justify-between items-center mb-3">
+      <button class="whatsnew-btn" onclick="showWhatsNew()" aria-label="アップデート情報 / What's New">
+        🔔<span id="whatsnew-badge" class="whatsnew-badge hidden"></span>
+      </button>
       <button class="lang-toggle" onclick="toggleLang()" aria-label="言語切り替え / Language toggle">
         <span id="lang-btn-ja" class="lang-active">JP</span>
         <span class="lang-sep">|</span>
@@ -231,6 +263,24 @@
 
   </div><!-- /container -->
 
+  <!-- What's New モーダル -->
+  <div id="whatsnew-overlay"
+    class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 hidden"
+    onclick="if(event.target===this)closeWhatsNew()">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6"
+      style="animation: fadeSlideIn 0.2s ease">
+      <div class="flex items-center justify-between mb-4">
+        <h2 id="whatsnew-title" class="text-base font-medium text-pink-700">🆕 アップデート情報</h2>
+        <button onclick="closeWhatsNew()"
+          class="text-pink-300 hover:text-pink-500 transition-colors text-xl leading-none"
+          aria-label="閉じる">✕</button>
+      </div>
+      <ul id="whatsnew-list" class="space-y-3 text-sm text-gray-600"></ul>
+      <button onclick="closeWhatsNew()" id="whatsnew-close-btn"
+        class="mt-5 w-full btn-primary py-2 rounded-xl text-sm">閉じる</button>
+    </div>
+  </div>
+
   <!-- トースト通知（在庫切れ等） -->
   <div id="g-toast" class="toast hidden"></div>
 
@@ -239,6 +289,20 @@
     // 設定: デプロイした Cloudflare Worker の URL
     // ==========================================================
     const WORKER_URL = "https://anniversary-cat-worker.hiroshikuze.workers.dev";
+
+    // ----------------------------------------------------------
+    // What's New
+    // ----------------------------------------------------------
+    const APP_VERSION = "2026-04-10";
+    const CHANGELOG = [
+      {
+        version: "2026-04-10",
+        items: [
+          { icon: "🖨️", ja: "Tシャツ・ステッカーのグッズ画像の印刷品質を改善しました", en: "Improved print quality for T-shirt & sticker goods images" },
+          { icon: "🐱", ja: "「大仏の日」など末尾が「の日」のテーマで投稿文の重複を修正しました", en: 'Fixed duplicate "の日" in post text for themes ending with "の日"' },
+        ],
+      },
+    ];
 
     // ----------------------------------------------------------
     // i18n
@@ -279,6 +343,8 @@
         createNewBtn:       "🎨 今日の記念日で作る",
         newGenerateBtn:     "✨ 新しく生成",
         dateLocale:         "ja-JP",
+        whatsNewTitle:      "🆕 アップデート情報",
+        whatsNewClose:      "閉じる",
       },
       en: {
         pageTitle:          "Nyaniversary",
@@ -315,6 +381,8 @@
         createNewBtn:       "🎨 Create Today's Anniversary",
         newGenerateBtn:     "✨ Generate New",
         dateLocale:         "en-US",
+        whatsNewTitle:      "🆕 What's New",
+        whatsNewClose:      "Close",
       },
     };
 
@@ -354,6 +422,39 @@
       // 共有ビュー中のresultボタンも再描画
       if (isSharedView && !document.getElementById("g-result").classList.contains("hidden")) {
         updateResultButtons();
+      }
+    }
+
+    // ----------------------------------------------------------
+    // What's New モーダル
+    // ----------------------------------------------------------
+    function showWhatsNew() {
+      document.getElementById("whatsnew-title").textContent = t("whatsNewTitle");
+      document.getElementById("whatsnew-close-btn").textContent = t("whatsNewClose");
+      const list = document.getElementById("whatsnew-list");
+      list.innerHTML = "";
+      CHANGELOG.forEach((entry) => {
+        entry.items.forEach((item) => {
+          const li = document.createElement("li");
+          li.className = "flex gap-2";
+          li.innerHTML = `<span>${item.icon}</span><span>${currentLang === "en" ? item.en : item.ja}</span>`;
+          list.appendChild(li);
+        });
+      });
+      document.getElementById("whatsnew-badge").classList.add("hidden");
+      localStorage.setItem("whatsNewSeen", APP_VERSION);
+      document.getElementById("whatsnew-overlay").classList.remove("hidden");
+    }
+
+    function closeWhatsNew() {
+      document.getElementById("whatsnew-overlay").classList.add("hidden");
+    }
+
+    function initWhatsNew() {
+      const seen = localStorage.getItem("whatsNewSeen");
+      if (seen !== APP_VERSION) {
+        document.getElementById("whatsnew-badge").classList.remove("hidden");
+        showWhatsNew();
       }
     }
 
@@ -403,6 +504,7 @@
         document.querySelector('[data-i18n="saveBtn"]').setAttribute("data-i18n", "shareBtn");
       }
       applyLang();
+      initWhatsNew();
       // ?id= パラメータがあれば共有された画像を読み込む（Blueskyリンク等）
       const sharedId = new URLSearchParams(window.location.search).get("id");
       if (sharedId) {
