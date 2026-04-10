@@ -78,6 +78,10 @@ anniversary-cat-worker/
 - `r2Id`は任意。指定時はSUZURI登録完了後にR2の`meta.json`を`materialId`/`products`で更新する。最初の呼び出しにのみ指定する。
 - `hiresImageData`は任意。t-shirt/stickerグループのみ送る。フロントがCanvas `imageSmoothingQuality:"high"`（Chrome: Lanczos / Firefox・Safari: bicubic）で2048pxにリサイズした画像。fal.ai失敗時のフォールバックとして使用し、元画像（~1024px）より印刷品質が向上する。`imageData`はfal.ai投入用として元サイズのまま維持する（2048px入力→ESRGAN→4096px≈24MBとなりSUZURI 20MB超過を招くため）。
 
+**重複防止チェック（2026-04追加）:**
+
+`r2Id`と`slugs`が両方指定された場合、R2メタの`products`に対象スラッグが全件存在すれば既存データを返して登録をスキップする。これによりボット画像への複数ユーザー同時訪問による二重登録を防ぐ。
+
 **レスポンス:**
 
 ```json
@@ -724,6 +728,14 @@ ctx.waitUntil()が途中終了した稀なケース向け。フロントの60秒
 - **問題**: Geminiが「猫がお釈迦様の像を抱えている」等の不自然な構図に引き寄せられ、visualHintが意図する雰囲気・背景としての使い方ができなかった
 - **修正**: 該当文を削除。visualHintによる場面指示に一本化し、Geminiの構図判断を尊重する
 - **場所**: `worker/index.js` `handleGenerate()` `prompt`定数
+
+### 16. ボット経由のTシャツが1024px低解像度のままSUZURI登録されていた（2026-04）
+
+- **原因**: `runBot()`が直接`createSuzuriProducts()`を呼んでいたため、ブラウザ側の`resizeForSuzuri()`（2048px bicubic）もfal.ai ESRGAN 2xも適用されていなかった
+- **修正**: ボットでのSUZURI登録を廃止。初回訪問者のブラウザで`createSuzuriFromImage()`（手動生成と同じフロー）を実行する設計に変更
+- **重複防止**: `/suzuri-create`冒頭にR2メタチェックを追加。対象スラッグが全件登録済みなら既存データを返してスキップ（複数ユーザー同時訪問でも二重登録しない）
+- **誰も訪問しない場合**: productsが未作成のままR2が7日で期限切れになる（許容設計）
+- **場所**: `worker/bluesky-bot.js` `runBot()` / `worker/index.js` `/suzuri-create`ハンドラ / `frontend/index.html` `createSuzuriFromImage()` `loadSharedImage()`
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
 
