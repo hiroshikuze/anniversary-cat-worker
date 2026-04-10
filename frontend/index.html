@@ -744,6 +744,39 @@
       });
     }
 
+    /**
+     * fal.ai 失敗時のフォールバック用に画像を 2048px にリサイズする。
+     * Canvas の imageSmoothingQuality:"high" を使用（Chrome: Lanczos、Firefox/Safari: bicubic）。
+     * 元画像がすでに maxSide 以上の場合はリサイズせずそのまま返す。
+     * ※ fal.ai 投入用の imageData(1024px) とは別フィールド（hiresImageData）として送る。
+     *   2048px を fal.ai に入力すると ESRGAN 2x で 4096px ≈ 24MB → SUZURI 20MB 超過のため。
+     */
+    function resizeForSuzuri(imageData, mimeType, maxSide = 2048) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(maxSide / img.width, maxSide / img.height);
+          if (scale <= 1) {
+            // 既に目標サイズ以上 → リサイズ不要
+            resolve({ imageData, mimeType });
+            return;
+          }
+          const w = Math.round(img.width  * scale);
+          const h = Math.round(img.height * scale);
+          const canvas = document.createElement("canvas");
+          canvas.width  = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high"; // Chrome: Lanczos / Firefox・Safari: bicubic
+          ctx.drawImage(img, 0, 0, w, h);
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+          resolve({ imageData: dataUrl.split(",")[1], mimeType: "image/jpeg" });
+        };
+        img.src = `data:${mimeType};base64,${imageData}`;
+      });
+    }
+
     // ----------------------------------------------------------
     // リサーチ → 画像生成
     // ----------------------------------------------------------
@@ -831,22 +864,28 @@
         Promise.all([
           applyWatermark(data.imageData, data.mimeType, "bottom-right"),
           applyWatermark(data.imageData, data.mimeType, "bottom-center"),
-        ]).then(([rightWm, centerWm]) => Promise.allSettled([
-          apiFetch("/suzuri-create", {
-            imageData: rightWm.imageData,
-            mimeType:  rightWm.mimeType,
-            theme:     researchData.theme,
-            r2Id:      data.id ?? null,
-            slugs:     RIGHT_SLUGS,
-          }),
-          apiFetch("/suzuri-create", {
-            imageData: centerWm.imageData,
-            mimeType:  centerWm.mimeType,
-            theme:     researchData.theme,
-            r2Id:      data.id ?? null,
-            slugs:     CENTER_SLUGS,
-          }),
-        ])).then(([rightRes, centerRes]) => {
+        ]).then(([rightWm, centerWm]) =>
+          // t-shirt/sticker グループのみ fal.ai 失敗時フォールバック用に 2048px へ事前リサイズ
+          // （fal.ai 投入は 1024px のまま維持。2048px 投入 → ESRGAN 4096px → SUZURI 20MB超過のため）
+          resizeForSuzuri(rightWm.imageData, rightWm.mimeType)
+            .then(rightHires => Promise.allSettled([
+              apiFetch("/suzuri-create", {
+                imageData:      rightWm.imageData,
+                hiresImageData: rightHires.imageData,
+                mimeType:       rightWm.mimeType,
+                theme:          researchData.theme,
+                r2Id:           data.id ?? null,
+                slugs:          RIGHT_SLUGS,
+              }),
+              apiFetch("/suzuri-create", {
+                imageData: centerWm.imageData,
+                mimeType:  centerWm.mimeType,
+                theme:     researchData.theme,
+                r2Id:      data.id ?? null,
+                slugs:     CENTER_SLUGS,
+              }),
+            ]))
+        ).then(([rightRes, centerRes]) => {
           // center グループ: 即時表示
           const centerProducts = centerRes.status === "fulfilled"
             ? centerRes.value?.products ?? [] : [];
