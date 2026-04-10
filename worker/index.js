@@ -741,7 +741,7 @@ export default {
         if (!env.SUZURI_API_KEY) {
           return Response.json({ error: "SUZURI_API_KEY が設定されていません" }, { status: 503, headers: corsH });
         }
-        const { imageData, mimeType, theme, r2Id, slugs } = body;
+        const { imageData, mimeType, theme, r2Id, slugs, hiresImageData } = body;
         if (!imageData || !mimeType || !theme) {
           return Response.json({ error: "imageData, mimeType, theme が必要です" }, { status: 400, headers: corsH });
         }
@@ -811,13 +811,15 @@ export default {
             }
 
             if (!suzuriTexture) {
-              // ポーリング3回未完了またはFAILED → base64で継続するが運営に通知
+              // ポーリング3回未完了またはFAILED → フォールバック画像で継続するが運営に通知
               if (falRequestId) {
                 await notifyDiscord(env.DISCORD_WEBHOOK_URL,
                   `fal.ai アップスケール未完了（base64フォールバック）\nrequestId=${falRequestId}\n3回×5秒ポーリングで完了せず。Cloudflareログを確認してください`);
               }
-              suzuriTexture = `data:${mimeType};base64,${imageData}`;
-              console.log(`[suzuri-create] base64フォールバック`);
+              // hiresImageData があればブラウザ側 2048px bicubic リサイズ版を優先（元画像より印刷品質が高い）
+              const fallbackData = hiresImageData ?? imageData;
+              suzuriTexture = `data:${mimeType};base64,${fallbackData}`;
+              console.log(`[suzuri-create] base64フォールバック source=${hiresImageData ? "hires(2048px bicubic)" : "original"}`);
             }
             console.log(`[suzuri-create] texture type=${suzuriTexture.startsWith("data:") ? "base64" : "url"}`);
             try {
