@@ -39,6 +39,7 @@ anniversary-cat-worker/
 | GET | `/image/:id` | R2保存画像+メタデータの取得（`bot/YYYY-MM-DD`または`user/{uuid}`） |
 | GET | `/meta/:id` | R2メタデータのみ取得（画像なし・ポーリング用軽量エンドポイント） |
 | GET | `/hires/:id` | fal.ai高解像度画像をR2から返す（SUZURI向け安定URL） |
+| GET | `/thumb/:id` | R2画像バイナリを直接返却（ギャラリーサムネイル用・base64不要） |
 | POST | `/suzuri-create` | ウォーターマーク済み画像を受け取りSUZURI登録・R2メタ更新 |
 
 ### /proxy-imageのセキュリティ制約
@@ -465,8 +466,8 @@ Bluesky投稿（Bot）
 #### ストレージ設計
 
 - **Cloudflare R2**を使用（KVはバイナリ保存に不向き）
-- 保持期間: **7日間**
-- クリーンアップ: Cron Trigger起動時に7日以上前の画像を削除
+- 保持期間: **14日間**
+- クリーンアップ: Cron Trigger起動時に14日以上前の画像を削除
 - 期限切れアクセス時: 「この記念日画像は期限が切れました」＋再作成ボタンを表示
 
 #### SUZURI API連携
@@ -734,12 +735,56 @@ ctx.waitUntil()が途中終了した稀なケース向け。フロントの60秒
 - **原因**: `runBot()`が直接`createSuzuriProducts()`を呼んでいたため、ブラウザ側の`resizeForSuzuri()`（2048px bicubic）もfal.ai ESRGAN 2xも適用されていなかった
 - **修正**: ボットでのSUZURI登録を廃止。初回訪問者のブラウザで`createSuzuriFromImage()`（手動生成と同じフロー）を実行する設計に変更
 - **重複防止**: `/suzuri-create`冒頭にR2メタチェックを追加。対象スラッグが全件登録済みなら既存データを返してスキップ（複数ユーザー同時訪問でも二重登録しない）
-- **誰も訪問しない場合**: productsが未作成のままR2が7日で期限切れになる（許容設計）
+- **誰も訪問しない場合**: productsが未作成のままR2が14日で期限切れになる（許容設計）
 - **場所**: `worker/bluesky-bot.js` `runBot()` / `worker/index.js` `/suzuri-create`ハンドラ / `frontend/index.html` `createSuzuriFromImage()` `loadSharedImage()`
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
 
 現在、積み残し項目なし。
+
+---
+
+---
+
+## ボット作品ギャラリー（実装済み・2026-04）
+
+### 概要
+
+直近14日間のボット生成画像をトップページに横スクロールギャラリーで表示する。
+SUZURIグッズが登録済みの日のみカードを表示し、購買導線として機能する。
+
+### フロー
+
+```text
+ページ読み込み
+  → /meta/bot/YYYY-MM-DD × 14日分を並列fetch（JST基準で過去にさかのぼる）
+  → products.length > 0 の日 → カード表示（サムネイル + 日付 + テーマ名）
+  → products.length = 0 の日 → カード表示 + バックグラウンドでSUZURI登録を開始
+      ↓
+      /image/bot/YYYY-MM-DD をfetch（base64 imageData取得）
+      createSuzuriFromImage() → Canvas WMあり → /suzuri-create
+      （fal.ai ESRGAN 2x or ブラウザ 2048px bicubic フォールバック）
+  → カードクリック → ?id=bot/YYYY-MM-DD へ遷移（共有ビュー）
+```
+
+### /thumb/:id エンドポイント
+
+ギャラリーサムネイル専用。`/image/:id` がJSON+base64を返すのと異なり、R2画像バイナリを直接レスポンスする。
+
+- ブラウザの `<img loading="lazy">` と組み合わせて帯域を節約
+- `Cache-Control: public, max-age=86400` を付与してブラウザキャッシュを活用
+- 404時（期限切れ・存在しない日）はそのまま404を返す
+
+### 重複SUZURI登録の防止
+
+ギャラリー閲覧者が複数いる場合でも、`/suzuri-create` 冒頭の重複防止チェック（R2メタ参照）が二重登録を防ぐ。
+
+### R2保存期間との関係
+
+| 保存期間 | 平日最大カード数 | 理由 |
+| --- | --- | --- |
+| 7日（旧） | 5枚 | 週5日 |
+| **14日（現行）** | **10枚** | 週5日 × 2週 |
 
 ---
 
