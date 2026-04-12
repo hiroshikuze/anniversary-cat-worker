@@ -596,6 +596,21 @@ export default {
       return Response.json(meta, { headers: corsH });
     }
 
+    // GET: R2画像バイナリを直接返す（ギャラリーサムネイル用・base64不要）
+    if (request.method === "GET" && url.pathname.startsWith("/thumb/")) {
+      const id = url.pathname.slice("/thumb/".length);
+      if (!id || !env.IMAGE_BUCKET) return new Response("Not Found", { status: 404, headers: corsH });
+      const obj = await env.IMAGE_BUCKET.get(`${id}/image.png`);
+      if (!obj) return new Response("Not Found", { status: 404, headers: corsH });
+      return new Response(obj.body, {
+        headers: {
+          "Content-Type": obj.httpMetadata?.contentType ?? "image/jpeg",
+          "Cache-Control": "public, max-age=86400",
+          ...corsH,
+        },
+      });
+    }
+
     // GET: fal.ai高解像度画像をR2から返す（SUZURI向け安定URL）
     if (request.method === "GET" && url.pathname.startsWith("/hires/")) {
       const id = url.pathname.slice("/hires/".length);

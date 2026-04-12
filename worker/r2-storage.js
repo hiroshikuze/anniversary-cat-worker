@@ -63,12 +63,12 @@ export async function getImageFromR2(bucket, id) {
 }
 
 /**
- * 7日以上前のidプレフィックスを列挙する。
+ * 14日以上前のidプレフィックスを列挙する。
  * @param {R2Bucket} bucket
  * @param {number} maxAgeDays
  * @returns {string[]}
  */
-export async function listExpiredIds(bucket, maxAgeDays = 7) {
+export async function listExpiredIds(bucket, maxAgeDays = 14) {
   const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
   const expired = [];
   const seen = new Set();
