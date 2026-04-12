@@ -357,38 +357,18 @@ export async function runBot(env, handleResearch, handleGenerate) {
     );
     console.log(`${prefix} generate 完了 source=${generated.source}`);
 
-    // ── 3. SUZURI 商品生成（best-effort） ─────────────────────────────────
-    let pageUrl        = SITE_URL;
-    let materialId     = null;
-    let suzuriProducts = [];
+    // ── 3. R2 保存（best-effort） ─────────────────────────────────────────
+    // SUZURI商品登録はボットでは行わない。
+    // 最初にBlueskyリンクを踏んだユーザーのブラウザで高品質（2048px）登録を行う設計。
+    let pageUrl = SITE_URL;
 
-    if (env.SUZURI_API_KEY) {
-      try {
-        const imgMime = generated.mimeType || "image/png";
-
-        // TODO(fal.ai): 非同期アーキテクチャ実装後に有効化する
-        // ctx.waitUntil() + ポーリング方式で t-shirt+sticker グループのみ高解像度化する計画あり
-        // 詳細: .claude/rules/architecture.md「fal.ai AuraSRアップスケーリング」参照
-        const suzuriTexture = `data:${imgMime};base64,${generated.imageData}`;
-
-        const suzuriResult = await createSuzuriProducts(suzuriTexture, research.theme, env);
-        materialId     = suzuriResult.materialId;
-        suzuriProducts = suzuriResult.products;
-        console.log(`${prefix} SUZURI商品生成完了 materialId=${materialId}`);
-      } catch (err) {
-        console.warn(`${prefix} SUZURI商品生成失敗（投稿は継続）: ${err.message}`);
-      }
-    }
-
-    // ── 4. R2 保存（best-effort） ─────────────────────────────────────────
     if (env.IMAGE_BUCKET) {
       try {
         const meta = {
           theme:       research.theme,
           description: research.description ?? "",
           sourceUrl:   research.sourceUrl   ?? "",
-          materialId,
-          products:    suzuriProducts,
+          products:    [],
           createdAt:   new Date().toISOString(),
         };
         await saveToR2(

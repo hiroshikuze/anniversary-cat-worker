@@ -57,7 +57,13 @@
 ```text
 Cron（月〜金 19:00 JST）→ scheduled()
   → runBot() → handleResearch() → handleGenerate()
-  → createSuzuriProducts() → saveToR2() → Bluesky投稿 → Discord通知
+  → saveToR2()（products:[]で保存） → Bluesky投稿 → Discord通知
+
+Bluesky共有URL初回訪問 → loadSharedImage() → products:[]を検知
+  → createSuzuriFromImage()（手動生成と同じフロー）
+      ├─ can-badge + acrylic-keychain: 即時SUZURI登録（2048px bicubic）
+      └─ t-shirt + sticker: fal.ai ESRGAN 2x → SUZURI登録（バックグラウンド）
+  2回目以降の訪問者: R2 products に既存データあり → 即表示（登録スキップ）
 ```
 
 ---
@@ -131,6 +137,7 @@ FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 | fal.ai Queue APIのrequest_idは`ctx.waitUntil()`より前にR2へ保存 | ctx.waitUntil()がwall-clock超過で強制終了しても、IDだけは確実に残す保証が必要 |
 | 外部APIレスポンスをMapにする際は整数IDをキーにする | 文字列名はAPIバージョン・ロケールで表記が変わる（過去バグ: SUZURI item.name 表記ゆれ） |
 | Pollinationsプロンプトの先頭は`kawaii watercolor cat`固定 | Fluxモデルは前半トークン重視。先頭に猫・スタイルを宣言することで一貫した品質を保つ |
+| ボットはSUZURI登録しない。初回訪問者ブラウザに委譲する | ボット実行時間短縮 + ブラウザ側2048pxリサイズで印刷品質向上。重複防止はWorker側の`/suzuri-create`冒頭チェックで担保 |
 
 ---
 
@@ -148,13 +155,16 @@ FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 | Bluesky Bot投稿（毎平日19:00 JST） | `worker/bluesky-bot.js` `runBot()` | 稼働中 |
 | Bot投稿完了のDiscord通知（テーマ・プロンプト全文・画像ソース含む） | `worker/bluesky-bot.js` `notifyDiscord()` | 稼働中 |
 | SUZURIグッズ登録（4商品: Tシャツ・ステッカー・缶バッジ・アクキー） | `worker/suzuri.js` | 稼働中 |
+| ボット画像SUZURI登録を初回訪問者ブラウザに委譲（2048px高品質・重複防止） | `frontend/index.html` `createSuzuriFromImage()` `worker/index.js` | 稼働中 |
 | ウォーターマーク合成（Canvas、フロントエンド側） | `frontend/index.html` `applyWatermark()` | 稼働中 |
 | fal.ai ESRGAN 2xアップスケーリング（Queue API + `ctx.waitUntil()`方式） | `worker/fal.js` `worker/index.js` | 稼働中 |
 | `/meta/:id`ポーリングエンドポイント（フロント60秒ポーリング） | `worker/index.js` | 稼働中 |
 | `/hires/:id`エンドポイント（R2高解像度画像をSUZURIに渡す） | `worker/index.js` | 稼働中 |
+| `/thumb/:id`エンドポイント（R2画像バイナリ直接配信・ギャラリー用） | `worker/index.js` | 稼働中 |
+| ボット作品ギャラリー（14日間・SUZURIリンク有効分・初回閲覧者がバックグラウンドでSUZURI登録） | `frontend/index.html` | 稼働中 |
 | `/resume-hires/:id`安全網エンドポイント（60秒超過時のフォールバック） | `worker/index.js` | 稼働中 |
 | fal.ai運用イベントのDiscord通知（403・FAILED・タイムアウト・20MB超） | `worker/fal.js` `worker/index.js` | 稼働中 |
-| R2ストレージ（7日保持・Cron起動時クリーンアップ） | `worker/r2-storage.js` | 稼働中 |
+| R2ストレージ（14日保持・Cron起動時クリーンアップ） | `worker/r2-storage.js` | 稼働中 |
 | レート制限（`/generate`: IP 3回/日・グローバル 50回/日） | `worker/index.js` `checkRateLimit()` | 稼働中 |
 
 ### 主要な定数値（変更時は実測データで根拠を示すこと）
@@ -179,6 +189,7 @@ FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 | GET | `/image/:id` | R2保存画像 + メタデータ取得 |
 | GET | `/meta/:id` | R2メタデータのみ（ポーリング用軽量） |
 | GET | `/hires/:id` | R2高解像度画像（SUZURI向け安定URL） |
+| GET | `/thumb/:id` | R2画像をバイナリ直接返却（ギャラリーサムネイル用） |
 | GET | `/resume-hires/:id` | fal.ai完了確認 + SUZURI登録（安全網） |
 | GET | `/proxy-image?url=...` | Pollinations.aiのCORSプロキシ |
 

@@ -596,6 +596,21 @@ export default {
       return Response.json(meta, { headers: corsH });
     }
 
+    // GET: R2画像バイナリを直接返す（ギャラリーサムネイル用・base64不要）
+    if (request.method === "GET" && url.pathname.startsWith("/thumb/")) {
+      const id = url.pathname.slice("/thumb/".length);
+      if (!id || !env.IMAGE_BUCKET) return new Response("Not Found", { status: 404, headers: corsH });
+      const obj = await env.IMAGE_BUCKET.get(`${id}/image.png`);
+      if (!obj) return new Response("Not Found", { status: 404, headers: corsH });
+      return new Response(obj.body, {
+        headers: {
+          "Content-Type": obj.httpMetadata?.contentType ?? "image/jpeg",
+          "Cache-Control": "public, max-age=86400",
+          ...corsH,
+        },
+      });
+    }
+
     // GET: fal.ai高解像度画像をR2から返す（SUZURI向け安定URL）
     if (request.method === "GET" && url.pathname.startsWith("/hires/")) {
       const id = url.pathname.slice("/hires/".length);
@@ -744,6 +759,22 @@ export default {
         const { imageData, mimeType, theme, r2Id, slugs, hiresImageData } = body;
         if (!imageData || !mimeType || !theme) {
           return Response.json({ error: "imageData, mimeType, theme が必要です" }, { status: 400, headers: corsH });
+        }
+
+        // 重複防止: 対象スラッグが既に全件登録済みなら既存データを返して終了
+        // （ボット画像の初回訪問者トリガー登録で、複数ユーザーが同時訪問した場合の二重登録防止）
+        if (r2Id && env.IMAGE_BUCKET && (slugs ?? []).length > 0) {
+          try {
+            const existingMeta = await getMetaFromR2(env.IMAGE_BUCKET, r2Id);
+            const existingSlugs = new Set((existingMeta?.products ?? []).map(p => p.slug));
+            if ((slugs ?? []).every(s => existingSlugs.has(s))) {
+              console.log(`[suzuri-create] 重複スキップ slugs=${slugs.join(",")} r2Id=${r2Id}`);
+              return Response.json(
+                { products: (existingMeta.products ?? []).filter(p => slugs.includes(p.slug)) },
+                { headers: corsH }
+              );
+            }
+          } catch (_) { /* R2読み取り失敗は無視して続行 */ }
         }
 
         // t-shirt / sticker は fal.ai アップスケールを試みるため ctx.waitUntil() でバックグラウンド処理

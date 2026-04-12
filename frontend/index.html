@@ -256,6 +256,15 @@
       </div>
     </div>
 
+    <!-- ギャラリー -->
+    <div id="g-gallery" class="hidden mt-8">
+      <h2 class="text-sm font-medium text-pink-500 mb-3" data-i18n="galleryTitle">最近の作品</h2>
+      <div id="g-gallery-list"
+        class="flex gap-3 overflow-x-auto pb-2"
+        style="-webkit-overflow-scrolling:touch; scroll-snap-type:x mandatory;">
+      </div>
+    </div>
+
     <!-- フッター -->
     <p class="text-center text-xs text-pink-300" data-i18n="footer">
       Powered by Gemini &amp; Pollinations.ai ／ 画像はAIが生成します
@@ -345,6 +354,7 @@
         dateLocale:         "ja-JP",
         whatsNewTitle:      "🆕 アップデート情報",
         whatsNewClose:      "閉じる",
+        galleryTitle:       "最近の作品",
       },
       en: {
         pageTitle:          "Nyaniversary",
@@ -383,6 +393,7 @@
         dateLocale:         "en-US",
         whatsNewTitle:      "🆕 What's New",
         whatsNewClose:      "Close",
+        galleryTitle:       "Recent Works",
       },
     };
 
@@ -505,6 +516,7 @@
       }
       applyLang();
       initWhatsNew();
+      loadGallery();
       // ?id= パラメータがあれば共有された画像を読み込む（Blueskyリンク等）
       const sharedId = new URLSearchParams(window.location.search).get("id");
       if (sharedId) {
@@ -736,6 +748,138 @@
     // ----------------------------------------------------------
     // 共有URLから画像を読み込む（?id=bot/YYYY-MM-DD 等）
     // ----------------------------------------------------------
+    // ----------------------------------------------------------
+    // ボット作品ギャラリー（直近14日分・SUZURI登録済みのみ表示）
+    // products未登録の日はバックグラウンドでSUZURI登録を開始する
+    // ----------------------------------------------------------
+    const GALLERY_DAYS = 14;
+
+    function toJSTDateString(date) {
+      const jst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+      return jst.toISOString().slice(0, 10); // YYYY-MM-DD
+    }
+
+    async function loadGallery() {
+      const list = document.getElementById("g-gallery-list");
+      if (!list) return;
+
+      const today = new Date();
+      const candidates = [];
+      for (let i = 0; i < GALLERY_DAYS; i++) {
+        const d = new Date(today);
+        d.setDate(today.getDate() - i);
+        candidates.push(`bot/${toJSTDateString(d)}`);
+      }
+
+      // /meta/:id を並列fetch（軽量）
+      const results = await Promise.all(
+        candidates.map(id =>
+          fetch(`${WORKER_URL}/meta/${id}`)
+            .then(r => r.ok ? r.json().then(meta => ({ id, meta })) : null)
+            .catch(() => null)
+        )
+      );
+
+      const valid = results.filter(Boolean);
+      if (valid.length === 0) return;
+
+      document.getElementById("g-gallery").classList.remove("hidden");
+
+      for (const { id, meta } of valid) {
+        const card = buildGalleryCard(id, meta);
+        list.appendChild(card);
+
+        // productsが未登録の場合、バックグラウンドでSUZURI登録を開始
+        if (!(meta.products?.length > 0)) {
+          registerGalleryItemInBackground(id, meta);
+        }
+      }
+    }
+
+    function buildGalleryCard(id, meta) {
+      const dateStr = id.replace("bot/", "");
+      const [y, m, d] = dateStr.split("-");
+      const label = currentLang === "ja"
+        ? `${parseInt(m)}月${parseInt(d)}日`
+        : `${parseInt(m)}/${parseInt(d)}`;
+
+      const card = document.createElement("div");
+      card.className = "flex-none cursor-pointer rounded-xl overflow-hidden border border-pink-100 bg-white shadow-sm hover:shadow-md transition-shadow";
+      card.style.cssText = "width:130px; scroll-snap-align:start;";
+      card.onclick = () => { window.location.href = `?id=${id}`; };
+
+      card.innerHTML = `
+        <div class="bg-pink-50 flex items-center justify-center" style="height:120px;">
+          <img src="${WORKER_URL}/thumb/${id}"
+            loading="lazy" alt="${meta.theme ?? ""}"
+            class="w-full h-full object-cover"
+            onerror="this.parentElement.innerHTML='<span class=\\'text-2xl\\'>🐱</span>'">
+        </div>
+        <div class="p-2">
+          <p class="text-xs text-pink-400">${label}</p>
+          <p class="text-xs font-medium text-pink-700 leading-tight mt-0.5 line-clamp-2">${meta.theme ?? ""}</p>
+        </div>`;
+
+      return card;
+    }
+
+    async function registerGalleryItemInBackground(id, meta) {
+      if (!meta.theme) return;
+      try {
+        const res = await fetch(`${WORKER_URL}/image/${id}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.imageData) return;
+        createSuzuriFromImage(data.imageData, data.mimeType ?? "image/png", meta.theme, id);
+      } catch (_) { /* best-effort */ }
+    }
+
+    // ----------------------------------------------------------
+    // SUZURI 商品登録（手動生成・ボット共有URLの初回訪問者の両方で使用）
+    // best-effort: 失敗しても画像表示は維持する
+    // ----------------------------------------------------------
+    function createSuzuriFromImage(imageData, mimeType, theme, r2Id) {
+      Promise.all([
+        applyWatermark(imageData, mimeType, "bottom-right"),
+        applyWatermark(imageData, mimeType, "bottom-center"),
+      ]).then(([rightWm, centerWm]) =>
+        // t-shirt/sticker グループのみ fal.ai 失敗時フォールバック用に 2048px へ事前リサイズ
+        // （fal.ai 投入は 1024px のまま維持。2048px 投入 → ESRGAN 4096px → SUZURI 20MB超過のため）
+        resizeForSuzuri(rightWm.imageData, rightWm.mimeType)
+          .then(rightHires => Promise.allSettled([
+            apiFetch("/suzuri-create", {
+              imageData:      rightWm.imageData,
+              hiresImageData: rightHires.imageData,
+              mimeType:       rightWm.mimeType,
+              theme,
+              r2Id,
+              slugs: RIGHT_SLUGS,
+            }),
+            apiFetch("/suzuri-create", {
+              imageData: centerWm.imageData,
+              mimeType:  centerWm.mimeType,
+              theme,
+              r2Id,
+              slugs: CENTER_SLUGS,
+            }),
+          ]))
+      ).then(([rightRes, centerRes]) => {
+        const centerProducts = centerRes.status === "fulfilled"
+          ? centerRes.value?.products ?? [] : [];
+        const rightQueued = rightRes.status === "fulfilled" && rightRes.value?.queued === true;
+        const rightProducts = rightRes.status === "fulfilled" && !rightQueued
+          ? rightRes.value?.products ?? []
+          : RIGHT_SLUGS.map(slug => ({ slug, sampleUrl: null, available: false, queued: rightQueued }));
+        const allProducts = [...rightProducts, ...centerProducts];
+        if (allProducts.length > 0) showGoods(allProducts);
+        if (rightQueued && r2Id) {
+          startPollingSuzuri(r2Id, RIGHT_SLUGS);
+        }
+      }).catch(e => {
+        console.warn("[suzuri-create] 失敗:", e.message);
+      });
+    }
+
     async function loadSharedImage(id) {
       isSharedView    = true;
       currentSharedId = id;
@@ -774,6 +918,10 @@
         document.getElementById("g-goods").classList.add("hidden");
         if (data.products?.length > 0) {
           showGoods(data.products);
+        } else if (data.imageData) {
+          // productsが未登録（ボット画像の初回訪問者）→ このブラウザでSUZURI登録を担当する
+          // Worker側で重複チェックするため、並行訪問者による二重登録は防止される
+          createSuzuriFromImage(data.imageData, data.mimeType, data.theme, id);
         }
 
         showGenerate("result");
@@ -960,51 +1108,8 @@
 
         showGenerate("result");
 
-        // ウォーターマーク合成 → SUZURI登録（best-effort: 失敗しても表示は維持）
-        // right グループ（t-shirt/sticker）は Worker 側で ctx.waitUntil() バックグラウンド処理
-        // center グループ（can-badge/acrylic-keychain）は即時処理
-        Promise.all([
-          applyWatermark(data.imageData, data.mimeType, "bottom-right"),
-          applyWatermark(data.imageData, data.mimeType, "bottom-center"),
-        ]).then(([rightWm, centerWm]) =>
-          // t-shirt/sticker グループのみ fal.ai 失敗時フォールバック用に 2048px へ事前リサイズ
-          // （fal.ai 投入は 1024px のまま維持。2048px 投入 → ESRGAN 4096px → SUZURI 20MB超過のため）
-          resizeForSuzuri(rightWm.imageData, rightWm.mimeType)
-            .then(rightHires => Promise.allSettled([
-              apiFetch("/suzuri-create", {
-                imageData:      rightWm.imageData,
-                hiresImageData: rightHires.imageData,
-                mimeType:       rightWm.mimeType,
-                theme:          researchData.theme,
-                r2Id:           data.id ?? null,
-                slugs:          RIGHT_SLUGS,
-              }),
-              apiFetch("/suzuri-create", {
-                imageData: centerWm.imageData,
-                mimeType:  centerWm.mimeType,
-                theme:     researchData.theme,
-                r2Id:      data.id ?? null,
-                slugs:     CENTER_SLUGS,
-              }),
-            ]))
-        ).then(([rightRes, centerRes]) => {
-          // center グループ: 即時表示
-          const centerProducts = centerRes.status === "fulfilled"
-            ? centerRes.value?.products ?? [] : [];
-          // right グループ: queued:true なら「準備中」プレースホルダー
-          const rightQueued = rightRes.status === "fulfilled" && rightRes.value?.queued === true;
-          const rightProducts = rightRes.status === "fulfilled" && !rightQueued
-            ? rightRes.value?.products ?? []
-            : RIGHT_SLUGS.map(slug => ({ slug, sampleUrl: null, available: false, queued: rightQueued }));
-          const allProducts = [...rightProducts, ...centerProducts];
-          if (allProducts.length > 0) showGoods(allProducts);
-          // ポーリング開始（Worker バックグラウンド処理完了を待つ）
-          if (rightQueued && data.id) {
-            startPollingSuzuri(data.id, RIGHT_SLUGS);
-          }
-        }).catch(e => {
-          console.warn("[suzuri-create] 失敗:", e.message);
-        });
+        // ウォーターマーク合成 → SUZURI登録
+        createSuzuriFromImage(data.imageData, data.mimeType, researchData.theme, data.id ?? null);
 
       } catch (err) {
         console.error("[generate] error:", err.message);
