@@ -1153,7 +1153,135 @@ const POLLI_IMG   = { source: "pollinations", imageData: "p", mimeType: "image/j
 }
 
 // ---------------------------------------------------------------------------
-// 結果サマリー
+// ギャラリー: toJSTDateString
+// frontend/index.html と同じ実装をここで再定義してテストする
+// （ブラウザ専用DOMを持たない純粋関数のため直接テスト可能）
 // ---------------------------------------------------------------------------
+console.log("\n[Gallery: toJSTDateString]");
+
+// frontend/index.html の toJSTDateString と同じ実装
+function toJSTDateString(date) {
+  const jst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  return jst.toISOString().slice(0, 10);
+}
+
+{
+  // 正常系: Bot実行時刻 UTC 10:00 → JST 19:00（同日）
+  const d = new Date("2026-04-13T10:00:00Z");
+  assert("UTC 10:00 → JST 19:00（同日: 2026-04-13）", toJSTDateString(d) === "2026-04-13");
+}
+
+{
+  // 境界値: UTC 15:00 → JST 翌日 00:00（日付変わる）
+  const d = new Date("2026-04-13T15:00:00Z");
+  assert("UTC 15:00 → JST 翌日（2026-04-14）", toJSTDateString(d) === "2026-04-14");
+}
+
+{
+  // 境界値: UTC 14:59 → JST 23:59（まだ当日）
+  const d = new Date("2026-04-13T14:59:00Z");
+  assert("UTC 14:59 → JST 23:59（当日のまま: 2026-04-13）", toJSTDateString(d) === "2026-04-13");
+}
+
+{
+  // フォーマット: YYYY-MM-DD（ゼロ埋め）
+  const d = new Date("2026-01-05T00:00:00Z");
+  assert("フォーマット YYYY-MM-DD（ゼロ埋め）", /^\d{4}-\d{2}-\d{2}$/.test(toJSTDateString(d)));
+}
+
+// ---------------------------------------------------------------------------
+// ギャラリー: 日付候補生成ロジック
+// loadGallery() 内のループを抽出してテスト（DOM不要・副作用なし）
+// ---------------------------------------------------------------------------
+console.log("\n[Gallery: 日付候補生成]");
+
+function makeGalleryCandidates(todayUtc, days = 14) {
+  const candidates = [];
+  for (let i = 0; i < days; i++) {
+    const d = new Date(todayUtc);
+    d.setDate(todayUtc.getDate() - i);
+    candidates.push(`bot/${toJSTDateString(d)}`);
+  }
+  return candidates;
+}
+
+{
+  // Bot実行日（UTC 10:00 = JST 19:00）の前後を確認
+  const today = new Date("2026-04-13T10:00:00Z");
+  const candidates = makeGalleryCandidates(today);
+
+  assert("14件の候補を生成", candidates.length === 14);
+  assert("先頭が最新日 bot/2026-04-13", candidates[0] === "bot/2026-04-13");
+  assert("末尾が13日前 bot/2026-03-31", candidates[13] === "bot/2026-03-31");
+  assert("全て bot/ プレフィックス", candidates.every(c => c.startsWith("bot/")));
+  assert("全て YYYY-MM-DD フォーマット", candidates.every(c => /^bot\/\d{4}-\d{2}-\d{2}$/.test(c)));
+  assert("重複なし", new Set(candidates).size === candidates.length);
+}
+
+{
+  // UTC 15:00（= JST 翌日 00:00）では先頭日が1日ずれる
+  const today = new Date("2026-04-13T15:00:00Z");
+  const candidates = makeGalleryCandidates(today);
+  assert("UTC 15:00 時点では先頭が JST 翌日（2026-04-14）", candidates[0] === "bot/2026-04-14");
+}
+
+// ---------------------------------------------------------------------------
+// ギャラリー: フィルタリングロジック
+// loadGallery() のfetch+フィルタ部分を純粋関数として抽出してテスト
+// ---------------------------------------------------------------------------
+console.log("\n[Gallery: フィルタリングロジック]");
+
+// loadGallery() の fetch+filter 相当（DOM・実fetch不要）
+async function simulateGalleryFilter(candidates, mockMetas) {
+  const results = await Promise.all(
+    candidates.map(id => {
+      const meta = mockMetas[id];
+      return meta ? { id, meta } : null;
+    })
+  );
+  return results.filter(Boolean);
+}
+
+{
+  // 1件だけ存在する場合
+  const candidates = makeGalleryCandidates(new Date("2026-04-13T10:00:00Z"));
+  const valid = await simulateGalleryFilter(candidates, {
+    "bot/2026-04-13": { theme: "決闘の日", products: [{ slug: "t-shirt" }] },
+  });
+  assert("1件存在 → valid.length === 1", valid.length === 1);
+  assert("正しい id が返る", valid[0].id === "bot/2026-04-13");
+  assert("テーマが含まれる", valid[0].meta.theme === "決闘の日");
+}
+
+{
+  // 全件404 → ギャラリー非表示（valid.length === 0）
+  const candidates = makeGalleryCandidates(new Date("2026-04-13T10:00:00Z"));
+  const valid = await simulateGalleryFilter(candidates, {});
+  assert("全件404 → valid.length === 0（ギャラリー非表示）", valid.length === 0);
+}
+
+{
+  // products:[] の日もカードに含まれる（バックグラウンドでSUZURI登録対象）
+  const candidates = makeGalleryCandidates(new Date("2026-04-13T10:00:00Z"));
+  const valid = await simulateGalleryFilter(candidates, {
+    "bot/2026-04-13": { theme: "決闘の日", products: [] },
+  });
+  assert("products:[] でもカードに含まれる", valid.length === 1);
+  assert("products:[] の日は registerGalleryItemInBackground 対象",
+    !(valid[0].meta.products?.length > 0));
+}
+
+{
+  // 複数日にデータがある場合、全件返す
+  const candidates = makeGalleryCandidates(new Date("2026-04-13T10:00:00Z"));
+  const valid = await simulateGalleryFilter(candidates, {
+    "bot/2026-04-13": { theme: "決闘の日",  products: [{ slug: "t-shirt" }] },
+    "bot/2026-04-12": { theme: "別の記念日", products: [{ slug: "sticker" }] },
+  });
+  assert("複数日 → 全件返す", valid.length === 2);
+  assert("順序: 先頭が最新日", valid[0].id === "bot/2026-04-13");
+}
+
+
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
 if (failed > 0) process.exit(1);
