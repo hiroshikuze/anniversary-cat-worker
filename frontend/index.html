@@ -508,6 +508,9 @@
         });
     }
 
+    // ギャラリー定数（init() IIFEより前に宣言しないとTDZエラーになる）
+    const GALLERY_DAYS = 14;
+
     (function init() {
       // Web Share API（ファイル共有）が使える環境ではボタンを「共有」に変更
       const _testFile = new File([""], "t.png", { type: "image/png" });
@@ -752,8 +755,6 @@
     // ボット作品ギャラリー（直近14日分・SUZURI登録済みのみ表示）
     // products未登録の日はバックグラウンドでSUZURI登録を開始する
     // ----------------------------------------------------------
-    const GALLERY_DAYS = 14;
-
     function toJSTDateString(date) {
       const jst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
       return jst.toISOString().slice(0, 10); // YYYY-MM-DD
