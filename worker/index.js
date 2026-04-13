@@ -133,6 +133,24 @@ function makeCorsHeaders(origin, allowedOrigin) {
 }
 
 // ---------------------------------------------------------------------------
+// XML特殊文字エスケープ（RSS生成用）
+// ---------------------------------------------------------------------------
+function escapeXml(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+// JST日付文字列（YYYY-MM-DD）を返す
+function toJSTDateStringWorker(date) {
+  const jst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  return jst.toISOString().slice(0, 10);
+}
+
+// ---------------------------------------------------------------------------
 // 指数バックオフ付きフェッチ（Worker 内 → Google API）
 // ---------------------------------------------------------------------------
 async function fetchWithRetry(url, options, maxRetries = 3) {
@@ -608,6 +626,77 @@ export default {
         headers: {
           "Content-Type": obj.httpMetadata?.contentType ?? "image/png",
           "Cache-Control": "public, max-age=86400",
+          ...corsH,
+        },
+      });
+    }
+
+    // GET: RSSフィード（直近14日のボット作品）
+    if (request.method === "GET" && url.pathname === "/rss.xml") {
+      const PAGES_URL  = "https://hiroshikuze.github.io/anniversary-cat-worker";
+      const WORKER_URL = "https://anniversary-cat-worker.hiroshikuze.workers.dev";
+      const RSS_DAYS   = 14;
+
+      // 直近14日分のメタデータを並列取得
+      const now = new Date();
+      const ids = [];
+      for (let i = 0; i < RSS_DAYS; i++) {
+        const d = new Date(now);
+        d.setDate(now.getDate() - i);
+        ids.push(`bot/${toJSTDateStringWorker(d)}`);
+      }
+      const metas = env.IMAGE_BUCKET
+        ? await Promise.all(ids.map(id =>
+            getMetaFromR2(env.IMAGE_BUCKET, id)
+              .then(meta => meta ? { id, meta } : null)
+              .catch(() => null)
+          ))
+        : [];
+      const items = metas.filter(Boolean);
+
+      const itemsXml = items.map(({ id, meta }) => {
+        const dateStr   = id.replace("bot/", "");
+        const [, m, d]  = dateStr.split("-");
+        const title     = `${parseInt(m)}月${parseInt(d)}日 - ${meta.theme ?? ""}`;
+        const link      = `${PAGES_URL}/?id=${id}`;
+        const thumbUrl  = `${WORKER_URL}/thumb/${id}`;
+        const pubDate   = meta.createdAt ? new Date(meta.createdAt).toUTCString() : "";
+        const descHtml  = [
+          `<img src="${thumbUrl}" alt="${escapeXml(meta.theme ?? "")}"/>`,
+          meta.description ? `<p>${escapeXml(meta.description)}</p>` : "",
+        ].filter(Boolean).join("");
+        return [
+          "    <item>",
+          `      <title>${escapeXml(title)}</title>`,
+          `      <link>${link}</link>`,
+          `      <description><![CDATA[${descHtml}]]></description>`,
+          pubDate ? `      <pubDate>${pubDate}</pubDate>` : "",
+          `      <guid isPermaLink="true">${link}</guid>`,
+          `      <enclosure url="${thumbUrl}" type="image/png" length="0"/>`,
+          "    </item>",
+        ].filter(Boolean).join("\n");
+      }).join("\n");
+
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>にゃんバーサリー</title>
+    <link>${PAGES_URL}/</link>
+    <description>今日の記念日をAIが調べて、水彩画風の猫イラストを生成します</description>
+    <language>ja</language>
+    <image>
+      <url>${PAGES_URL}/images/og-image.png</url>
+      <title>にゃんバーサリー</title>
+      <link>${PAGES_URL}/</link>
+    </image>
+${itemsXml}
+  </channel>
+</rss>`;
+
+      return new Response(xml, {
+        headers: {
+          "Content-Type": "application/rss+xml; charset=utf-8",
+          "Cache-Control": "public, max-age=3600",
           ...corsH,
         },
       });
