@@ -600,11 +600,13 @@ export default {
     if (request.method === "GET" && url.pathname.startsWith("/thumb/")) {
       const id = url.pathname.slice("/thumb/".length);
       if (!id || !env.IMAGE_BUCKET) return new Response("Not Found", { status: 404, headers: corsH });
-      const obj = await env.IMAGE_BUCKET.get(`${id}/image.png`);
+      // saveToR2() は web.png または web.jpg で保存するため両方試みる
+      let obj = await env.IMAGE_BUCKET.get(`${id}/web.png`);
+      if (!obj) obj = await env.IMAGE_BUCKET.get(`${id}/web.jpg`);
       if (!obj) return new Response("Not Found", { status: 404, headers: corsH });
       return new Response(obj.body, {
         headers: {
-          "Content-Type": obj.httpMetadata?.contentType ?? "image/jpeg",
+          "Content-Type": obj.httpMetadata?.contentType ?? "image/png",
           "Cache-Control": "public, max-age=86400",
           ...corsH,
         },
