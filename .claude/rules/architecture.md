@@ -40,6 +40,7 @@ anniversary-cat-worker/
 | GET | `/meta/:id` | R2メタデータのみ取得（画像なし・ポーリング用軽量エンドポイント） |
 | GET | `/hires/:id` | fal.ai高解像度画像をR2から返す（SUZURI向け安定URL） |
 | GET | `/thumb/:id` | R2画像バイナリを直接返却（ギャラリーサムネイル用・base64不要） |
+| GET | `/rss.xml` | RSSフィード（直近14日のボット作品・サムネイル画像付き） |
 | POST | `/suzuri-create` | ウォーターマーク済み画像を受け取りSUZURI登録・R2メタ更新 |
 
 ### /proxy-imageのセキュリティ制約
