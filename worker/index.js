@@ -340,7 +340,33 @@ export function pickPersonality() {
   return CAT_PERSONALITIES[0].desc;
 }
 
-function buildPollinationsPrompt(theme, description, persona, personality, visualHint = null) {
+// ---------------------------------------------------------------------------
+// 猫の感情の瞬間（重み付き確率でランダム選択・毛柄・性格とは独立）
+// ---------------------------------------------------------------------------
+// Florkiewicz & Scott(2023)の友好的表情カテゴリおよびスロウブリンク研究をベースに、
+// 「キャラクターの感情が伝わることで視聴者の心が動く」ことを目的とした設計。
+// personality が「気質・傾向」を表すのに対し、emotion は「その瞬間の感情状態」を表す。
+const CAT_EMOTIONS = [
+  { weight: 25, desc: "serene composed expression, dignified and self-possessed" },
+  { weight: 25, desc: "eyes narrowed with intense focus, completely absorbed in play" },
+  { weight: 20, desc: "eyes wide with surprise, ears pricked forward, caught off-guard" },
+  { weight: 20, desc: "open-mouth play face, pure joyful delight" },
+  { weight: 20, desc: "eyes peacefully closed, warm drowsy contentment, slow-blink expression" },
+  // Omakase: AIに感情表現を自由に決めさせる (weight 10)
+  { weight: 10, desc: null },
+];
+
+export function pickEmotion() {
+  const total = CAT_EMOTIONS.reduce((s, p) => s + p.weight, 0);
+  let r = Math.random() * total;
+  for (const p of CAT_EMOTIONS) {
+    r -= p.weight;
+    if (r <= 0) return p.desc;
+  }
+  return CAT_EMOTIONS[0].desc;
+}
+
+function buildPollinationsPrompt(theme, description, persona, personality, visualHint = null, emotion = null) {
   // Pollinations API のプロンプトは ASCII のみ使用
   // 日本語等の非ASCII文字はURLパス内でサーバー側エラー(500)の原因になるためフィルタリング
   const toAscii = (s) => (s ?? "").replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
@@ -350,12 +376,12 @@ function buildPollinationsPrompt(theme, description, persona, personality, visua
   const subject    = themeAscii || descAscii || visualHint?.split(",")[0]?.trim() || "anniversary";
   // テーマ関連要素より先に「kawaii watercolor cat」を置き、サービスの根幹（水彩画風の可愛い猫）を先頭で宣言する
   // 「kawaii watercolor cat」にcatが含まれるため persona が null のときの "cat" フォールバックは不要
-  const parts = ["kawaii watercolor cat", subject, visualHint, persona, personality, "pastel colors, white background"];
+  const parts = ["kawaii watercolor cat", subject, visualHint, persona, personality, emotion, "pastel colors, white background"];
   return parts.filter(Boolean).join(", ");
 }
 
-function buildPollinationsUrl(theme, description, persona, personality, model = "flux", visualHint = null) {
-  const prompt = buildPollinationsPrompt(theme, description, persona, personality, visualHint);
+function buildPollinationsUrl(theme, description, persona, personality, model = "flux", visualHint = null, emotion = null) {
+  const prompt = buildPollinationsPrompt(theme, description, persona, personality, visualHint, emotion);
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
@@ -372,11 +398,13 @@ async function handleGenerate(body, apiKey) {
 
   const persona      = pickPersona();
   const personality  = pickPersonality();
+  const emotion      = pickEmotion();
   const visualHint   = body.visualHint ?? null;
   const prompt =
     `Create a cute kawaii watercolor style cat character illustration. ` +
-    (persona      ? `Cat appearance: ${persona}. `           : "") +
-    (personality  ? `Cat personality and pose: ${personality}. ` : "") +
+    (persona      ? `Cat appearance: ${persona}. `                    : "") +
+    (personality  ? `Cat personality and pose: ${personality}. `      : "") +
+    (emotion      ? `Cat facial expression and emotion: ${emotion}. ` : "") +
     `Theme: ${theme}. ` +
     (description  ? `Context: ${description}. `              : "") +
     (visualHint   ? `Visual elements to incorporate: ${visualHint}. ` : "") +
@@ -440,7 +468,7 @@ async function handleGenerate(body, apiKey) {
     const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
     return Promise.any(
       MODELS.map(async (model) => {
-        const url = buildPollinationsUrl(theme, description, persona, personality, model, visualHint);
+        const url = buildPollinationsUrl(theme, description, persona, personality, model, visualHint, emotion);
         console.log(`[pollinations] trying model=${model}`);
         const imgRes = await fetch(url, { signal: AbortSignal.timeout(POLLINATIONS_TIMEOUT_MS) });
         if (!imgRes.ok) throw new Error(`status=${imgRes.status}`);
@@ -453,11 +481,11 @@ async function handleGenerate(body, apiKey) {
     );
   }
 
-  const pollinationsPrompt = buildPollinationsPrompt(theme, description, persona, personality, visualHint);
+  const pollinationsPrompt = buildPollinationsPrompt(theme, description, persona, personality, visualHint, emotion);
 
   // 2フェーズ方式の実行（ロジックは _twoPhaseRace に切り出し済み）
   const result = await _twoPhaseRace(tryGemini, tryPollinations);
-  return { ...result, persona, personality, prompt, pollinationsPrompt };
+  return { ...result, persona, personality, emotion, prompt, pollinationsPrompt };
 }
 
 // ---------------------------------------------------------------------------
