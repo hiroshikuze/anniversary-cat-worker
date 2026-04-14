@@ -229,7 +229,7 @@
         <div id="g-goods" class="hidden mt-4">
           <p class="text-xs text-pink-400 text-center mb-2" data-i18n="goodsLabel">🛍️ グッズを買う（SUZURI）</p>
           <div id="g-goods-list" class="grid grid-cols-2 gap-2"></div>
-          <p class="text-xs text-gray-400 text-center mt-2" data-i18n="goodsExpiry">共有リンクとグッズ購入は生成後7日間のみご利用いただけます</p>
+          <p class="text-xs text-gray-400 text-center mt-2" data-i18n="goodsExpiry">共有リンクとグッズ購入は生成後14日間のみご利用いただけます</p>
         </div>
       </div>
 
@@ -248,7 +248,7 @@
       <div id="g-expired" class="hidden">
         <div class="bg-pink-50 border border-pink-100 rounded-2xl p-5 mb-3 text-center">
           <p class="text-4xl mb-2">🐱💤</p>
-          <p class="text-sm text-pink-500" data-i18n="expiredText">この記念日画像は期限切れです（7日間保存）</p>
+          <p class="text-sm text-pink-500" data-i18n="expiredText">この記念日画像は期限切れです（14日間保存）</p>
         </div>
         <button onclick="startResearch()"
           class="w-full btn-primary text-white py-2.5 px-4 rounded-xl text-sm font-medium" data-i18n="createNewBtn">
@@ -309,6 +309,7 @@
     // 設定: デプロイした Cloudflare Worker の URL
     // ==========================================================
     const WORKER_URL = "https://anniversary-cat-worker.hiroshikuze.workers.dev";
+    const STORAGE_DAYS = 14;
 
     // ----------------------------------------------------------
     // What's New
@@ -355,11 +356,11 @@
         noImageError:       "画像データなし。返却フィールド: ",
         rateLimitError:     "本日の利用上限に達しました。明日またお試しください。",
         goodsLabel:         "🛍️ グッズを買う（SUZURI）",
-        goodsExpiry:        "共有リンクとグッズ購入は生成後7日間のみご利用いただけます",
+        goodsExpiry:        `共有リンクとグッズ購入は生成後${STORAGE_DAYS}日間のみご利用いただけます`,
         outOfStockToast:    "この商品は現在在庫切れです",
         preparingToast:     "まもなく準備完了です。しばらくお待ちください",
         preparingBtn:       "準備中…",
-        expiredText:        "この記念日画像は期限切れです（7日間保存）",
+        expiredText:        `この記念日画像は期限切れです（${STORAGE_DAYS}日間保存）`,
         createNewBtn:       "🎨 今日の記念日で作る",
         newGenerateBtn:     "✨ 新しく生成",
         dateLocale:         "ja-JP",
@@ -394,11 +395,11 @@
         noImageError:       "No image data. Returned fields: ",
         rateLimitError:     "You have reached today's usage limit. Please try again tomorrow.",
         goodsLabel:         "🛍️ Buy Goods (SUZURI)",
-        goodsExpiry:        "Sharing links and goods are available for 7 days after generation",
+        goodsExpiry:        `Sharing links and goods are available for ${STORAGE_DAYS} days after generation`,
         outOfStockToast:    "This item is currently out of stock",
         preparingToast:     "Almost ready. Please wait a moment.",
         preparingBtn:       "Preparing…",
-        expiredText:        "This anniversary image has expired (stored for 7 days)",
+        expiredText:        `This anniversary image has expired (stored for ${STORAGE_DAYS} days)`,
         createNewBtn:       "🎨 Create Today's Anniversary",
         newGenerateBtn:     "✨ Generate New",
         dateLocale:         "en-US",
