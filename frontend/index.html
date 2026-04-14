@@ -1087,6 +1087,7 @@
         const data = await apiFetch("/generate", {
           theme: researchData.theme,
           description: researchData.description,
+          foodItem: researchData.foodItem ?? null,
         });
 
         console.log("[generate] source:", data.source);

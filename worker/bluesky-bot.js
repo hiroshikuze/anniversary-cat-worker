@@ -352,7 +352,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
     // ── 2. 画像生成 ────────────────────────────────────────────────────────
     console.log(`${prefix} generate 開始`);
     const generated = await handleGenerate(
-      { theme: research.theme, description: research.description, visualHint: research.visualHint ?? null },
+      { theme: research.theme, description: research.description, visualHint: research.visualHint ?? null, foodItem: research.foodItem ?? null },
       apiKey
     );
     console.log(`${prefix} generate 完了 source=${generated.source}`);
@@ -416,8 +416,10 @@ export async function runBot(env, handleResearch, handleGenerate) {
         `📅 テーマ: ${research.theme}`,
         research.description ? `📝 説明: ${research.description}` : null,
         research.visualHint  ? `🎨 視覚ヒント: ${research.visualHint}` : null,
-        generated.persona    ? `🐱 毛柄: ${generated.persona}`    : null,
-        generated.personality ? `😺 性格: ${generated.personality}` : null,
+        generated.persona       ? `🐱 毛柄: ${generated.persona}`          : null,
+        generated.personality   ? `😺 性格: ${generated.personality}`      : null,
+        generated.emotion       ? `💭 感情: ${generated.emotion}`          : null,
+        generated.eatingAction  ? `🍴 食べ物アクション: ${generated.eatingAction}` : null,
         `🖼 ソース: ${generated.source}`,
         generated.prompt            ? `\n📋 Geminiプロンプト${generated.source === "gemini" ? "（採用）" : ""}:\n${generated.prompt}` : null,
         generated.pollinationsPrompt ? `\n📋 Pollinationsプロンプト${generated.source === "pollinations" ? "（採用）" : ""}:\n${generated.pollinationsPrompt}` : null,

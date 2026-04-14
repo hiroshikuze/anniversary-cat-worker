@@ -17,7 +17,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
-import { pickPersona, pickPersonality, _twoPhaseRace } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, _twoPhaseRace } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -1282,6 +1282,48 @@ async function simulateGalleryFilter(candidates, mockMetas) {
   assert("順序: 先頭が最新日", valid[0].id === "bot/2026-04-13");
 }
 
+
+// ---------------------------------------------------------------------------
+// pickEatingAction
+// ---------------------------------------------------------------------------
+console.log("\n[pickEatingAction]");
+{
+  // null / 空文字 は常に null
+  assert("null を渡すと null を返す", pickEatingAction(null) === null);
+  assert("空文字を渡すと null を返す", pickEatingAction("") === null);
+}
+
+{
+  // 全角文字を含む場合は null（Pollinations ASCII 制約の 2重チェック）
+  assert("全角を含む場合は null", pickEatingAction("カレー") === null);
+  assert("混在文字（ASCII+全角）も null", pickEatingAction("Curry カレー") === null);
+}
+
+{
+  // 有効な foodItem は確率的に action 文字列または null を返す
+  // 1000回試行して action が返ることを確認（全件 null になる確率は 0.7^1000 ≈ 0）
+  const results = Array.from({ length: 1000 }, () => pickEatingAction("Curry Rice"));
+  const actions = results.filter(v => v !== null);
+  assert("有効な foodItem で 1000回中 1件以上 action が返る", actions.length > 0);
+  assert("action は文字列", actions.every(v => typeof v === "string"));
+  assert("action に foodItem が含まれる", actions.every(v => v.includes("Curry Rice")));
+  assert("action は ASCII のみ（Pollinations プロンプトに安全）",
+    actions.every(v => /^[\x20-\x7E]+$/.test(v)));
+  // 30% ± 10% 程度の出現率であることを確認（統計的に余裕を持たせた範囲）
+  const rate = actions.length / 1000;
+  assert(`出現率が 20%〜40% の範囲内 (実測: ${(rate * 100).toFixed(1)}%)`,
+    rate >= 0.20 && rate <= 0.40);
+}
+
+{
+  // 全 4 パターンが 5000 回試行で出現すること
+  const seen = new Set();
+  for (let i = 0; i < 5000; i++) {
+    const a = pickEatingAction("Chocolate");
+    if (a !== null) seen.add(a.split(",")[0].trim()); // action 先頭フレーズで識別
+  }
+  assert("5000回試行で全4パターンが出現する", seen.size === 4);
+}
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
 if (failed > 0) process.exit(1);
