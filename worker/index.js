@@ -350,7 +350,7 @@ function buildPollinationsPrompt(theme, description, persona, personality, visua
   const subject    = themeAscii || descAscii || visualHint?.split(",")[0]?.trim() || "anniversary";
   // テーマ関連要素より先に「kawaii watercolor cat」を置き、サービスの根幹（水彩画風の可愛い猫）を先頭で宣言する
   // 「kawaii watercolor cat」にcatが含まれるため persona が null のときの "cat" フォールバックは不要
-  const parts = ["kawaii watercolor cat", subject, visualHint, persona, personality, "pastel colors, white background, kawaii style"];
+  const parts = ["kawaii watercolor cat", subject, visualHint, persona, personality, "pastel colors, white background"];
   return parts.filter(Boolean).join(", ");
 }
 
@@ -381,7 +381,7 @@ async function handleGenerate(body, apiKey) {
     (description  ? `Context: ${description}. `              : "") +
     (visualHint   ? `Visual elements to incorporate: ${visualHint}. ` : "") +
     `Style: soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ` +
-    `white background, Japanese kawaii style. ` +
+    `white background, Japanese illustration style. ` +
     `High quality charming illustration. ` +
     `IMPORTANT: Do not include any text, letters, words, titles, captions, or typography in the image.`;
 
