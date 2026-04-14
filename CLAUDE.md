@@ -153,8 +153,9 @@ FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 | 猫ペルソナ（`CAT_PERSONAS` 13種・重み付き） | `worker/index.js` `pickPersona()` | 稼働中 |
 | 猫の性格（`CAT_PERSONALITIES` 5種 + おまかせ・重み付き） | `worker/index.js` `pickPersonality()` | 稼働中 |
 | 猫の感情の瞬間（`CAT_EMOTIONS` 5種 + おまかせ・重み付き・毛柄・性格と独立） | `worker/index.js` `pickEmotion()` | 稼働中 |
+| 食べ物テーマの eating action（`CAT_EATING_ACTIONS` 4種・30%確率・全角除外チェック） | `worker/index.js` `pickEatingAction()` | 稼働中 |
 | Bluesky Bot投稿（毎平日19:00 JST） | `worker/bluesky-bot.js` `runBot()` | 稼働中 |
-| Bot投稿完了のDiscord通知（テーマ・プロンプト全文・画像ソース・毛柄・性格・感情含む） | `worker/bluesky-bot.js` `notifyDiscord()` | 稼働中 |
+| Bot投稿完了のDiscord通知（テーマ・プロンプト全文・画像ソース・毛柄・性格・感情・食べ物アクション含む） | `worker/bluesky-bot.js` `notifyDiscord()` | 稼働中 |
 | SUZURIグッズ登録（4商品: Tシャツ・ステッカー・缶バッジ・アクキー） | `worker/suzuri.js` | 稼働中 |
 | ボット画像SUZURI登録を初回訪問者ブラウザに委譲（2048px高品質・重複防止） | `frontend/index.html` `createSuzuriFromImage()` `worker/index.js` | 稼働中 |
 | ウォーターマーク合成（Canvas、フロントエンド側） | `frontend/index.html` `applyWatermark()` | 稼働中 |

@@ -943,27 +943,48 @@ GET /rss.xml
 DMM.make審査通過後、かつMeshyの品質が許容水準であることを実測で確認してから着手する。
 「計測→設計→実装」の順序を守り、Meshy処理時間の実測なしに非同期設計値（ポーリング間隔等）を決めない（2026-04の教訓）。
 
-#### 食べ物テーマでの eating action（検討中・未実装・2026-04）
+#### 食べ物テーマでの eating action（実装済み・2026-04）
 
 食べ物・飲み物に関する記念日の場合、ランダムで猫が食べるアクションをプロンプトに追加する。
 
 ##### 設計方針
 
-- `/research` の JSON 出力に `"foodItem": "英語の食材名 または null"` フィールドを追加（Geminiに判定させる）
+- `/research` の JSON 出力に `"foodItem"` フィールドを追加（Geminiが英語で判定）
+  - 指示: 「主な行為・目的が食べることである場合のみASCII英語で1〜3語。農業・収穫・行事の象徴のみの場合はnull」
+  - Gemini AI Studioでの事前検証で勤労感謝の日（収穫祭）の誤検出を確認→指示を強化して解消
 - フロントエンドが `foodItem` を `/generate` に渡す（`visualHint` と同じ経路）
-- `handleGenerate()` で `foodItem` がある場合に **50% の確率**で eating action をプロンプトに追加
-- 毎回適用すると単調になるためランダム確率を設ける
+- `handleGenerate()` で `pickEatingAction(foodItem)` を呼び出し
+  - `EATING_ACTION_PROBABILITY = 0.30`（30%）の確率で eating action を選択
+  - null / 空文字 / 全角文字を含む場合は必ず null を返す（2重チェック）
+  - Geminiプロンプトに `Cat action: {eatingAction}.` として追加
+  - Pollinationsプロンプトの `parts` に `eatingAction` を追加（emotion直後）
+- Discord通知に `🍴 食べ物アクション:` 行を追加
 
-##### eating action 候補
+##### eating action 定数
 
 ```js
-const EATING_ACTIONS = [
+const EATING_ACTION_PROBABILITY = 0.30;
+
+const CAT_EATING_ACTIONS = [
   (food) => `holding a tiny ${food} with both paws, taking a delighted bite`,
   (food) => `nibbling on ${food}, eyes half-closed in bliss`,
   (food) => `licking ${food} with tongue out, whiskers twitching happily`,
   (food) => `sniffing ${food} curiously, nose twitching with interest`,
 ];
 ```
+
+##### foodItem の検証結果（2026-04 Gemini AI Studioで手動確認）
+
+| テーマ | foodItem | 評価 |
+| --- | --- | --- |
+| カレーの日 | `"Curry Rice"` | ✅ 正解 |
+| バレンタインデー | `"Chocolate"` | ✅ 許容範囲 |
+| 節分 | `"Ehomaki"` | ✅ 正解 |
+| 半夏生 | `"Octopus"` | ✅ 正解 |
+| 建国記念の日 | `null` | ✅ 正解 |
+| 勤労感謝の日（指示強化前） | `"Rice"` | ⚠️ 誤検出 |
+| 勤労感謝の日（指示強化後） | `null` | ✅ 解消 |
+| 外食の日 | `"Restaurant Meal"` | △ 抽象的だが許容範囲（ガードなし） |
 
 ##### emotionとの両立
 
