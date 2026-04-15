@@ -109,7 +109,7 @@ export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = nu
     },
     body: JSON.stringify({
       texture: imageUrl,
-      title:   theme,
+      title:   `${theme}と水彩画にゃんこ`,
       products: productsToCreate,
     }),
     signal: AbortSignal.timeout(30_000),
