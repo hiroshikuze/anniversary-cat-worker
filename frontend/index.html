@@ -656,7 +656,26 @@
       for (const p of products) {
         const name = GOODS_NAMES[currentLang]?.[p.slug] ?? GOODS_NAMES.ja[p.slug] ?? p.slug;
         const icon = GOODS_ICONS[p.slug] ?? "🎁";
-        if (p.available && p.sampleUrl) {
+        if (p.available && p.sampleUrl && p.previewImageUrl) {
+          // サムネイル付きリンクカード
+          const a = document.createElement("a");
+          a.href = p.sampleUrl;
+          a.target = "_blank";
+          a.rel = "noopener";
+          a.className = "block rounded-xl overflow-hidden border border-gray-600 hover:border-pink-400 transition-colors";
+          const img = document.createElement("img");
+          img.src = p.previewImageUrl;
+          img.alt = name;
+          img.className = "w-full aspect-square object-contain bg-gray-800";
+          img.loading = "lazy";
+          const label = document.createElement("p");
+          label.className = "text-xs text-center py-1 text-gray-200";
+          label.textContent = `${icon} ${name}`;
+          a.appendChild(img);
+          a.appendChild(label);
+          listEl.appendChild(a);
+        } else if (p.available && p.sampleUrl) {
+          // テキストボタン（previewImageUrl未取得の旧データ用後方互換）
           const a = document.createElement("a");
           a.href = p.sampleUrl;
           a.target = "_blank";
@@ -665,17 +684,31 @@
           a.textContent = `${icon} ${name}`;
           listEl.appendChild(a);
         } else if (p.queued) {
-          // バックグラウンド処理中: 「準備中…」グレーアウトボタン
-          const btn = document.createElement("button");
-          btn.className = "btn-disabled py-2 px-3 rounded-xl text-sm font-medium text-center flex items-center justify-center gap-1 w-full";
-          btn.dataset.queuedSlug = p.slug;
-          btn.textContent = `${icon} ${t("preparingBtn")}`;
-          btn.setAttribute("aria-disabled", "true");
-          btn.addEventListener("click", () => {
-            showToast(t("preparingToast"));
-          });
-          listEl.appendChild(btn);
+          // バックグラウンド処理中（案2）: 生成済み画像を暗くしてアイコンをオーバーレイ表示
+          const div = document.createElement("div");
+          div.className = "relative rounded-xl overflow-hidden cursor-pointer border border-gray-600";
+          div.addEventListener("click", () => showToast(t("preparingToast")));
+          if (lastImageUrl) {
+            const img = document.createElement("img");
+            img.src = lastImageUrl;
+            img.alt = name;
+            img.className = "w-full aspect-square object-contain bg-gray-800 opacity-30";
+            div.appendChild(img);
+          }
+          const overlay = document.createElement("span");
+          overlay.className = "absolute inset-0 flex flex-col items-center justify-center";
+          const iconSpan = document.createElement("span");
+          iconSpan.className = "text-4xl";
+          iconSpan.textContent = icon;
+          const labelSpan = document.createElement("span");
+          labelSpan.className = "text-xs text-gray-300 mt-1";
+          labelSpan.textContent = t("preparingBtn");
+          overlay.appendChild(iconSpan);
+          overlay.appendChild(labelSpan);
+          div.appendChild(overlay);
+          listEl.appendChild(div);
         } else {
+          // 在庫切れ等（無効）
           const btn = document.createElement("button");
           btn.className = "btn-disabled py-2 px-3 rounded-xl text-sm font-medium text-center flex items-center justify-center gap-1 w-full";
           btn.textContent = `${icon} ${name}`;
