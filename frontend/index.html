@@ -662,14 +662,14 @@
           a.href = p.sampleUrl;
           a.target = "_blank";
           a.rel = "noopener";
-          a.className = "block rounded-xl overflow-hidden border border-gray-600 hover:border-pink-400 transition-colors";
+          a.className = "block rounded-xl overflow-hidden border border-pink-200 hover:border-pink-400 hover:shadow-sm transition-all bg-white";
           const img = document.createElement("img");
           img.src = p.previewImageUrl;
           img.alt = name;
-          img.className = "w-full aspect-square object-contain bg-gray-800";
+          img.className = "w-full aspect-square object-contain bg-pink-50";
           img.loading = "lazy";
           const label = document.createElement("p");
-          label.className = "text-xs text-center py-1 text-gray-200";
+          label.className = "text-xs text-center py-1 text-gray-600 font-medium";
           label.textContent = `${icon} ${name}`;
           a.appendChild(img);
           a.appendChild(label);
@@ -686,13 +686,13 @@
         } else if (p.queued) {
           // バックグラウンド処理中（案2）: 生成済み画像を暗くしてアイコンをオーバーレイ表示
           const div = document.createElement("div");
-          div.className = "relative rounded-xl overflow-hidden cursor-pointer border border-gray-600";
+          div.className = "relative rounded-xl overflow-hidden cursor-pointer border border-pink-200 bg-pink-50";
           div.addEventListener("click", () => showToast(t("preparingToast")));
           if (lastImageUrl) {
             const img = document.createElement("img");
             img.src = lastImageUrl;
             img.alt = name;
-            img.className = "w-full aspect-square object-contain bg-gray-800 opacity-30";
+            img.className = "w-full aspect-square object-contain bg-pink-50 opacity-40";
             div.appendChild(img);
           }
           const overlay = document.createElement("span");
@@ -701,7 +701,7 @@
           iconSpan.className = "text-4xl";
           iconSpan.textContent = icon;
           const labelSpan = document.createElement("span");
-          labelSpan.className = "text-xs text-gray-300 mt-1";
+          labelSpan.className = "text-xs text-pink-400 mt-1";
           labelSpan.textContent = t("preparingBtn");
           overlay.appendChild(iconSpan);
           overlay.appendChild(labelSpan);
