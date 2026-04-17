@@ -441,7 +441,8 @@ async function handleGenerate(body, apiKey) {
     `Style: soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ` +
     `white background, Japanese illustration style. ` +
     `High quality charming illustration. ` +
-    `IMPORTANT: Do not include any text, letters, words, titles, captions, or typography in the image.`;
+    `IMPORTANT: Do not include any text, letters, words, titles, captions, or typography in the image.` +
+    (eatingAction ? ` Only the cat has a face and expressions; all food items must be depicted as ordinary objects without faces or eyes.` : "");
 
   async function tryGemini() {
     const candidates = KNOWN_IMAGE_CANDIDATES;
