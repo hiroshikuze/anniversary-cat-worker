@@ -93,6 +93,27 @@ anniversary-cat-worker/
 }
 ```
 
+| フィールド | 説明 |
+| --- | --- |
+| `slug` | 商品種別（`t-shirt` / `sticker` / `can-badge` / `acrylic-keychain`） |
+| `sampleUrl` | SUZURIの商品詳細ページURL |
+| `previewImageUrl` | グッズプレビュー画像URL（`pngSampleImageUrl` → `sampleImageUrl` の優先順）。フロントでサムネイルカード表示に使用 |
+| `available` | 在庫あり: true / 在庫切れ: false |
+| `queued` | t-shirt/sticker のfal.ai処理中: true（`previewImageUrl`なし） |
+
+**フロントのグッズ表示（`showGoods()`）:**
+
+| 状態 | 表示 |
+| --- | --- |
+| `available: true` + `previewImageUrl`あり | サムネイル画像カード（`<img>` + 商品名ラベル）。SUZURIへリンク |
+| `available: true` + `previewImageUrl`なし | テキストボタン（後方互換） |
+| `queued: true` | 生成済み猫画像を`opacity-40`に暗転 + 商品アイコンオーバーレイ（「準備中」トースト） |
+| それ以外（在庫切れ等） | `btn-disabled`グレーボタン |
+
+**SUZURIプレビュー画像のCDN遅延対策（2026-04）:**
+
+商品登録直後、SUZURIはプレビュー画像を非同期生成する。生成完了前にブラウザがURLを叩くと404が返りネガティブキャッシュされる。`<img onerror>`で3秒後に1回だけリトライ（`?r=1`クエリ付加でキャッシュ回避）。
+
 - `SUZURI_API_KEY`未設定時は503を返す
 - レート制限なし（`/generate`のレート制限が上流で機能するため）
 

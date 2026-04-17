@@ -668,6 +668,11 @@
           img.alt = name;
           img.className = "w-full aspect-square object-contain bg-pink-50";
           img.loading = "lazy";
+          // SUZURI CDNはプレビュー画像を非同期生成するため、登録直後は404になることがある。
+          // ブラウザがネガティブキャッシュする前に3秒後1回だけリトライする。
+          img.onerror = () => {
+            setTimeout(() => { img.src = p.previewImageUrl + "?r=1"; }, 3000);
+          };
           const label = document.createElement("p");
           label.className = "text-xs text-center py-1 text-gray-600 font-medium";
           label.textContent = `${icon} ${name}`;
