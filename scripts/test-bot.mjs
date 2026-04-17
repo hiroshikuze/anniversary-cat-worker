@@ -482,6 +482,10 @@ const ENV = { SUZURI_API_KEY: "test-key" };
     result.products.every(p => p.available === true));
   assert("正常系: t-shirtのsampleUrlが設定される",
     result.products.find(p => p.slug === "t-shirt")?.sampleUrl === "https://suzuri.jp/t-shirt");
+  assert("正常系: t-shirtのpreviewImageUrlが設定される",
+    result.products.find(p => p.slug === "t-shirt")?.previewImageUrl === "https://example.com/t-shirt.png");
+  assert("正常系: can-badgeのpreviewImageUrlが設定される",
+    result.products.find(p => p.slug === "can-badge")?.previewImageUrl === "https://example.com/can-badge.png");
 }
 
 {

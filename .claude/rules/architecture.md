@@ -88,7 +88,7 @@ anniversary-cat-worker/
 
 ```json
 {
-  "products": [{ "slug": "t-shirt", "sampleUrl": "...", "available": true }, ...],
+  "products": [{ "slug": "t-shirt", "sampleUrl": "...", "previewImageUrl": "...", "available": true }, ...],
   "materialId": 12345
 }
 ```
