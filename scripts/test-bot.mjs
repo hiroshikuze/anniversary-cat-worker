@@ -1371,12 +1371,19 @@ console.log("\n[buildDescription]");
   assert("期間限定と期限日が含まれる",              full.includes("【期間限定！】5月3日（日本時間）までの販売🐱"));
   assert("descriptionブロックが含まれる",           full.includes("\n\n説明テキスト\n\n"));
   assert("r2Id付きの画像ページURLが含まれる",       full.includes("?id=bot/2026-04-19"));
-  assert("ハッシュタグが含まれる",                  full.includes("#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー"));
+  assert("固定ハッシュタグが含まれる",               full.includes("#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー"));
+  assert("テーマタグ: の日を除去して追加される",     full.includes("#カレー"));
 
   const noDesc = _buildDescriptionForTest("カレーの日", "", null, NOW);
   assert("descriptionなし時は空行ブロックなし",      !noDesc.includes("\n\n\n"));
   assert("r2IdなしはTOPページURL",                  noDesc.includes("https://hiroshikuze.github.io/anniversary-cat-worker/\n"));
   assert("r2Idなし時は?id=が含まれない",            !noDesc.includes("?id="));
+
+  const noNoDhi = _buildDescriptionForTest("お花見", "", null, NOW);
+  assert("テーマタグ: の日なしはそのまま追加",       noNoDhi.includes("#お花見"));
+
+  const noTag = _buildDescriptionForTest("！！！", "", null, NOW);
+  assert("テーマタグ: 記号のみは追加されない",       !noTag.includes("# ") && noTag.endsWith("#にゃんバーサリー"));
 
   // 月またぎ: 2026-01-20 10:00 UTC（1月20日JST）→ 期限2月3日
   const JAN = Date.UTC(2026, 0, 20, 10, 0, 0);
