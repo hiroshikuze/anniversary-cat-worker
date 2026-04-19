@@ -6,6 +6,14 @@
 
 ## ミスパターン記録
 
+### 2026-04 | 複数エージェントによる引数順ずれ（createSuzuriProducts）
+
+- **状況**: 別エージェントが`createSuzuriProducts()`に`backTexture`引数を5番目に追加。rebase後、私の呼び出し箇所2か所（`resume-hires`・centerグループ）で`description`が`backTexture`に、`r2Id`が`description`にずれた
+- **原因**: リベース後に他エージェントが変更したシグネチャとの整合性を確認しなかった
+- **教訓**: 複数エージェントが同じ関数を変更する可能性がある場合、rebase後は必ず該当関数の全呼び出し箇所を`grep`で確認する。引数が多い関数はオブジェクト引数（`{description, r2Id, backTexture}`）に変えて順序依存を排除することも検討する
+
+---
+
 ### 2026-03 | ドキュメントの記載ミス（SUZURI API招待制）
 - **状況**: 調査不足のままCLAUDE.mdに「SUZURI APIは招待制」と記録した
 - **実態**: SUZURIアカウントがあれば即時利用可能だった

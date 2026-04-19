@@ -128,20 +128,23 @@ anniversary-cat-worker/
 {description}          ← 空の場合はこのブロックごと省略
 
 にゃんバーサリー {URL}  ← r2Id指定時は?id={r2Id}付き画像ページ、未指定はTOPページ
-#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー
+#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー #{themeTag}
 ```
 
 - 登録日のJST日付と期限日（+14日JST）は`buildDescription(theme, description, r2Id, nowMs)`内で算出
 - `nowMs`はテスト用引数（デフォルト`Date.now()`）。固定値で日付ロジックの回帰テストが可能
 - SUZURI自動削除（14日）は`scheduled()`のcleanupブロックで実装済み。R2と期限を統一している
+- `{themeTag}`はthemeの末尾の「の日」を除去してタグ化（例: 大仏の日 → `#大仏`）。記号のみになる場合は省略
 
 **`createSuzuriProducts()`のシグネチャ（2026-04更新）:**
 
 ```js
-createSuzuriProducts(imageUrl, theme, env, slugFilter = null, description = "", r2Id = null)
+createSuzuriProducts(imageUrl, theme, env, slugFilter = null, backTexture = null, description = "", r2Id = null)
 ```
 
-`description`・`r2Id`はフロントから`/suzuri-create`のリクエストボディで受け取り、`/resume-hires`ではR2メタから取得する。
+- `backTexture`: Tシャツ背面印刷用の base64 data URI。`null`の場合は背面印刷なし
+- `description`・`r2Id`はフロントから`/suzuri-create`のリクエストボディで受け取り、`/resume-hires`ではR2メタから取得する
+- 全商品に`resizeMode: "contain"`を設定（画像がアスペクト比を保ったまま収まる）
 
 ---
 

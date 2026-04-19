@@ -15,34 +15,22 @@
 
 ---
 
-## 未使用だが将来有用な機能
+## 実装済み追加フィールド（2026-04）
 
-### 1. `products/resizeMode`（Material Create/Update）
+### `products/resizeMode`
 
-`POST /api/v1/materials` の `products[]` 配列に指定できるオプションパラメータ。
-
-```json
-{
-  "products": [
-    {
-      "itemId": 1,
-      "resizeMode": "contain",
-      "published": true
-    }
-  ]
-}
-```
+全商品に`"contain"`を設定済み（`worker/suzuri.js` `createSuzuriProducts()`）。
 
 | 値 | 挙動 |
 | --- | --- |
 | `"contain"` | 画像をアスペクト比を保ったまま商品内に収める（余白あり） |
 | 未指定 | SUZURIのデフォルト配置（トリミングの可能性あり） |
 
-**活用場面**: 正方形以外の画像を登録する場合に余白が生まれる可能性がある。Gemini生成画像は1:1に近いが、念のため動作確認を推奨。
-
 ---
 
-### 2. `products/exemplaryItemVariantId`（Material Create/Update）
+## 未使用だが将来有用な機能
+
+### 1. `products/exemplaryItemVariantId`（Material Create/Update）
 
 「サンプル表示」に使うバリアント（色×サイズの組み合わせ）を指定するパラメータ。
 未指定の場合はSUZURI側がデフォルトを選ぶ（Tシャツはホワイト Sサイズになることが多い）。
