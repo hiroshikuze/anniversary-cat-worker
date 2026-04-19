@@ -85,7 +85,7 @@ async function checkImageModels(apiKey, allModels) {
 
   // 実際に最優先モデルで画像生成できるか
   const testModel = KNOWN_IMAGE_CANDIDATES[0];
-  console.log(`\n  [2b] ${testModel} で実際に画像生成テスト（最大35秒かかります）`);
+  console.log(`\n  [2b] ${testModel} で実際に画像生成テスト（最大60秒かかります）`);
 
   const { ok: reached, res, error } = await safeFetch(
     `${GEMINI_BASE}/${testModel}:generateContent?key=${apiKey}`,
@@ -97,7 +97,7 @@ async function checkImageModels(apiKey, allModels) {
         generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
       }),
     },
-    35_000  // Geminiの画像生成は最大20秒超かかる場合がある（GitHub Actionsネットワーク考慮）
+    60_000  // Gemini画像生成はGitHub Actionsネットワーク環境で35秒を超える場合があるため60秒に延長
   );
   if (!check(`${testModel} へ到達できる`, reached, error)) return;
 
