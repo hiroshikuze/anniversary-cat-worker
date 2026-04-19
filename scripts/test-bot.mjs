@@ -1329,5 +1329,33 @@ console.log("\n[pickEatingAction]");
   assert("5000回試行で全4パターンが出現する", seen.size === 4);
 }
 
+// ---------------------------------------------------------------------------
+// [shouldRegisterGalleryItem] ギャラリーバックグラウンド登録の重複防止ロジック
+// frontend/index.html loadGallery() の条件を純粋関数として検証
+// ---------------------------------------------------------------------------
+console.log("\n[shouldRegisterGalleryItem]");
+
+// production logic: !(products?.length > 0) && id !== currentPageId
+function shouldRegisterGalleryItem(id, currentPageId, products) {
+  return !(products?.length > 0) && id !== currentPageId;
+}
+
+assert(
+  "products未登録かつ別のidは登録すべき",
+  shouldRegisterGalleryItem("bot/2026-04-18", "bot/2026-04-19", []) === true
+);
+assert(
+  "products未登録でも現在表示中のidは登録しない（loadSharedImageに委譲）",
+  shouldRegisterGalleryItem("bot/2026-04-19", "bot/2026-04-19", []) === false
+);
+assert(
+  "products登録済みは登録しない",
+  shouldRegisterGalleryItem("bot/2026-04-18", null, [{ slug: "t-shirt" }]) === false
+);
+assert(
+  "currentPageIdがnull（通常ページ）は登録する",
+  shouldRegisterGalleryItem("bot/2026-04-18", null, []) === true
+);
+
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
 if (failed > 0) process.exit(1);
