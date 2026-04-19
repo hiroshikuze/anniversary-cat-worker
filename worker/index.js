@@ -181,7 +181,7 @@ async function handleResearch(body, apiKey) {
     `今日は${date}です。この日の日本の記念日・季節の花・重要なイベントを` +
     `Google検索で調べ、最も特徴的なものを1つ選んでください。` +
     `回答は以下のJSONのみ（マークダウン・説明文は不要）:\n` +
-    `{"theme":"記念日名","description":"50文字以内の説明","visualHint":"このテーマをかわいい猫のイラストで表現するとき背景・小物・雰囲気として使える英語キーワードを5〜8語","foodItem":"その記念日の主な行為・目的が食べることである場合のみ食材・料理名をASCII英語で1〜3語。農業・収穫・行事の象徴として食材が登場するだけの場合はnull。そうでなければnull","sourceUrl":"参照した実際のURL"}`;
+    `{"theme":"記念日名","description":"50文字以内の説明","visualHint":"このテーマをかわいい猫のイラストで表現するとき背景・小物・雰囲気として使える英語キーワードを5〜8語","foodItem":"その記念日の主な行為・目的が食べることである場合のみ食材・料理名をASCII英語で1〜3語。農業・収穫・行事の象徴として食材が登場するだけの場合はnull。そうでなければnull","kanjiChar":"このテーマを象徴する漢字一字（常用漢字・旧字体不可）。具体的な漢字が思い浮かばない場合はnull","sourceUrl":"参照した実際のURL"}`;
 
   const res = await fetchWithRetry(
     `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
@@ -385,6 +385,23 @@ const CAT_EATING_ACTIONS = [
  * @param {string|null} foodItem
  * @returns {string|null}
  */
+// ---------------------------------------------------------------------------
+// 漢字一字の正規化（Tシャツ背面印刷用）
+// ---------------------------------------------------------------------------
+
+/**
+ * Gemini が返した kanjiChar を検証し、有効な漢字一字ならそのまま返す。
+ * null / 無効 / 漢字以外の場合は "😺" を返す（印刷可能なフォールバック）。
+ * @param {string|null|undefined} raw
+ * @returns {string}
+ */
+export function normalizeKanjiChar(raw) {
+  if (!raw || typeof raw !== "string") return "😺";
+  const c = raw.trim();
+  if (c.length === 1 && /[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]/.test(c)) return c;
+  return "😺";
+}
+
 export function pickEatingAction(foodItem) {
   if (!foodItem) return null;
   // 全角文字（非ASCII）を含む場合は除外（2重チェック: research プロンプトでも英語限定を指示）
@@ -906,7 +923,7 @@ ${itemsXml}
         if (!env.SUZURI_API_KEY) {
           return Response.json({ error: "SUZURI_API_KEY が設定されていません" }, { status: 503, headers: corsH });
         }
-        const { imageData, mimeType, theme, r2Id, slugs, hiresImageData, description } = body;
+        const { imageData, mimeType, theme, r2Id, slugs, hiresImageData, description, backTexture } = body;
         if (!imageData || !mimeType || !theme) {
           return Response.json({ error: "imageData, mimeType, theme が必要です" }, { status: 400, headers: corsH });
         }
@@ -1004,7 +1021,7 @@ ${itemsXml}
             }
             console.log(`[suzuri-create] texture type=${suzuriTexture.startsWith("data:") ? "base64" : "url"}`);
             try {
-              const sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, description ?? "", r2Id ?? null);
+              const sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, backTexture ?? null, description ?? "", r2Id ?? null);
               if (r2Id && env.IMAGE_BUCKET) {
                 await updateMetaInR2(env.IMAGE_BUCKET, r2Id, { products: sr.products });
               }

@@ -314,8 +314,14 @@
     // ----------------------------------------------------------
     // What's New
     // ----------------------------------------------------------
-    const APP_VERSION = "2026-04-10";
+    const APP_VERSION = "2026-04-19";
     const CHANGELOG = [
+      {
+        version: "2026-04-19",
+        items: [
+          { icon: "🈁", ja: "Tシャツ背面に記念日テーマの漢字一字を大きく印刷するようになりました", en: "T-shirts now feature a large kanji character on the back representing the anniversary theme" },
+        ],
+      },
       {
         version: "2026-04-10",
         items: [
@@ -891,11 +897,12 @@
     // SUZURI 商品登録（手動生成・ボット共有URLの初回訪問者の両方で使用）
     // best-effort: 失敗しても画像表示は維持する
     // ----------------------------------------------------------
-    function createSuzuriFromImage(imageData, mimeType, theme, r2Id, description = "") {
+    function createSuzuriFromImage(imageData, mimeType, theme, r2Id, description = "", kanjiChar = null) {
       Promise.all([
         applyWatermark(imageData, mimeType, "bottom-right"),
         applyWatermark(imageData, mimeType, "bottom-center"),
-      ]).then(([rightWm, centerWm]) =>
+        kanjiChar ? generateKanjiTexture(kanjiChar) : Promise.resolve(null),
+      ]).then(([rightWm, centerWm, backTextureBase64]) =>
         // t-shirt/sticker グループのみ fal.ai 失敗時フォールバック用に 2048px へ事前リサイズ
         // （fal.ai 投入は 1024px のまま維持。2048px 投入 → ESRGAN 4096px → SUZURI 20MB超過のため）
         resizeForSuzuri(rightWm.imageData, rightWm.mimeType)
@@ -908,6 +915,9 @@
               r2Id,
               slugs: RIGHT_SLUGS,
               description,
+              backTexture: backTextureBase64
+                ? `data:image/jpeg;base64,${backTextureBase64}`
+                : null,
             }),
             apiFetch("/suzuri-create", {
               imageData: centerWm.imageData,
@@ -1082,6 +1092,58 @@
       });
     }
 
+    /**
+     * Tシャツ背面印刷用の漢字テクスチャを Canvas で生成する。
+     * 2000×2000px・白背景・明朝体・ほぼ黒（#111111）でローカルフォントのみ使用。
+     * @param {string} kanji - 有効な漢字一字（normalizeKanjiChar 済み）
+     * @returns {Promise<string>} base64 JPEG（quality 0.92）
+     */
+    function generateKanjiTexture(kanji) {
+      return new Promise((resolve) => {
+        const SIZE = 2000;
+        const canvas = document.createElement("canvas");
+        canvas.width  = SIZE;
+        canvas.height = SIZE;
+        const ctx = canvas.getContext("2d");
+
+        // 白背景
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, SIZE, SIZE);
+
+        // フォントスタック: ローカルの明朝体のみ（ネットワーク不要）
+        const fontFamily = [
+          '"Hiragino Mincho ProN"',  // iOS / macOS
+          '"Yu Mincho"',             // Windows 8.1+
+          '"YuMincho"',              // Windows
+          '"Noto Serif CJK JP"',     // Android / Linux
+          "serif",
+        ].join(", ");
+
+        // 最大フォントサイズを探索（キャンバスの90%に収まる最大値）
+        const maxFontSize = Math.floor(SIZE * 0.90);
+        ctx.textBaseline = "alphabetic";
+        let fontSize = maxFontSize;
+        ctx.font = `900 ${fontSize}px ${fontFamily}`;
+        while (ctx.measureText(kanji).width > SIZE * 0.90 && fontSize > 100) {
+          fontSize -= 20;
+          ctx.font = `900 ${fontSize}px ${fontFamily}`;
+        }
+
+        // 垂直中央に合わせるためのメトリクス取得
+        const metrics  = ctx.measureText(kanji);
+        const ascent   = metrics.actualBoundingBoxAscent  ?? fontSize * 0.8;
+        const descent  = metrics.actualBoundingBoxDescent ?? fontSize * 0.1;
+        const glyphH   = ascent + descent;
+        const x = (SIZE - metrics.width) / 2;
+        const y = (SIZE - glyphH) / 2 + ascent;
+
+        ctx.fillStyle = "#111111";
+        ctx.fillText(kanji, x, y);
+
+        resolve(canvas.toDataURL("image/jpeg", 0.92).split(",")[1]);
+      });
+    }
+
     // ----------------------------------------------------------
     // リサーチ → 画像生成
     // ----------------------------------------------------------
@@ -1164,8 +1226,9 @@
 
         showGenerate("result");
 
-        // ウォーターマーク合成 → SUZURI登録
-        createSuzuriFromImage(data.imageData, data.mimeType, researchData.theme, data.id ?? null, researchData.description ?? "");
+        // ウォーターマーク合成 → SUZURI登録（kanjiCharがあればTシャツ背面に漢字印刷）
+        const kanjiChar = researchData.kanjiChar ?? null;
+        createSuzuriFromImage(data.imageData, data.mimeType, researchData.theme, data.id ?? null, researchData.description ?? "", kanjiChar);
 
       } catch (err) {
         console.error("[generate] error:", err.message);
