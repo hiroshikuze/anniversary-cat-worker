@@ -9,6 +9,14 @@
 
 const SUZURI_API_BASE = "https://suzuri.jp/api/v1";
 
+function buildDescription(theme) {
+  const expiry = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+  // UTC+9 でM月D日を算出
+  const jst = new Date(expiry.getTime() + 9 * 60 * 60 * 1000);
+  const expiryStr = `${jst.getUTCMonth() + 1}月${jst.getUTCDate()}日`;
+  return `「${theme}」をテーマにAIが生成した水彩画風の猫イラストグッズです。${expiryStr}（日本時間）までの期間限定🐱 にゃんバーサリー https://hiroshikuze.github.io/anniversary-cat-worker/`;
+}
+
 /**
  * 対象商品のitemId一覧（2026-03 GET /api/v1/items で確認済み）
  * name はAPIが返す英語スラッグ
@@ -110,7 +118,7 @@ export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = nu
     body: JSON.stringify({
       texture:     imageUrl,
       title:       `${theme}と水彩画にゃんこ`,
-      description: `「${theme}」をテーマにAIが生成した水彩画風の猫イラストグッズです。毎平日、新しい記念日の猫が生まれます🐱 にゃんバーサリー https://hiroshikuze.github.io/anniversary-cat-worker/`,
+      description: buildDescription(theme),
       products:    productsToCreate,
     }),
     signal: AbortSignal.timeout(30_000),
