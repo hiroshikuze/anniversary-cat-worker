@@ -108,9 +108,10 @@ export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = nu
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      texture: imageUrl,
-      title:   `${theme}と水彩画にゃんこ`,
-      products: productsToCreate,
+      texture:     imageUrl,
+      title:       `${theme}と水彩画にゃんこ`,
+      description: `「${theme}」をテーマにAIが生成した水彩画風の猫イラストグッズです。毎平日、新しい記念日の猫が生まれます🐱 にゃんバーサリー https://hiroshikuze.github.io/anniversary-cat-worker/`,
+      products:    productsToCreate,
     }),
     signal: AbortSignal.timeout(30_000),
   });
