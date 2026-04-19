@@ -668,6 +668,11 @@
           img.alt = name;
           img.className = "w-full aspect-square object-contain bg-pink-50";
           img.loading = "lazy";
+          // SUZURI CDNはプレビュー画像を非同期生成するため、登録直後は404になることがある。
+          // ブラウザがネガティブキャッシュする前に3秒後1回だけリトライする。
+          img.onerror = () => {
+            setTimeout(() => { img.src = p.previewImageUrl + "?r=1"; }, 3000);
+          };
           const label = document.createElement("p");
           label.className = "text-xs text-center py-1 text-gray-600 font-medium";
           label.textContent = `${icon} ${name}`;
@@ -836,7 +841,9 @@
         list.appendChild(card);
 
         // productsが未登録の場合、バックグラウンドでSUZURI登録を開始
-        if (!(meta.products?.length > 0)) {
+        // ただし現在loadSharedImage()が同じidを処理中の場合はスキップ（重複登録防止）
+        const currentPageId = new URLSearchParams(location.search).get("id");
+        if (!(meta.products?.length > 0) && id !== currentPageId) {
           registerGalleryItemInBackground(id, meta);
         }
       }
@@ -876,7 +883,7 @@
         if (!res.ok) return;
         const data = await res.json();
         if (!data.imageData) return;
-        createSuzuriFromImage(data.imageData, data.mimeType ?? "image/png", meta.theme, id);
+        createSuzuriFromImage(data.imageData, data.mimeType ?? "image/png", meta.theme, id, meta.description ?? "");
       } catch (_) { /* best-effort */ }
     }
 
@@ -884,7 +891,7 @@
     // SUZURI 商品登録（手動生成・ボット共有URLの初回訪問者の両方で使用）
     // best-effort: 失敗しても画像表示は維持する
     // ----------------------------------------------------------
-    function createSuzuriFromImage(imageData, mimeType, theme, r2Id) {
+    function createSuzuriFromImage(imageData, mimeType, theme, r2Id, description = "") {
       Promise.all([
         applyWatermark(imageData, mimeType, "bottom-right"),
         applyWatermark(imageData, mimeType, "bottom-center"),
@@ -900,6 +907,7 @@
               theme,
               r2Id,
               slugs: RIGHT_SLUGS,
+              description,
             }),
             apiFetch("/suzuri-create", {
               imageData: centerWm.imageData,
@@ -907,6 +915,7 @@
               theme,
               r2Id,
               slugs: CENTER_SLUGS,
+              description,
             }),
           ]))
       ).then(([rightRes, centerRes]) => {
@@ -967,7 +976,7 @@
         } else if (data.imageData) {
           // productsが未登録（ボット画像の初回訪問者）→ このブラウザでSUZURI登録を担当する
           // Worker側で重複チェックするため、並行訪問者による二重登録は防止される
-          createSuzuriFromImage(data.imageData, data.mimeType, data.theme, id);
+          createSuzuriFromImage(data.imageData, data.mimeType, data.theme, id, data.description ?? "");
         }
 
         showGenerate("result");
@@ -1156,7 +1165,7 @@
         showGenerate("result");
 
         // ウォーターマーク合成 → SUZURI登録
-        createSuzuriFromImage(data.imageData, data.mimeType, researchData.theme, data.id ?? null);
+        createSuzuriFromImage(data.imageData, data.mimeType, researchData.theme, data.id ?? null, researchData.description ?? "");
 
       } catch (err) {
         console.error("[generate] error:", err.message);

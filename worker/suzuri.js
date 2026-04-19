@@ -9,6 +9,28 @@
 
 const SUZURI_API_BASE = "https://suzuri.jp/api/v1";
 
+function buildDescription(theme, description, r2Id, nowMs = Date.now()) {
+  const toJst = ms => new Date(ms + 9 * 60 * 60 * 1000);
+
+  const jstNow    = toJst(nowMs);
+  const todayStr  = `${jstNow.getUTCMonth() + 1}月${jstNow.getUTCDate()}日`;
+
+  const jstExpiry = toJst(nowMs + 14 * 24 * 60 * 60 * 1000);
+  const expiryStr = `${jstExpiry.getUTCMonth() + 1}月${jstExpiry.getUTCDate()}日`;
+
+  const url = r2Id
+    ? `https://hiroshikuze.github.io/anniversary-cat-worker/?id=${r2Id}`
+    : "https://hiroshikuze.github.io/anniversary-cat-worker/";
+
+  const descBlock = description ? `\n\n${description}` : "";
+
+  return `${todayStr}の「${theme}」をテーマにしました。\n【期間限定！】${expiryStr}（日本時間）までの販売🐱${descBlock}\n\nにゃんバーサリー ${url}\n#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー`;
+}
+
+export function _buildDescriptionForTest(theme, description, r2Id, nowMs) {
+  return buildDescription(theme, description, r2Id, nowMs);
+}
+
 /**
  * 対象商品のitemId一覧（2026-03 GET /api/v1/items で確認済み）
  * name はAPIが返す英語スラッグ
@@ -71,7 +93,7 @@ async function fetchAvailableItemIds(env) {
  * }}
  * @throws {Error} APIキー未設定またはAPIエラー時
  */
-export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = null) {
+export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = null, description = "", r2Id = null) {
   if (!env.SUZURI_API_KEY) {
     throw new Error("SUZURI_API_KEY が設定されていません");
   }
@@ -92,9 +114,10 @@ export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = nu
   );
 
   const productsToCreate = [...availableSlugs].map(slug => ({
-    itemId:    SUZURI_ITEM_IDS[slug],
-    price:     SUZURI_TORIBUN[slug],
-    published: true,
+    itemId:     SUZURI_ITEM_IDS[slug],
+    price:      SUZURI_TORIBUN[slug],
+    published:  true,
+    resizeMode: "contain",
   }));
 
   if (productsToCreate.length === 0) {
@@ -108,9 +131,10 @@ export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = nu
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      texture: imageUrl,
-      title:   `${theme}と水彩画にゃんこ`,
-      products: productsToCreate,
+      texture:     imageUrl,
+      title:       `${theme}と水彩画にゃんこ`,
+      description: buildDescription(theme, description, r2Id),
+      products:    productsToCreate,
     }),
     signal: AbortSignal.timeout(30_000),
   });
