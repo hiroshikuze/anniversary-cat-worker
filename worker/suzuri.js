@@ -114,9 +114,10 @@ export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = nu
   );
 
   const productsToCreate = [...availableSlugs].map(slug => ({
-    itemId:    SUZURI_ITEM_IDS[slug],
-    price:     SUZURI_TORIBUN[slug],
-    published: true,
+    itemId:     SUZURI_ITEM_IDS[slug],
+    price:      SUZURI_TORIBUN[slug],
+    published:  true,
+    resizeMode: "contain",
   }));
 
   if (productsToCreate.length === 0) {
