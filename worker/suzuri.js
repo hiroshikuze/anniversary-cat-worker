@@ -24,7 +24,12 @@ function buildDescription(theme, description, r2Id, nowMs = Date.now()) {
 
   const descBlock = description ? `\n\n${description}` : "";
 
-  return `${todayStr}の「${theme}」をテーマにしました。\n【期間限定！】${expiryStr}（日本時間）までの販売🐱${descBlock}\n\nにゃんバーサリー ${url}\n#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー`;
+  // "の日"を末尾から除去してテーマタグを生成（例: 大仏の日 → #大仏）
+  const themeBase   = theme.endsWith("の日") ? theme.slice(0, -2) : theme;
+  const themeTagRaw = themeBase.replace(/[^\p{L}\p{N}_]/gu, "").slice(0, 30);
+  const themeTag    = themeTagRaw ? ` #${themeTagRaw}` : "";
+
+  return `${todayStr}の「${theme}」をテーマにしました。\n【期間限定！】${expiryStr}（日本時間）までの販売🐱${descBlock}\n\nにゃんバーサリー ${url}\n#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー${themeTag}`;
 }
 
 export function _buildDescriptionForTest(theme, description, r2Id, nowMs) {
