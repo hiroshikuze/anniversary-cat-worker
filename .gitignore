@@ -3,3 +3,5 @@ node_modules/
 .wrangler/
 .env
 .env.*
+tmp/
+.claude/settings.local.json
