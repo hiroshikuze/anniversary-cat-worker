@@ -117,6 +117,32 @@ anniversary-cat-worker/
 - `SUZURI_API_KEY`未設定時は503を返す
 - レート制限なし（`/generate`のレート制限が上流で機能するため）
 
+**SUZURIマテリアル説明文（`buildDescription()`・2026-04）:**
+
+`POST /api/v1/materials`の`description`フィールドは任意文字列として公式APIが対応していることを確認済み（[developer docs](https://suzuri.jp/developer/documentation/v1)）。
+
+```text
+{M}月{D}日の「{theme}」をテーマにしました。
+【期間限定！】{期限日}（日本時間）までの販売🐱
+
+{description}          ← 空の場合はこのブロックごと省略
+
+にゃんバーサリー {URL}  ← r2Id指定時は?id={r2Id}付き画像ページ、未指定はTOPページ
+#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー
+```
+
+- 登録日のJST日付と期限日（+14日JST）は`buildDescription(theme, description, r2Id, nowMs)`内で算出
+- `nowMs`はテスト用引数（デフォルト`Date.now()`）。固定値で日付ロジックの回帰テストが可能
+- SUZURI自動削除（14日）は`scheduled()`のcleanupブロックで実装済み。R2と期限を統一している
+
+**`createSuzuriProducts()`のシグネチャ（2026-04更新）:**
+
+```js
+createSuzuriProducts(imageUrl, theme, env, slugFilter = null, description = "", r2Id = null)
+```
+
+`description`・`r2Id`はフロントから`/suzuri-create`のリクエストボディで受け取り、`/resume-hires`ではR2メタから取得する。
+
 ---
 
 ## レート制限

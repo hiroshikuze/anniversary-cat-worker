@@ -10,7 +10,7 @@
  */
 
 import { updateMetaInR2 } from "../worker/r2-storage.js";
-import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN } from "../worker/suzuri.js";
+import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptionForTest } from "../worker/suzuri.js";
 
 import {
   buildPostText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
@@ -1356,6 +1356,34 @@ assert(
   "currentPageIdがnull（通常ページ）は登録する",
   shouldRegisterGalleryItem("bot/2026-04-18", null, []) === true
 );
+
+// ---------------------------------------------------------------------------
+// buildDescription
+// ---------------------------------------------------------------------------
+console.log("\n[buildDescription]");
+{
+  // 固定タイムスタンプ: 2026-04-19 10:00 UTC = 日本時間 2026-04-19 19:00（4月19日）
+  // 期限: +14日 = 2026-05-03（5月3日）
+  const NOW = Date.UTC(2026, 3, 19, 10, 0, 0);
+
+  const full = _buildDescriptionForTest("カレーの日", "説明テキスト", "bot/2026-04-19", NOW);
+  assert("登録日（JST）が先頭に含まれる",          full.includes("4月19日の「カレーの日」をテーマにしました。"));
+  assert("期間限定と期限日が含まれる",              full.includes("【期間限定！】5月3日（日本時間）までの販売🐱"));
+  assert("descriptionブロックが含まれる",           full.includes("\n\n説明テキスト\n\n"));
+  assert("r2Id付きの画像ページURLが含まれる",       full.includes("?id=bot/2026-04-19"));
+  assert("ハッシュタグが含まれる",                  full.includes("#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー"));
+
+  const noDesc = _buildDescriptionForTest("カレーの日", "", null, NOW);
+  assert("descriptionなし時は空行ブロックなし",      !noDesc.includes("\n\n\n"));
+  assert("r2IdなしはTOPページURL",                  noDesc.includes("https://hiroshikuze.github.io/anniversary-cat-worker/\n"));
+  assert("r2Idなし時は?id=が含まれない",            !noDesc.includes("?id="));
+
+  // 月またぎ: 2026-01-20 10:00 UTC（1月20日JST）→ 期限2月3日
+  const JAN = Date.UTC(2026, 0, 20, 10, 0, 0);
+  const jan = _buildDescriptionForTest("テーマ", "", null, JAN);
+  assert("月またぎ: 登録日1月20日",  jan.includes("1月20日の"));
+  assert("月またぎ: 期限2月3日",     jan.includes("【期間限定！】2月3日（日本時間）"));
+}
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
 if (failed > 0) process.exit(1);

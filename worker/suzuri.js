@@ -9,14 +9,13 @@
 
 const SUZURI_API_BASE = "https://suzuri.jp/api/v1";
 
-function buildDescription(theme, description, r2Id) {
-  const now = Date.now();
+function buildDescription(theme, description, r2Id, nowMs = Date.now()) {
   const toJst = ms => new Date(ms + 9 * 60 * 60 * 1000);
 
-  const jstNow    = toJst(now);
+  const jstNow    = toJst(nowMs);
   const todayStr  = `${jstNow.getUTCMonth() + 1}月${jstNow.getUTCDate()}日`;
 
-  const jstExpiry = toJst(now + 14 * 24 * 60 * 60 * 1000);
+  const jstExpiry = toJst(nowMs + 14 * 24 * 60 * 60 * 1000);
   const expiryStr = `${jstExpiry.getUTCMonth() + 1}月${jstExpiry.getUTCDate()}日`;
 
   const url = r2Id
@@ -26,6 +25,10 @@ function buildDescription(theme, description, r2Id) {
   const descBlock = description ? `\n\n${description}` : "";
 
   return `${todayStr}の「${theme}」をテーマにしました。\n【期間限定！】${expiryStr}（日本時間）までの販売🐱${descBlock}\n\nにゃんバーサリー ${url}\n#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー`;
+}
+
+export function _buildDescriptionForTest(theme, description, r2Id, nowMs) {
+  return buildDescription(theme, description, r2Id, nowMs);
 }
 
 /**
