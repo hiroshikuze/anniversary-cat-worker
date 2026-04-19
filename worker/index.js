@@ -930,6 +930,7 @@ ${itemsXml}
         if (!imageData || !mimeType || !theme) {
           return Response.json({ error: "imageData, mimeType, theme が必要です" }, { status: 400, headers: corsH });
         }
+        console.log(`[suzuri-create] slugs=${(slugs ?? []).join(",")} backTexture=${backTexture ? `present(${backTexture.length}chars)` : "null"}`);
 
         // 重複防止: 対象スラッグが既に全件登録済みなら既存データを返して終了
         // （ボット画像の初回訪問者トリガー登録で、複数ユーザーが同時訪問した場合の二重登録防止）
