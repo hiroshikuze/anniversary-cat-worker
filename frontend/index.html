@@ -901,7 +901,7 @@
       Promise.all([
         applyWatermark(imageData, mimeType, "bottom-right"),
         applyWatermark(imageData, mimeType, "bottom-center"),
-        kanjiChar ? generateKanjiTexture(kanjiChar) : Promise.resolve(null),
+        generateKanjiTexture(kanjiChar ?? "😺"),
       ]).then(([rightWm, centerWm, backTextureBase64]) =>
         // t-shirt/sticker グループのみ fal.ai 失敗時フォールバック用に 2048px へ事前リサイズ
         // （fal.ai 投入は 1024px のまま維持。2048px 投入 → ESRGAN 4096px → SUZURI 20MB超過のため）

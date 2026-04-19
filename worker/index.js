@@ -245,10 +245,13 @@ async function handleResearch(body, apiKey) {
     sourceUrlKind = "google-search-fallback";
   }
 
+  result.kanjiChar = normalizeKanjiChar(result.kanjiChar);
+
   console.log(
     `[research] model=${model}` +
     ` theme="${result.theme}"` +
     ` descLen=${result.description?.length ?? 0}` +
+    ` kanjiChar=${result.kanjiChar}` +
     ` sourceUrlKind=${sourceUrlKind}` +
     ` sourceUrl=${result.sourceUrl ? result.sourceUrl.slice(0, 80) : "(none)"}`
   );
