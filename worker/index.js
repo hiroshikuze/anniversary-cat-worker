@@ -171,7 +171,7 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
 // ---------------------------------------------------------------------------
 // /research  ― Gemini + Google Search で今日の記念日を調査
 // ---------------------------------------------------------------------------
-async function handleResearch(body, apiKey) {
+export async function handleResearch(body, apiKey) {
   const { date } = body;
   if (!date) throw new Error("date フィールドが必要です");
 

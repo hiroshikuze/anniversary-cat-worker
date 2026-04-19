@@ -17,7 +17,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, _twoPhaseRace, normalizeKanjiChar } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, _twoPhaseRace, normalizeKanjiChar, handleResearch } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -1434,6 +1434,37 @@ console.log("\n[normalizeKanjiChar]");
 {
   // 前後の空白は trim してから検証する
   assert("前後スペース付き漢字（ 尊 ）→ 尊", normalizeKanjiChar(" 尊 ") === "尊");
+}
+
+// handleResearch: kanjiChar 正規化（Gemini が null を返した場合の回帰）
+console.log("\n[handleResearch: kanjiChar正規化]");
+{
+  const makeGeminiMock = (kanjiChar) => async () =>
+    new Response(JSON.stringify({
+      candidates: [{
+        content: { parts: [{ text: JSON.stringify({
+          theme: "テスト記念日", description: "説明", visualHint: "hint",
+          foodItem: null, kanjiChar, sourceUrl: "https://example.com",
+        })}] },
+        groundingMetadata: {},
+      }],
+    }), { status: 200 });
+
+  const origFetch = globalThis.fetch;
+
+  globalThis.fetch = makeGeminiMock(null);
+  const r1 = await handleResearch({ date: "4月19日" }, "dummy-key");
+  assert("Geminiがnullを返した場合: kanjiChar === '😺'", r1.kanjiChar === "😺");
+
+  globalThis.fetch = makeGeminiMock("図");
+  const r2 = await handleResearch({ date: "4月19日" }, "dummy-key");
+  assert("Geminiが有効な漢字を返した場合: そのまま返す", r2.kanjiChar === "図");
+
+  globalThis.fetch = makeGeminiMock("あ");
+  const r3 = await handleResearch({ date: "4月19日" }, "dummy-key");
+  assert("Geminiがひらがなを返した場合: kanjiChar === '😺'", r3.kanjiChar === "😺");
+
+  globalThis.fetch = origFetch;
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
