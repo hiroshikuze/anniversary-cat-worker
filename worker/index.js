@@ -849,7 +849,7 @@ ${itemsXml}
       }
 
       try {
-        const sr = await createSuzuriProducts(suzuriTexture, meta.theme ?? "", env, RIGHT_SLUGS, meta.description ?? "", id);
+        const sr = await createSuzuriProducts(suzuriTexture, meta.theme ?? "", env, RIGHT_SLUGS, null, meta.description ?? "", id);
         await updateMetaInR2(env.IMAGE_BUCKET, id, { products: sr.products });
         console.log(`[resume-hires] SUZURI登録完了`);
         return Response.json({ products: sr.products }, { headers: corsH });
@@ -1034,7 +1034,7 @@ ${itemsXml}
         } else {
           // center グループ: 即時処理
           const suzuriTexture = `data:${mimeType};base64,${imageData}`;
-          const suzuriResult = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, description ?? "", r2Id ?? null);
+          const suzuriResult = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, null, description ?? "", r2Id ?? null);
           if (r2Id && env.IMAGE_BUCKET) {
             try {
               await updateMetaInR2(env.IMAGE_BUCKET, r2Id, {
