@@ -883,7 +883,7 @@
         if (!res.ok) return;
         const data = await res.json();
         if (!data.imageData) return;
-        createSuzuriFromImage(data.imageData, data.mimeType ?? "image/png", meta.theme, id);
+        createSuzuriFromImage(data.imageData, data.mimeType ?? "image/png", meta.theme, id, meta.description ?? "");
       } catch (_) { /* best-effort */ }
     }
 
@@ -891,7 +891,7 @@
     // SUZURI 商品登録（手動生成・ボット共有URLの初回訪問者の両方で使用）
     // best-effort: 失敗しても画像表示は維持する
     // ----------------------------------------------------------
-    function createSuzuriFromImage(imageData, mimeType, theme, r2Id) {
+    function createSuzuriFromImage(imageData, mimeType, theme, r2Id, description = "") {
       Promise.all([
         applyWatermark(imageData, mimeType, "bottom-right"),
         applyWatermark(imageData, mimeType, "bottom-center"),
@@ -907,6 +907,7 @@
               theme,
               r2Id,
               slugs: RIGHT_SLUGS,
+              description,
             }),
             apiFetch("/suzuri-create", {
               imageData: centerWm.imageData,
@@ -914,6 +915,7 @@
               theme,
               r2Id,
               slugs: CENTER_SLUGS,
+              description,
             }),
           ]))
       ).then(([rightRes, centerRes]) => {
@@ -974,7 +976,7 @@
         } else if (data.imageData) {
           // productsが未登録（ボット画像の初回訪問者）→ このブラウザでSUZURI登録を担当する
           // Worker側で重複チェックするため、並行訪問者による二重登録は防止される
-          createSuzuriFromImage(data.imageData, data.mimeType, data.theme, id);
+          createSuzuriFromImage(data.imageData, data.mimeType, data.theme, id, data.description ?? "");
         }
 
         showGenerate("result");
@@ -1163,7 +1165,7 @@
         showGenerate("result");
 
         // ウォーターマーク合成 → SUZURI登録
-        createSuzuriFromImage(data.imageData, data.mimeType, researchData.theme, data.id ?? null);
+        createSuzuriFromImage(data.imageData, data.mimeType, researchData.theme, data.id ?? null, researchData.description ?? "");
 
       } catch (err) {
         console.error("[generate] error:", err.message);

@@ -9,12 +9,23 @@
 
 const SUZURI_API_BASE = "https://suzuri.jp/api/v1";
 
-function buildDescription(theme) {
-  const expiry = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
-  // UTC+9 でM月D日を算出
-  const jst = new Date(expiry.getTime() + 9 * 60 * 60 * 1000);
-  const expiryStr = `${jst.getUTCMonth() + 1}月${jst.getUTCDate()}日`;
-  return `「${theme}」をテーマにAIが生成した水彩画風の猫イラストグッズです。${expiryStr}（日本時間）までの期間限定🐱 にゃんバーサリー https://hiroshikuze.github.io/anniversary-cat-worker/`;
+function buildDescription(theme, description, r2Id) {
+  const now = Date.now();
+  const toJst = ms => new Date(ms + 9 * 60 * 60 * 1000);
+
+  const jstNow    = toJst(now);
+  const todayStr  = `${jstNow.getUTCMonth() + 1}月${jstNow.getUTCDate()}日`;
+
+  const jstExpiry = toJst(now + 14 * 24 * 60 * 60 * 1000);
+  const expiryStr = `${jstExpiry.getUTCMonth() + 1}月${jstExpiry.getUTCDate()}日`;
+
+  const url = r2Id
+    ? `https://hiroshikuze.github.io/anniversary-cat-worker/?id=${r2Id}`
+    : "https://hiroshikuze.github.io/anniversary-cat-worker/";
+
+  const descBlock = description ? `\n\n${description}` : "";
+
+  return `${todayStr}の「${theme}」をテーマにしました。\n【期間限定！】${expiryStr}（日本時間）までの販売🐱${descBlock}\n\nにゃんバーサリー ${url}\n#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー`;
 }
 
 /**
@@ -79,7 +90,7 @@ async function fetchAvailableItemIds(env) {
  * }}
  * @throws {Error} APIキー未設定またはAPIエラー時
  */
-export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = null) {
+export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = null, description = "", r2Id = null) {
   if (!env.SUZURI_API_KEY) {
     throw new Error("SUZURI_API_KEY が設定されていません");
   }
@@ -118,7 +129,7 @@ export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = nu
     body: JSON.stringify({
       texture:     imageUrl,
       title:       `${theme}と水彩画にゃんこ`,
-      description: buildDescription(theme),
+      description: buildDescription(theme, description, r2Id),
       products:    productsToCreate,
     }),
     signal: AbortSignal.timeout(30_000),

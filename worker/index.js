@@ -832,7 +832,7 @@ ${itemsXml}
       }
 
       try {
-        const sr = await createSuzuriProducts(suzuriTexture, meta.theme ?? "", env, RIGHT_SLUGS);
+        const sr = await createSuzuriProducts(suzuriTexture, meta.theme ?? "", env, RIGHT_SLUGS, meta.description ?? "", id);
         await updateMetaInR2(env.IMAGE_BUCKET, id, { products: sr.products });
         console.log(`[resume-hires] SUZURI登録完了`);
         return Response.json({ products: sr.products }, { headers: corsH });
@@ -906,7 +906,7 @@ ${itemsXml}
         if (!env.SUZURI_API_KEY) {
           return Response.json({ error: "SUZURI_API_KEY が設定されていません" }, { status: 503, headers: corsH });
         }
-        const { imageData, mimeType, theme, r2Id, slugs, hiresImageData } = body;
+        const { imageData, mimeType, theme, r2Id, slugs, hiresImageData, description } = body;
         if (!imageData || !mimeType || !theme) {
           return Response.json({ error: "imageData, mimeType, theme が必要です" }, { status: 400, headers: corsH });
         }
@@ -1004,7 +1004,7 @@ ${itemsXml}
             }
             console.log(`[suzuri-create] texture type=${suzuriTexture.startsWith("data:") ? "base64" : "url"}`);
             try {
-              const sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null);
+              const sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, description ?? "", r2Id ?? null);
               if (r2Id && env.IMAGE_BUCKET) {
                 await updateMetaInR2(env.IMAGE_BUCKET, r2Id, { products: sr.products });
               }
@@ -1017,7 +1017,7 @@ ${itemsXml}
         } else {
           // center グループ: 即時処理
           const suzuriTexture = `data:${mimeType};base64,${imageData}`;
-          const suzuriResult = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null);
+          const suzuriResult = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, description ?? "", r2Id ?? null);
           if (r2Id && env.IMAGE_BUCKET) {
             try {
               await updateMetaInR2(env.IMAGE_BUCKET, r2Id, {
