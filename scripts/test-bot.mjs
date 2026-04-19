@@ -17,7 +17,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, _twoPhaseRace } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, _twoPhaseRace, normalizeKanjiChar } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -1383,6 +1383,50 @@ console.log("\n[buildDescription]");
   const jan = _buildDescriptionForTest("テーマ", "", null, JAN);
   assert("月またぎ: 登録日1月20日",  jan.includes("1月20日の"));
   assert("月またぎ: 期限2月3日",     jan.includes("【期間限定！】2月3日（日本時間）"));
+}
+
+// ---------------------------------------------------------------------------
+// normalizeKanjiChar
+// ---------------------------------------------------------------------------
+console.log("\n[normalizeKanjiChar]");
+{
+  // 有効な漢字一字 → そのまま返す
+  assert("有効な漢字: 茄 → 茄", normalizeKanjiChar("茄") === "茄");
+  assert("有効な漢字: 尊 → 尊", normalizeKanjiChar("尊") === "尊");
+  assert("有効な漢字: 香 → 香", normalizeKanjiChar("香") === "香");
+  assert("有効な漢字: 愛 → 愛", normalizeKanjiChar("愛") === "愛");
+  // U+3400-U+4DBF 範囲（CJK拡張A）
+  assert("CJK拡張A範囲の文字 → そのまま返す", normalizeKanjiChar("\u3400") === "\u3400");
+  // U+F900-U+FAFF 範囲（CJK互換漢字）
+  assert("CJK互換漢字範囲の文字 → そのまま返す", normalizeKanjiChar("\uF900") === "\uF900");
+}
+
+{
+  // null / undefined / 空文字 → 😺
+  assert("null → 😺", normalizeKanjiChar(null) === "😺");
+  assert("undefined → 😺", normalizeKanjiChar(undefined) === "😺");
+  assert("空文字 → 😺", normalizeKanjiChar("") === "😺");
+}
+
+{
+  // 2文字以上 → 😺
+  assert("複数文字（茄子）→ 😺", normalizeKanjiChar("茄子") === "😺");
+  assert("複数文字（愛情）→ 😺", normalizeKanjiChar("愛情") === "😺");
+}
+
+{
+  // 漢字以外の文字 → 😺
+  assert("ひらがな（な）→ 😺", normalizeKanjiChar("な") === "😺");
+  assert("カタカナ（ナ）→ 😺", normalizeKanjiChar("ナ") === "😺");
+  assert("ASCII英字（A）→ 😺", normalizeKanjiChar("A") === "😺");
+  assert("数字（1）→ 😺", normalizeKanjiChar("1") === "😺");
+  assert("記号（@）→ 😺", normalizeKanjiChar("@") === "😺");
+  assert("絵文字（😺）→ 😺", normalizeKanjiChar("😺") === "😺");
+}
+
+{
+  // 前後の空白は trim してから検証する
+  assert("前後スペース付き漢字（ 尊 ）→ 尊", normalizeKanjiChar(" 尊 ") === "尊");
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);

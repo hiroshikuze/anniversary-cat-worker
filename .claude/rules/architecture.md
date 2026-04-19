@@ -1076,3 +1076,80 @@ const CAT_EATING_ACTIONS = [
 
 eating action は「ポーズ・動作」、emotion は「表情・気持ち」のため基本的に両立する。「真剣な表情でカレーをほおばっている」「驚きながら食べている」なども自然な組み合わせ。
 
+---
+
+#### 漢字一字の背面印刷（2026-04）
+
+記念日テーマを象徴する漢字一字をGeminiに選ばせ、SUZURIのTシャツ背面に大きく印刷する機能。
+
+##### 設計方針
+
+- `/research` のJSON出力に `"kanjiChar"` フィールドを追加（Geminiが常用漢字で回答）
+  - 指示: 「テーマの核心・象徴を表す常用漢字1文字。ひらがな・カタカナ・数字・記号は不可。適切な漢字がない場合はnull」
+  - 事前検証結果（Gemini AI Studio 高速モード）:
+
+| テーマ | kanjiChar | 評価 |
+| --- | --- | --- |
+| 大仏の日 | `"尊"` | ◎ 「仏」より崇敬の本質を捉えた |
+| カレーの日 | `"香"` | ◎ 「辛」より香りの側面を重視 |
+| 世界ペンギンの日 | `"燕"` | ○ ペンギン専用漢字がないため渡り鳥で代替 |
+| バレンタインデー | `"恋"` | ◎ 異論なし |
+| 勤労感謝の日 | `"労"` | △ シンプルすぎてデザインが弱い可能性 |
+
+- フロントエンドが `kanjiChar` を `/generate` へ渡す（`visualHint`・`foodItem`と同じ経路）
+- Workerは `normalizeKanjiChar(raw)` でバリデーション後、フロントに返却
+- `kanjiChar`がnullまたは無効値の場合は `"😺"` を使用（絵文字フォールバック）
+- SUZURIのTシャツのみに `sub_materials`（背面印刷）として適用。ステッカー・缶バッジ・アクキーには適用しない
+
+##### normalizeKanjiChar（worker/index.js からexport）
+
+```js
+// CJK統合漢字（U+4E00-U+9FFF）・拡張A（U+3400-U+4DBF）・互換（U+F900-U+FAFF）のみ許可
+export function normalizeKanjiChar(raw) {
+  if (!raw || typeof raw !== "string") return "😺";
+  const c = raw.trim();
+  if (c.length === 1 && /[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]/.test(c)) return c;
+  return "😺";
+}
+```
+
+##### Canvasによる漢字テクスチャ生成（frontend/index.html）
+
+```js
+// generateKanjiTexture(char) → base64 JPEG
+// ローカルフォント優先（ネットワーク読み込み不要）
+const KANJI_FONT_STACK = '"Hiragino Mincho ProN", "Yu Mincho", "游明朝", "Noto Serif CJK JP", serif';
+```
+
+| 項目 | 値 |
+| --- | --- |
+| Canvasサイズ | 2000×2000px |
+| フォント | 明朝体ローカルフォント（iOS: Hiragino Mincho、Windows: Yu Mincho、fallback: serif） |
+| フォントウェイト | 900（最太） |
+| フォントサイズ | Canvasに収まる最大サイズ（余白5%） |
+| 文字色 | `#111111`（ほぼ黒） |
+| 背景 | 白（`#ffffff`） |
+| 出力形式 | JPEG（quality 0.92）→ base64 data URI |
+| 絵文字フォールバック | `"😺"`（`normalizeKanjiChar`がnullを返した場合） |
+
+##### SUZURI sub_materials 仕様（t-shirtのみ）
+
+```json
+{
+  "products": [
+    {
+      "itemId": 1,
+      "published": true,
+      "sub_materials": [
+        {
+          "texture": "<base64 data URI or URL>",
+          "printSide": "back",
+          "enabled": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+詳細は`.claude/rules/suzuri-api-reference.md`の「3. 背面印刷」を参照。

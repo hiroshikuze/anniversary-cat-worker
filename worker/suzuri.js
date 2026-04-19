@@ -84,16 +84,18 @@ async function fetchAvailableItemIds(env) {
  * SUZURI商品を動的生成する。
  * 在庫確認後に有効な商品のみを作成し、在庫切れ商品は available: false で返す。
  *
- * @param {string} imageUrl - 商品に使用する画像URL（base64 data URIまたは公開URL）
- * @param {string} theme    - 記念日テーマ（マテリアルのタイトルに使用）
- * @param {object} env      - Cloudflare Workers の環境変数（SUZURI_API_KEY を含む）
+ * @param {string} imageUrl      - 商品に使用する画像URL（base64 data URIまたは公開URL）
+ * @param {string} theme         - 記念日テーマ（マテリアルのタイトルに使用）
+ * @param {object} env           - Cloudflare Workers の環境変数（SUZURI_API_KEY を含む）
+ * @param {string[]|null} slugFilter  - 登録対象スラッグの絞り込み（null = 全商品）
+ * @param {string|null} backTexture   - Tシャツ背面印刷用画像（base64 data URI）。null = 背面印刷なし
  * @returns {{
  *   materialId: number,
  *   products: Array<{ slug: string, sampleUrl: string, previewImageUrl: string, available: boolean }>
  * }}
  * @throws {Error} APIキー未設定またはAPIエラー時
  */
-export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = null, description = "", r2Id = null) {
+export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = null, backTexture = null, description = "", r2Id = null) {
   if (!env.SUZURI_API_KEY) {
     throw new Error("SUZURI_API_KEY が設定されていません");
   }
@@ -113,12 +115,21 @@ export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = nu
       .filter(slug => !availableIds || availableIds.has(SUZURI_ITEM_IDS[slug]))
   );
 
-  const productsToCreate = [...availableSlugs].map(slug => ({
-    itemId:     SUZURI_ITEM_IDS[slug],
-    price:      SUZURI_TORIBUN[slug],
-    published:  true,
-    resizeMode: "contain",
-  }));
+  const productsToCreate = [...availableSlugs].map(slug => {
+    const product = {
+      itemId:     SUZURI_ITEM_IDS[slug],
+      price:      SUZURI_TORIBUN[slug],
+      published:  true,
+      resizeMode: "contain",
+    };
+    // Tシャツのみ背面印刷を追加（backTexture が指定された場合）
+    if (slug === "t-shirt" && backTexture) {
+      product.sub_materials = [
+        { texture: backTexture, printSide: "back", enabled: true },
+      ];
+    }
+    return product;
+  });
 
   if (productsToCreate.length === 0) {
     throw new Error("SUZURI: 在庫のある商品がありません");

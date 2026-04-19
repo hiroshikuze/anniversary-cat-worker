@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd /home/user/anniversary-cat-worker && node --input-type=module <<'EOF'\nimport { readFileSync } from 'fs';\nconst file = process.env.CLAUDE_TOOL_INPUT_FILE_PATH;\nif (!file) process.exit(0);\nif (!file.endsWith('.md')) process.exit(0);\nconst content = readFileSync(file, 'utf8');\nconst violations = [];\nif (/[\\u0021-\\u007E] [\\u3000-\\u9FFF\\uFF00-\\uFFEF]/.test(content) ||\n    /[\\u3000-\\u9FFF\\uFF00-\\uFFEF] [\\u0021-\\u007E]/.test(content)) {\n  violations.push('全角・半角の間にスペースがあります（JTF 3.1.1）');\n}\nif (violations.length > 0) {\n  console.warn('[markdown-lint]', violations.join(' / '));\n}\nEOF"
+            "command": "node --input-type=module <<'EOF'\nimport { readFileSync } from 'fs';\nconst file = process.env.CLAUDE_TOOL_INPUT_FILE_PATH;\nif (!file) process.exit(0);\nif (!file.endsWith('.md')) process.exit(0);\nconst content = readFileSync(file, 'utf8');\nconst violations = [];\nif (/[\\u0021-\\u007E] [\\u3000-\\u9FFF\\uFF00-\\uFFEF]/.test(content) ||\n    /[\\u3000-\\u9FFF\\uFF00-\\uFFEF] [\\u0021-\\u007E]/.test(content)) {\n  violations.push('全角・半角の間にスペースがあります（JTF 3.1.1）');\n}\nif (violations.length > 0) {\n  console.warn('[markdown-lint]', violations.join(' / '));\n}\nEOF"
           }
         ]
       }
