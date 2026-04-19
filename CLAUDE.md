@@ -159,6 +159,7 @@ FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 | 猫の性格（`CAT_PERSONALITIES` 5種 + おまかせ・重み付き） | `worker/index.js` `pickPersonality()` | 稼働中 |
 | 猫の感情の瞬間（`CAT_EMOTIONS` 5種 + おまかせ・重み付き・毛柄・性格と独立） | `worker/index.js` `pickEmotion()` | 稼働中 |
 | 食べ物テーマの eating action（`CAT_EATING_ACTIONS` 4種・30%確率・全角除外チェック） | `worker/index.js` `pickEatingAction()` | 稼働中 |
+| 漢字一字の背面印刷（`/research`の`kanjiChar`→Canvas生成→Tシャツ`sub_materials`） | `worker/index.js` `normalizeKanjiChar()` / `frontend/index.html` `generateKanjiTexture()` | 稼働中 |
 | Bluesky Bot投稿（毎平日19:00 JST） | `worker/bluesky-bot.js` `runBot()` | 稼働中 |
 | Bot投稿完了のDiscord通知（テーマ・プロンプト全文・画像ソース・毛柄・性格・感情・食べ物アクション含む） | `worker/bluesky-bot.js` `notifyDiscord()` | 稼働中 |
 | SUZURIグッズ登録（4商品: Tシャツ・ステッカー・缶バッジ・アクキー） | `worker/suzuri.js` | 稼働中 |
