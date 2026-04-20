@@ -415,7 +415,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
       const kanjiLine = `🈁 裏面漢字: ${
         _k && /[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]/.test(_k)
           ? `${_k}（採用）`
-          : _k ? `「${_k}」無効→😺` : "なし→😺"
+          : _k ? `「${_k}」無効→🐾` : "なし→🐾"
       }`;
       const lines = [
         `✅ Bluesky投稿完了 ${dateStr}`,
