@@ -411,6 +411,12 @@ export async function runBot(env, handleResearch, handleGenerate) {
 
     // ── 6. 生成内容を Discord に通知（プロンプト確認用） ────────────────────
     try {
+      const _k = research.kanjiChar;
+      const kanjiLine = `🈁 裏面漢字: ${
+        _k && /[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]/.test(_k)
+          ? `${_k}（採用）`
+          : _k ? `「${_k}」無効→😺` : "なし→😺"
+      }`;
       const lines = [
         `✅ Bluesky投稿完了 ${dateStr}`,
         `📅 テーマ: ${research.theme}`,
@@ -420,6 +426,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
         generated.personality   ? `😺 性格: ${generated.personality}`      : null,
         generated.emotion       ? `💭 感情: ${generated.emotion}`          : null,
         generated.eatingAction  ? `🍴 食べ物アクション: ${generated.eatingAction}` : null,
+        kanjiLine,
         `🖼 ソース: ${generated.source}`,
         generated.prompt            ? `\n📋 Geminiプロンプト${generated.source === "gemini" ? "（採用）" : ""}:\n${generated.prompt}` : null,
         generated.pollinationsPrompt ? `\n📋 Pollinationsプロンプト${generated.source === "pollinations" ? "（採用）" : ""}:\n${generated.pollinationsPrompt}` : null,
