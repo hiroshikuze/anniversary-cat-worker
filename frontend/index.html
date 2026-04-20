@@ -903,7 +903,7 @@
       Promise.all([
         applyWatermark(imageData, mimeType, "bottom-right"),
         applyWatermark(imageData, mimeType, "bottom-center"),
-        generateKanjiTexture(kanjiChar ?? "😺"),
+        generateKanjiTexture(kanjiChar),
       ]).then(([rightWm, centerWm, backTextureBase64]) =>
         // t-shirt/sticker グループのみ fal.ai 失敗時フォールバック用に 2048px へ事前リサイズ
         // （fal.ai 投入は 1024px のまま維持。2048px 投入 → ESRGAN 4096px → SUZURI 20MB超過のため）
@@ -917,9 +917,7 @@
               r2Id,
               slugs: RIGHT_SLUGS,
               description,
-              backTexture: backTextureBase64
-                ? `data:image/jpeg;base64,${backTextureBase64}`
-                : null,
+              backTexture: `data:image/jpeg;base64,${backTextureBase64}`,
             }),
             apiFetch("/suzuri-create", {
               imageData: centerWm.imageData,
@@ -1103,6 +1101,10 @@
     function generateKanjiTexture(kanji) {
       return new Promise((resolve) => {
         const SIZE = 2000;
+        const GRAY = "#aaaaaa";
+        const char = kanji || "🐾";
+        const isKanji = char !== "🐾";
+
         const canvas = document.createElement("canvas");
         canvas.width  = SIZE;
         canvas.height = SIZE;
@@ -1112,35 +1114,46 @@
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, SIZE, SIZE);
 
-        // フォントスタック: ローカルの明朝体のみ（ネットワーク不要）
-        const fontFamily = [
-          '"Hiragino Mincho ProN"',  // iOS / macOS
-          '"Yu Mincho"',             // Windows 8.1+
-          '"YuMincho"',              // Windows
-          '"Noto Serif CJK JP"',     // Android / Linux
-          "serif",
-        ].join(", ");
+        const fontFamily = isKanji
+          ? ['"Hiragino Mincho ProN"', '"Yu Mincho"', '"YuMincho"', '"Noto Serif CJK JP"', "serif"].join(", ")
+          : "serif";
+        const fontWeight = isKanji ? "900" : "normal";
 
         // 最大フォントサイズを探索（キャンバスの90%に収まる最大値）
         const maxFontSize = Math.floor(SIZE * 0.90);
         ctx.textBaseline = "alphabetic";
         let fontSize = maxFontSize;
-        ctx.font = `900 ${fontSize}px ${fontFamily}`;
-        while (ctx.measureText(kanji).width > SIZE * 0.90 && fontSize > 100) {
+        ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+        while (ctx.measureText(char).width > SIZE * 0.90 && fontSize > 100) {
           fontSize -= 20;
-          ctx.font = `900 ${fontSize}px ${fontFamily}`;
+          ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
         }
 
         // 垂直中央に合わせるためのメトリクス取得
-        const metrics  = ctx.measureText(kanji);
+        const metrics  = ctx.measureText(char);
         const ascent   = metrics.actualBoundingBoxAscent  ?? fontSize * 0.8;
         const descent  = metrics.actualBoundingBoxDescent ?? fontSize * 0.1;
         const glyphH   = ascent + descent;
         const x = (SIZE - metrics.width) / 2;
         const y = (SIZE - glyphH) / 2 + ascent;
 
-        ctx.fillStyle = "#111111";
-        ctx.fillText(kanji, x, y);
+        if (isKanji) {
+          ctx.fillStyle = GRAY;
+          ctx.fillText(char, x, y);
+        } else {
+          // 絵文字はfillStyleが効かないためoffscreenで描画後source-atopでグレー化
+          const oc = document.createElement("canvas");
+          oc.width = SIZE;
+          oc.height = SIZE;
+          const octx = oc.getContext("2d");
+          octx.font = `normal ${fontSize}px serif`;
+          octx.textBaseline = "alphabetic";
+          octx.fillText(char, x, y);
+          octx.globalCompositeOperation = "source-atop";
+          octx.fillStyle = GRAY;
+          octx.fillRect(0, 0, SIZE, SIZE);
+          ctx.drawImage(oc, 0, 0);
+        }
 
         resolve(canvas.toDataURL("image/jpeg", 0.92).split(",")[1]);
       });
