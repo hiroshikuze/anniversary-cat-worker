@@ -82,7 +82,7 @@ anniversary-cat-worker/
 - `r2Id`は任意。指定時はSUZURI登録完了後にR2の`meta.json`を`materialId`/`products`で更新する。最初の呼び出しにのみ指定する。
 - `hiresImageData`は任意。t-shirt/stickerグループのみ送る。フロントがCanvas `imageSmoothingQuality:"high"`（Chrome: Lanczos / Firefox・Safari: bicubic）で2048pxにリサイズした画像。fal.ai失敗時のフォールバックとして使用し、元画像（~1024px）より印刷品質が向上する。`imageData`はfal.ai投入用として元サイズのまま維持する（2048px入力→ESRGAN→4096px≈24MBとなりSUZURI 20MB超過を招くため）。
 - `description`は任意。`/research`が返す記念日説明文。SUZURIマテリアルの`description`フィールドに使用する。
-- `backTexture`は任意。t-shirt/stickerグループのみ送る。フロントが`generateKanjiTexture(kanjiChar)`でCanvas生成した漢字テクスチャ（`data:image/jpeg;base64,...`形式）。`kanjiChar`がnullまたは無効値の場合は絵文字フォールバック（😺）で生成し、必ず送信する。Tシャツのみ`sub_materials`（背面印刷）として適用。
+- `backTexture`は任意。t-shirt/stickerグループのみ送る。フロントが`generateKanjiTexture(kanjiChar)`でCanvas生成した漢字テクスチャ（`data:image/jpeg;base64,...`形式）。`kanjiChar`がnullまたは無効値の場合は🐾フォールバックで生成し、必ず送信する。Tシャツのみ`sub_materials`（背面印刷）として適用。
 
 **重複防止チェック（2026-04追加）:**
 
@@ -838,6 +838,20 @@ ctx.waitUntil()が途中終了した稀なケース向け。フロントの60秒
 - **場所**: `frontend/index.html` `loadGallery()`（`id !== currentPageId` 条件を追加）
 - **テスト**: `scripts/test-bot.mjs` `[shouldRegisterGalleryItem]` セクションで4ケースをカバー
 
+### 18. ボット画像のSUZURI登録でkanjiCharが失われ🐾になる（2026-04）
+
+- **原因**（3箇所の連鎖）:
+  1. `bluesky-bot.js`: R2保存時のmetaオブジェクトに`kanjiChar`フィールドが含まれていなかった
+  2. `frontend/index.html` `loadSharedImage()`: Blueskyリンク初回訪問者が`createSuzuriFromImage()`を呼ぶ際に`kanjiChar`を渡していなかった
+  3. `frontend/index.html` `registerGalleryItemInBackground()`: ギャラリーからのバックグラウンド登録でも同様の漏れがあった
+- **症状**: Discordには「🈁 裏面漢字: 塔（採用）」と表示されるのに、実際のSUZURIのTシャツ裏面は🐾になっていた
+- **修正**:
+  - `bluesky-bot.js`: `meta`オブジェクトに`kanjiChar: research.kanjiChar ?? null`を追加
+  - `loadSharedImage()`: `createSuzuriFromImage()`の末尾引数に`data.kanjiChar ?? null`を追加
+  - `registerGalleryItemInBackground()`: 同上
+- **テスト**: `scripts/test-bot.mjs` `[runBot: R2メタにkanjiCharが保存される]` セクションで2ケースをカバー（有効な漢字・null）
+- **場所**: `worker/bluesky-bot.js` L367 / `frontend/index.html` `loadSharedImage()` / `registerGalleryItemInBackground()`
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
 
 - **【2026-04-23以降】`SUZURI_BASE_PRICES`の更新**
@@ -964,10 +978,54 @@ GET /rss.xml
 メインの猫に加えて、1/10の確率でゲスト動物がもう1匹登場する演出。
 
 - **確率**: 10%
-- **ゲスト候補**: 犬・ウサギ・パンダ・ペンギン・豚・鶏（猫以外の7種からランダム選択）
 - **プロンプトへの組み込み**: `pickGuestAnimal()`関数でゲストを選択し、GeminiプロンプトとPollinationsプロンプトの両方に追加する（`CAT_PERSONAS`・`CAT_PERSONALITIES`と同じパターン）
 - **Discord通知**: ゲスト登場時は`🐾 ゲスト:`行を追加
 - **実装タイミング**: 猫ペルソナ・性格・感情の3軸が安定してから着手する
+- **感情**: 主人公と同じ感情を共有する（独立抽選しない）
+
+##### ゲスト種別とパラメータ方針（2026-04 検討）
+
+| No | ゲスト種別 | 毛柄方針 | 性格方針 |
+| --- | --- | --- | --- |
+| 1〜6 | 犬・ウサギ・パンダ・ペンギン・豚・鶏 | 種固有の1〜2択（定数化） | 動物固有の1行（その動物らしさ優先） |
+| 7 | 似た年齢の猫（兄弟/友人） | 同系・対照・ランダムから確率抽選 | 主人公と独立抽選 |
+| 8 | 子猫（主人公が親/師匠） | 主人公と同系優遇 | 好奇心旺盛固定。**主人公側プロンプト変更あり** |
+
+##### 動物ゲスト（No.1〜6）の設計方針
+
+- **毛柄**: 種ごとに代表色・模様を1〜2パターン定数化する。種を指定すれば外見はAIが補完するため過剰な指定は不要
+  - 例: dog → "golden retriever" / "shiba inu" から選ぶ
+  - 例: rabbit → "white fluffy" / "gray lop-eared" から選ぶ
+- **性格**: 猫の5タイプをそのまま当てはめると違和感が出るため、動物固有の1行で表現する
+  - 例: `"friendly and energetic, approaching the cat with enthusiasm"`
+
+##### 猫ゲスト（No.7）似た年齢の猫
+
+毛柄の選び方で関係性のニュアンスが変わる。確率比は実装時に決定。
+
+| 毛柄の選び方 | 印象 | プロンプト例 |
+| --- | --- | --- |
+| 同系（タビー同士など） | 兄弟・血縁 | `"littermate with similar coat"` |
+| 対照（主人公がオレンジ→ゲストが白黒等） | 友人・対比映え | `"best friend cat with contrasting coat"` |
+| 完全ランダム独立 | 縁のある他人 | `"companion cat"` |
+
+##### 子猫ゲスト（No.8）の特殊性
+
+他の動物ゲストと異なり、**主人公側のプロンプトも変更が必要**な唯一のパターン。
+
+- **子猫側**:
+  - 毛柄: 主人公と同系が血縁らしい（確率で揃えるか完全独立かは実装時に決定）
+  - 性格: `"leaning forward with wide curious eyes"` 固定（子猫らしさ）
+- **主人公側**:
+  - `pickPersonality()` の結果に「保護者ポジション」の修飾を追加または上書き
+  - 例: 普段は `"grooming itself serenely"` でも、子猫がいるときは `"calmly watching over the kitten nearby"` に変える
+  - 完全上書きか追記かは実装時に検討する
+
+##### 未決定事項（実装前に要判断）
+
+1. 猫ゲスト（No.7）の毛柄「同系・対照・ランダム」の確率比（兄弟感を出したければ同系を高めに）
+2. 子猫（No.8）で主人公の性格プロンプトをどこまで書き換えるか（完全上書きか追記か）
+3. ゲスト候補の全体確率（10%固定か、将来的に調整するか）
 
 #### 記念日先回り実施機能（未着手・2026-04）
 
