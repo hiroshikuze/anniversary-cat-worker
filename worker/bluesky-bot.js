@@ -368,6 +368,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
           theme:       research.theme,
           description: research.description ?? "",
           sourceUrl:   research.sourceUrl   ?? "",
+          kanjiChar:   research.kanjiChar   ?? null,
           products:    [],
           createdAt:   new Date().toISOString(),
         };

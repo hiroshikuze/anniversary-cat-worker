@@ -891,7 +891,7 @@
         if (!res.ok) return;
         const data = await res.json();
         if (!data.imageData) return;
-        createSuzuriFromImage(data.imageData, data.mimeType ?? "image/png", meta.theme, id, meta.description ?? "");
+        createSuzuriFromImage(data.imageData, data.mimeType ?? "image/png", meta.theme, id, meta.description ?? "", data.kanjiChar ?? null);
       } catch (_) { /* best-effort */ }
     }
 
@@ -986,7 +986,7 @@
         } else if (data.imageData) {
           // productsが未登録（ボット画像の初回訪問者）→ このブラウザでSUZURI登録を担当する
           // Worker側で重複チェックするため、並行訪問者による二重登録は防止される
-          createSuzuriFromImage(data.imageData, data.mimeType, data.theme, id, data.description ?? "");
+          createSuzuriFromImage(data.imageData, data.mimeType, data.theme, id, data.description ?? "", data.kanjiChar ?? null);
         }
 
         showGenerate("result");
