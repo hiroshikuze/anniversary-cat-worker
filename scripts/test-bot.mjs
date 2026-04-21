@@ -1467,5 +1467,63 @@ console.log("\n[handleResearch: kanjiChar正規化]");
   globalThis.fetch = origFetch;
 }
 
+// ---------------------------------------------------------------------------
+// 【回帰】runBot - R2メタに kanjiChar が保存される
+// ボット画像の初回訪問者がSUZURI登録する際に漢字が🐾にならないための保証
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: R2メタにkanjiCharが保存される]");
+{
+  const makeEnvWithBucket = () => {
+    const store = {};
+    const bucket = {
+      async put(key, value) { store[key] = value; },
+      async get(key) {
+        if (!(key in store)) return null;
+        return { json: async () => JSON.parse(store[key]) };
+      },
+      _getMeta() {
+        const key = Object.keys(store).find(k => k.endsWith("meta.json"));
+        return key ? JSON.parse(store[key]) : null;
+      },
+    };
+    return {
+      bucket,
+      env: {
+        GEMINI_API_KEY: "test-key",
+        BLUESKY_IDENTIFIER: "", BLUESKY_APP_PASSWORD: "",
+        DISCORD_WEBHOOK_URL: "",
+        IMAGE_BUCKET: bucket,
+      },
+    };
+  };
+  const makeGenerate = () => async () => ({
+    imageData: btoa("x"), mimeType: "image/png", source: "gemini",
+  });
+
+  // 有効な漢字がR2メタに保存される
+  {
+    const { bucket, env } = makeEnvWithBucket();
+    await runBot(
+      env,
+      async () => ({ theme: "記念日", description: "説明", sourceUrl: "https://example.com", kanjiChar: "塔" }),
+      makeGenerate(),
+    );
+    const meta = bucket._getMeta();
+    assert("【回帰】kanjiChar（有効な漢字）がR2メタに保存される", meta?.kanjiChar === "塔");
+  }
+
+  // kanjiChar=nullの場合もキーごと保存される（初回訪問者に🐾を渡すために必要）
+  {
+    const { bucket, env } = makeEnvWithBucket();
+    await runBot(
+      env,
+      async () => ({ theme: "記念日", description: "説明", sourceUrl: "https://example.com", kanjiChar: null }),
+      makeGenerate(),
+    );
+    const meta = bucket._getMeta();
+    assert("【回帰】kanjiChar=nullもR2メタのキーとして保存される", meta !== null && "kanjiChar" in meta && meta.kanjiChar === null);
+  }
+}
+
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
 if (failed > 0) process.exit(1);
