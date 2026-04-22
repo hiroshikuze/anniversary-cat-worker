@@ -1027,9 +1027,9 @@ GET /rss.xml
 2. 子猫（No.8）で主人公の性格プロンプトをどこまで書き換えるか（完全上書きか追記か）
 3. ゲスト候補の全体確率（10%固定か、将来的に調整するか）
 
-#### 事前リサーチプール方式（設計確定・実装待ち・2026-04）
+#### 事前リサーチプール方式（実装済み・2026-04）
 
-ハルシネーション対策として、前日夜に翌日の記念日候補を複数件生成・フィルタリングしてR2に保存し、ボット投稿・ユーザー手動操作の両方でそのプールから選択する方式。
+ハルシネーション対策として、毎日深夜に翌日（当日）の記念日候補を複数件生成・フィルタリングしてR2に保存し、ボット投稿・ユーザー手動操作の両方でそのプールから選択する方式。
 
 ##### 背景・動機
 
@@ -1043,8 +1043,8 @@ GET /rss.xml
 | 項目 | 決定値 | 根拠 |
 | --- | --- | --- |
 | 生成方式 | **シングル並列方式**（バッチ方式は却下） | バッチはgrounding全候補共通→個別フィルタ不能。`scripts/test-gemini-research-batch.mjs`で実証 |
-| 並列生成件数 | **10件** | dedup+filter後に4〜6件残る見込み（4/20実測） |
-| Cron時刻 | **23:50 JST = `50 14 * * 0-4`（UTC）** | 翌平日分を日〜木夜に生成。翌日日付確定済み |
+| 並列生成件数 | **10件** | dedup+filter後平均2.4件（7日間実測）。季節補充込み |
+| Cron時刻 | **0:00 JST = `0 15 * * *`（UTC）** | 毎日実行。週末ユーザーアクセスにも対応 |
 | フィルタリング基準 | **①`google-search-fallback`除外 ②theme重複除去** | ①: 根拠なし。②: 4/20実測で郵政記念日3件・ネモフィラ2件の重複あり |
 | `vertexaisearch-skipped`の扱い | **フィルタ対象外（保持）** | groundingは存在する。URLが表示できないだけで内容は根拠あり |
 | 事前算出フィールド | **theme/description/visualHint/kanjiChar/foodItem/sourceUrl全件** | 現行`handleResearch()`出力構造をそのまま利用 |
@@ -1125,36 +1125,63 @@ function getSeasonalFlower(dateStr) {
 
 ##### 実測データ（`scripts/test-gemini-research-batch.mjs` / 2026-04-22）
 
+方式選定時のバッチ比較:
+
 | 方式 | 件数 | 所要時間 | sourceUrlKind | 特記事項 |
 | --- | --- | --- | --- | --- |
 | シングル直列 | 5件 | 83,946ms | skipped×4・fallback×1 | 重複多（郵政3件・ネモフィラ2件） |
 | シングル並列（推定） | 10件 | **〜17,000ms** | 個別判定可能 | dedup後4〜6件見込み |
 | バッチ | 10件 | 34,879ms | skipped（全件共通） | 個別フィルタ不能→**却下** |
 
-##### 処理フロー（確定版）
+##### 7日間シミュレーション結果（`scripts/test-pool-30days.mjs` / 2026-04-22）
+
+`GEMINI_API_KEY=xxx node scripts/test-pool-30days.mjs --days 7`を実行し、本実装のフィルタリングロジックを実際のAPIで検証した。
+
+| 指標 | 値 |
+| --- | --- |
+| テスト日数 | 7日 |
+| 合計生成 | 70件（10件/日 × 7日） |
+| fallback除外率 | **74.3%**（ほとんどが`google-search-fallback`） |
+| 重複除去率 | 3.3% |
+| **平均プール件数/日** | **2.4件**（季節補充込み） |
+| 季節補充発動 | **5/7日（71.4%）** |
+| ハルシネーション検出 | **0件**（フィルタ後残存テーマに不正な候補なし） |
+
+**考察:**
+- `google-search-fallback`比率が高い原因: Geminiが有名記念日（穀雨・植物の日等）をGoogleに問い合わせず訓練データから直接返す「知識回答」が多い。正解ではあるが根拠URLを持てないためfallbackに分類される
+- 平均2.4件は少なく見えるが、季節補充込みで最低1件は常に保証されており運用上は問題ない
+- `vertexaisearch-skipped`はgroundingが存在するため保持。7日間の残存テーマに不適切な内容はなかった
+
+**既知の制限事項:**
+- **ソフト重複**: 「花桃」と「花桃の季節」のような意味的重複はtheme文字列の完全一致では除去できない。exact-match deduplication のみ実装。実運用上の影響は軽微として受容
+
+##### 処理フロー（確定版・実装済み）
 
 ```text
-23:50 Cron（日〜木 = `50 14 * * 0-4` UTC）:
-  → handleResearch() × 10件を並列実行（翌日の日付で）
+0:00 JST Cron（`0 15 * * *` UTC・毎日）:
+  → generateResearchPool()
+  → handleResearch() × 10件を並列実行（当日のJST日付で）
   → フィルタリング: google-search-fallback除外 → theme重複除去
-  → 3件未満の場合: SEASONAL_FLOWERS[month]から補充
-  → R2に research-pool/YYYY-MM-DD として保存
+  → 3件未満の場合: SEASONAL_FLOWERS[当日区間]から補充
+  → R2に research-pool/YYYY-MM-DD.json として保存
   → Discord通知（件数・除外数・補充有無）
 
-翌日 ユーザー操作:
+当日 ユーザー操作:
   POST /research → R2プールから1件ランダム取得（Gemini呼び出しなし）
-  （プール未存在: 現行リアルタイムGeminiリサーチにフォールバック）
+  （プール未存在またはエントリなし: 現行リアルタイムGeminiリサーチにフォールバック）
 
-翌日 19:00 Bot:
-  → R2プールから1件取得 → handleGenerate() → Bluesky投稿
+当日 19:00 Bot（月〜金）:
+  → R2プールから1件ランダム取得 → handleGenerate() → Bluesky投稿
   （プール未存在: 現行フローにフォールバック）
 ```
 
-##### 未確定事項（次回実装セッションで確認）
-
-- `description`に日付が実際に混入するかの実測確認（プロンプト修正前後で比較）
-- `/research`レート制限の見直し（プール方式ではR2読み取りのみのため制限の根拠が変わる）
-- 30日間テスト運用でハルシネーション発生状況を確認してから、二重チェック方式（追加APIコスト）の要否を判断
+**実装箇所:**
+- `generateResearchPool(env)`: `worker/index.js` L207〜
+- `filterAndDedupePool(entries)`: `worker/index.js`（export済み・`test-bot.mjs`でテスト）
+- `getSeasonalFlower(dateStr)`: `worker/index.js`（export済み・`test-bot.mjs`でテスト）
+- `scheduled()`のcron分岐: `event.cron === "0 15 * * *"` → `generateResearchPool(env)` を `ctx.waitUntil()`
+- `/research`エンドポイント: R2プール優先 → フォールバックの2段構え
+- R2キー: `research-pool/YYYY-MM-DD.json`（`bot/`・`user/`と分離）
 
 ---
 

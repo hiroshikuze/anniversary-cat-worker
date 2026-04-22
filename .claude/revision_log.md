@@ -167,6 +167,16 @@
 - **ミス**: Worker側の重複防止チェック（R2メタ参照）で防げると考えていたが、両リクエストがほぼ同時にR2を読んだ場合（TOCTOUギャップ）はすり抜けることを見落としていた。ドキュメントにも「重複防止チェックが防ぐ」と誤った記述をしていた
 - **教訓**: TOCTOUギャップ（チェックと更新の間に他のリクエストが入る）はCloudflare Workersの分散環境では常に起きうる。フロント側で「同じidに対する同時呼び出し自体を防ぐ」設計で根本回避するのが正しいアプローチ。ドキュメントの「防止できる」という記述も同時に修正する
 
+### 2026-04 | sourceUrlKind の if ブロックが順次実行で上書きされ `vertexaisearch-skipped` が `google-search-fallback` に化ける
+
+- **状況**: プール方式を実装後、30日シミュレーションを実行すると fallback除外率90%・季節補充100%という異常な結果が出た
+- **原因**: `handleResearch()`の sourceUrlKind 分類を独立した複数の`if`ブロックで書いたため、上のブロックが`sourceUrlKind = "vertexaisearch-skipped"`と設定した後、下の`if (!result.sourceUrl && queries.length > 0)`ブロックが`sourceUrlKind = "google-search-fallback"`に上書きしていた。`vertexaisearch-skipped`ケースは`result.sourceUrl`を設定していなかったため、次のブロックの条件を満たしてしまった
+- **症状**: groundingが存在する`vertexaisearch-skipped`エントリが全件`google-search-fallback`と判定され、フィルタリングで除外されていた。7日シミュレーションで74.3%が誤除外
+- **修正**: 独立した`if`ブロック群を`if-else if`チェーンに書き直し、最初にマッチしたケースで処理を終える。`vertexaisearch-skipped`ケースにもGoogle検索URLを`result.sourceUrl`に設定して後続ブロックが発火しないようにした
+- **教訓**: sourceUrlKind のような「排他的分類」には必ず`if-else if`チェーンを使う。順次`if`ブロックは「後のブロックが前の結果を上書きする」バグを起こしやすい。シミュレーション（実測スクリプト）を先に実行したことで異常を即検出できた
+
+---
+
 ### 2026-04 | 実在の速報ニュースをハルシネーションと誤判断
 
 - **状況**: `scripts/test-gemini-research-batch.mjs`の出力に`2026年三陸沖地震`が含まれており、「架空イベントのハルシネーション」とユーザーに報告した
