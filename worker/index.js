@@ -355,22 +355,30 @@ export async function handleResearch(body, apiKey) {
     result.sourceUrl = "";
   }
 
-  let sourceUrlKind = "none";
-  if (!result.sourceUrl) {
-    const uri = groundingChunks[0]?.web?.uri ?? "";
-    if (uri && !uri.includes("vertexaisearch.cloud.google.com")) {
-      result.sourceUrl = uri;
-      sourceUrlKind = "grounding";
-    } else if (uri) {
-      sourceUrlKind = "vertexaisearch-skipped";
-    }
-  } else {
+  // sourceUrlKind を確定する
+  // 優先順: json > grounding > vertexaisearch-skipped > google-search-fallback > none
+  // vertexaisearch-skipped はグラウンディングが存在する（URLが非表示なだけ）ので
+  // google-search-fallback とは区別し、プールフィルタを通過させる。
+  const groundingUri = groundingChunks[0]?.web?.uri ?? "";
+  let sourceUrlKind;
+
+  if (result.sourceUrl) {
     sourceUrlKind = "json";
-  }
-  if (!result.sourceUrl && queries.length > 0) {
-    result.sourceUrl =
-      `https://www.google.com/search?q=${encodeURIComponent(queries[0])}`;
+  } else if (groundingUri && !groundingUri.includes("vertexaisearch.cloud.google.com")) {
+    result.sourceUrl = groundingUri;
+    sourceUrlKind = "grounding";
+  } else if (groundingUri) {
+    // vertexaisearch URL → グラウンディングあり・URL非表示。Googleサーチで代替
+    sourceUrlKind = "vertexaisearch-skipped";
+    if (queries.length > 0) {
+      result.sourceUrl = `https://www.google.com/search?q=${encodeURIComponent(queries[0])}`;
+    }
+  } else if (queries.length > 0) {
+    // グラウンディングなし → google-search-fallback（プールフィルタで除外対象）
+    result.sourceUrl = `https://www.google.com/search?q=${encodeURIComponent(queries[0])}`;
     sourceUrlKind = "google-search-fallback";
+  } else {
+    sourceUrlKind = "none";
   }
 
   result.kanjiChar = normalizeKanjiChar(result.kanjiChar);
