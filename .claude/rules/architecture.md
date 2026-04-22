@@ -1079,28 +1079,49 @@ GET /rss.xml
 
 **注意**: ①の修正はプール方式に限らず現行Botにも即時適用すべき。過去に三陸沖地震（実在の速報）がGemini候補に入り込んだことを確認済み（`google-search-fallback`フィルタでは除外できない）。
 
-##### SEASONAL_FLOWERS 定数（最低件数保証）
+##### SEASONAL_FLOWERS 定数（最低件数保証・確定版）
 
-フィルタリング後に3件未満になった場合の補充用。月単位で1〜3件を定義。
+フィルタリング後に3件未満になった場合の補充用。半月単位の日付範囲で定義。
+月単位より粒度が細かいため、季節感がより正確に反映される。
+苔（6月下旬）・銀杏（12月上旬）は京都の季節感に基づく。
 
 ```js
-const SEASONAL_FLOWERS = {
-  1:  ["梅", "蝋梅", "福寿草"],
-  2:  ["梅", "菜の花"],
-  3:  ["桃の花", "桜（早咲き）", "チューリップ"],
-  4:  ["桜", "藤", "芝桜"],
-  5:  ["藤", "バラ", "ツツジ"],
-  6:  ["アジサイ", "花菖蒲"],
-  7:  ["ひまわり", "朝顔", "ハス"],
-  8:  ["ひまわり", "百合"],
-  9:  ["コスモス", "彼岸花"],
-  10: ["コスモス", "菊", "金木犀"],
-  11: ["菊", "山茶花"],
-  12: ["山茶花", "水仙"],
-};
+// [MM-DD, MM-DD] の範囲で当日がどの区間か判定して flower_name を返す
+const SEASONAL_FLOWERS = [
+  { startMd: "01-01", endMd: "01-15", name: "寒椿" },
+  { startMd: "01-16", endMd: "01-31", name: "水仙" },
+  { startMd: "02-01", endMd: "02-14", name: "蝋梅" },
+  { startMd: "02-15", endMd: "02-28", name: "梅" },
+  { startMd: "03-01", endMd: "03-15", name: "菜の花" },
+  { startMd: "03-16", endMd: "03-31", name: "彼岸桜" },
+  { startMd: "04-01", endMd: "04-15", name: "染井吉野" },
+  { startMd: "04-16", endMd: "04-30", name: "藤" },
+  { startMd: "05-01", endMd: "05-15", name: "杜若" },
+  { startMd: "05-16", endMd: "05-31", name: "皐月" },
+  { startMd: "06-01", endMd: "06-15", name: "紫陽花" },
+  { startMd: "06-16", endMd: "06-30", name: "苔" },       // 西芳寺（苔寺）が見頃
+  { startMd: "07-01", endMd: "07-15", name: "蓮" },
+  { startMd: "07-16", endMd: "07-31", name: "桔梗" },
+  { startMd: "08-01", endMd: "08-15", name: "向日葵" },
+  { startMd: "08-16", endMd: "08-31", name: "百日紅" },
+  { startMd: "09-01", endMd: "09-15", name: "萩" },
+  { startMd: "09-16", endMd: "09-30", name: "彼岸花" },
+  { startMd: "10-01", endMd: "10-15", name: "秋桜" },
+  { startMd: "10-16", endMd: "10-31", name: "金木犀" },
+  { startMd: "11-01", endMd: "11-15", name: "菊" },
+  { startMd: "11-16", endMd: "11-30", name: "紅葉" },
+  { startMd: "12-01", endMd: "12-15", name: "銀杏" },     // 京都では12月上旬まで見頃
+  { startMd: "12-16", endMd: "12-31", name: "千両" },
+];
+
+// 当日の MM-DD を取得して該当エントリを返す
+function getSeasonalFlower(dateStr) {
+  const md = dateStr.slice(5); // "YYYY-MM-DD" → "MM-DD"
+  return SEASONAL_FLOWERS.find(e => md >= e.startMd && md <= e.endMd)?.name ?? "梅";
+}
 ```
 
-日本に花のない月はないため、常に最低1件の補充が保証される。AIの誤動作なし・追加APIコストなし・完全決定論的。
+日本に花のない期間はないため、常に最低1件の補充が保証される。AIの誤動作なし・追加APIコストなし・完全決定論的。
 
 ##### 実測データ（`scripts/test-gemini-research-batch.mjs` / 2026-04-22）
 
