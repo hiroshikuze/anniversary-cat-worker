@@ -1027,6 +1027,164 @@ GET /rss.xml
 2. 子猫（No.8）で主人公の性格プロンプトをどこまで書き換えるか（完全上書きか追記か）
 3. ゲスト候補の全体確率（10%固定か、将来的に調整するか）
 
+#### 事前リサーチプール方式（実装済み・2026-04）
+
+ハルシネーション対策として、毎日深夜に翌日（当日）の記念日候補を複数件生成・フィルタリングしてR2に保存し、ボット投稿・ユーザー手動操作の両方でそのプールから選択する方式。
+
+##### 背景・動機
+
+- 現行は「リサーチ → 生成 → 投稿」を1回のCron実行内で完結させるため検証時間ゼロ
+- `sourceUrlKind=google-search-fallback`（根拠URLなし）のまま投稿される事例が発生（2026-04-21: 東京スカイツリータウン開業14周年のハルシネーション）
+- 複数候補をフィルタリングすることで「全件がハルシネーション」の確率を下げられる
+- ユーザーの手動操作時も同じプールを使うため品質向上効果がサービス全体に波及する
+
+##### 確定した設計決定（2026-04-22 実測・議論により確定）
+
+| 項目 | 決定値 | 根拠 |
+| --- | --- | --- |
+| 生成方式 | **シングル並列方式**（バッチ方式は却下） | バッチはgrounding全候補共通→個別フィルタ不能。`scripts/test-gemini-research-batch.mjs`で実証 |
+| 並列生成件数 | **10件** | dedup+filter後平均2.4件（7日間実測）。季節補充込み |
+| Cron時刻 | **0:00 JST = `0 15 * * *`（UTC）** | 毎日実行。週末ユーザーアクセスにも対応 |
+| フィルタリング基準 | **①`google-search-fallback`除外 ②theme重複除去** | ①: 根拠なし。②: 4/20実測で郵政記念日3件・ネモフィラ2件の重複あり |
+| `vertexaisearch-skipped`の扱い | **フィルタ対象外（保持）** | groundingは存在する。URLが表示できないだけで内容は根拠あり |
+| 事前算出フィールド | **theme/description/visualHint/kanjiChar/foodItem/sourceUrl全件** | 現行`handleResearch()`出力構造をそのまま利用 |
+| 猫ペルソナ・性格・感情 | **generate時にランダム抽選（変更なし）** | テーマ依存でなく毎回異なる猫を出す設計を維持 |
+| 記念日の使い回し | **OK（poolは枯渇しない）** | poolはキューでなくサンプリング母集団。複数ユーザーが同テーマを選んでも問題なし |
+| ユーザーの「もう一度」体験 | **同日プール内でランダム選択** | テーマが変わる回数は候補数が上限（許容済み） |
+| 最低件数閾値 | **3件未満でSEASONAL_FLOWERS補充** | 日本に花のない月はないため常に最低1件保証 |
+| プールのR2キー | **`research-pool/YYYY-MM-DD`** | 既存の`bot/`・`user/`と分離。保持期間1〜2日で十分 |
+| Discord通知 | **pool生成完了後に件数・filter結果を通知** | 毎日の品質モニタリング |
+| コスト | 固定で1日10回のGemini呼び出し（リアルタイムと比べて変動なし） | バッチ実測で試算済み |
+
+##### プロンプト修正が必要な箇所（実装前に適用）
+
+現行の`handleResearch()`プロンプトに2箇所の修正が必要。
+
+**①速報ニュース・災害の除外**（現行Botにも同リスクあり）:
+
+```js
+// 現在
+`日本の記念日・季節の花・重要なイベントを調べ`
+
+// 修正後
+`日本の記念日・季節の行事・季節の花を調べ（速報ニュース・災害・事故・訃報は除く）`
+```
+
+**②descriptionへの日付文字列混入を防止**:
+
+```js
+// 修正後（descriptionフィールドの指示に追記）
+`"description":"50文字以内の説明（日付・曜日は含めない）"`
+```
+
+**注意**: ①の修正はプール方式に限らず現行Botにも即時適用すべき。過去に三陸沖地震（実在の速報）がGemini候補に入り込んだことを確認済み（`google-search-fallback`フィルタでは除外できない）。
+
+##### SEASONAL_FLOWERS 定数（最低件数保証・確定版）
+
+フィルタリング後に3件未満になった場合の補充用。半月単位の日付範囲で定義。
+月単位より粒度が細かいため、季節感がより正確に反映される。
+苔（6月下旬）・銀杏（12月上旬）は京都の季節感に基づく。
+
+```js
+// [MM-DD, MM-DD] の範囲で当日がどの区間か判定して flower_name を返す
+const SEASONAL_FLOWERS = [
+  { startMd: "01-01", endMd: "01-15", name: "寒椿" },
+  { startMd: "01-16", endMd: "01-31", name: "水仙" },
+  { startMd: "02-01", endMd: "02-14", name: "蝋梅" },
+  { startMd: "02-15", endMd: "02-28", name: "梅" },
+  { startMd: "03-01", endMd: "03-15", name: "菜の花" },
+  { startMd: "03-16", endMd: "03-31", name: "彼岸桜" },
+  { startMd: "04-01", endMd: "04-15", name: "染井吉野" },
+  { startMd: "04-16", endMd: "04-30", name: "藤" },
+  { startMd: "05-01", endMd: "05-15", name: "杜若" },
+  { startMd: "05-16", endMd: "05-31", name: "皐月" },
+  { startMd: "06-01", endMd: "06-15", name: "紫陽花" },
+  { startMd: "06-16", endMd: "06-30", name: "苔" },       // 西芳寺（苔寺）が見頃
+  { startMd: "07-01", endMd: "07-15", name: "蓮" },
+  { startMd: "07-16", endMd: "07-31", name: "桔梗" },
+  { startMd: "08-01", endMd: "08-15", name: "向日葵" },
+  { startMd: "08-16", endMd: "08-31", name: "百日紅" },
+  { startMd: "09-01", endMd: "09-15", name: "萩" },
+  { startMd: "09-16", endMd: "09-30", name: "彼岸花" },
+  { startMd: "10-01", endMd: "10-15", name: "秋桜" },
+  { startMd: "10-16", endMd: "10-31", name: "金木犀" },
+  { startMd: "11-01", endMd: "11-15", name: "菊" },
+  { startMd: "11-16", endMd: "11-30", name: "紅葉" },
+  { startMd: "12-01", endMd: "12-15", name: "銀杏" },     // 京都では12月上旬まで見頃
+  { startMd: "12-16", endMd: "12-31", name: "千両" },
+];
+
+// 当日の MM-DD を取得して該当エントリを返す
+function getSeasonalFlower(dateStr) {
+  const md = dateStr.slice(5); // "YYYY-MM-DD" → "MM-DD"
+  return SEASONAL_FLOWERS.find(e => md >= e.startMd && md <= e.endMd)?.name ?? "梅";
+}
+```
+
+日本に花のない期間はないため、常に最低1件の補充が保証される。AIの誤動作なし・追加APIコストなし・完全決定論的。
+
+##### 実測データ（`scripts/test-gemini-research-batch.mjs` / 2026-04-22）
+
+方式選定時のバッチ比較:
+
+| 方式 | 件数 | 所要時間 | sourceUrlKind | 特記事項 |
+| --- | --- | --- | --- | --- |
+| シングル直列 | 5件 | 83,946ms | skipped×4・fallback×1 | 重複多（郵政3件・ネモフィラ2件） |
+| シングル並列（推定） | 10件 | **〜17,000ms** | 個別判定可能 | dedup後4〜6件見込み |
+| バッチ | 10件 | 34,879ms | skipped（全件共通） | 個別フィルタ不能→**却下** |
+
+##### 7日間シミュレーション結果（`scripts/test-pool-30days.mjs` / 2026-04-22）
+
+`GEMINI_API_KEY=xxx node scripts/test-pool-30days.mjs --days 7`を実行し、本実装のフィルタリングロジックを実際のAPIで検証した。
+
+| 指標 | 値 |
+| --- | --- |
+| テスト日数 | 7日 |
+| 合計生成 | 70件（10件/日 × 7日） |
+| fallback除外率 | **74.3%**（ほとんどが`google-search-fallback`） |
+| 重複除去率 | 3.3% |
+| **平均プール件数/日** | **2.4件**（季節補充込み） |
+| 季節補充発動 | **5/7日（71.4%）** |
+| ハルシネーション検出 | **0件**（フィルタ後残存テーマに不正な候補なし） |
+
+**考察:**
+- `google-search-fallback`比率が高い原因: Geminiが有名記念日（穀雨・植物の日等）をGoogleに問い合わせず訓練データから直接返す「知識回答」が多い。正解ではあるが根拠URLを持てないためfallbackに分類される
+- 平均2.4件は少なく見えるが、季節補充込みで最低1件は常に保証されており運用上は問題ない
+- `vertexaisearch-skipped`はgroundingが存在するため保持。7日間の残存テーマに不適切な内容はなかった
+
+**既知の制限事項:**
+- **ソフト重複**: 「花桃」と「花桃の季節」のような意味的重複はtheme文字列の完全一致では除去できない。exact-match deduplication のみ実装。実運用上の影響は軽微として受容
+
+##### 処理フロー（確定版・実装済み）
+
+```text
+0:00 JST Cron（`0 15 * * *` UTC・毎日）:
+  → generateResearchPool()
+  → handleResearch() × 10件を並列実行（当日のJST日付で）
+  → フィルタリング: google-search-fallback除外 → theme重複除去
+  → 3件未満の場合: SEASONAL_FLOWERS[当日区間]から補充
+  → R2に research-pool/YYYY-MM-DD.json として保存
+  → Discord通知（件数・除外数・補充有無）
+
+当日 ユーザー操作:
+  POST /research → R2プールから1件ランダム取得（Gemini呼び出しなし）
+  （プール未存在またはエントリなし: 現行リアルタイムGeminiリサーチにフォールバック）
+
+当日 19:00 Bot（月〜金）:
+  → R2プールから1件ランダム取得 → handleGenerate() → Bluesky投稿
+  （プール未存在: 現行フローにフォールバック）
+```
+
+**実装箇所:**
+- `generateResearchPool(env)`: `worker/index.js` L207〜
+- `filterAndDedupePool(entries)`: `worker/index.js`（export済み・`test-bot.mjs`でテスト）
+- `getSeasonalFlower(dateStr)`: `worker/index.js`（export済み・`test-bot.mjs`でテスト）
+- `scheduled()`のcron分岐: `event.cron === "0 15 * * *"` → `generateResearchPool(env)` を `ctx.waitUntil()`
+- `/research`エンドポイント: R2プール優先 → フォールバックの2段構え
+- R2キー: `research-pool/YYYY-MM-DD.json`（`bot/`・`user/`と分離）
+
+---
+
 #### 記念日先回り実施機能（未着手・2026-04）
 
 12/24（クリスマスイブ）など需要が高い記念日のグッズを、当日のBotより前に生成・登録しておく機能。

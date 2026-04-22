@@ -17,7 +17,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, _twoPhaseRace, normalizeKanjiChar, handleResearch } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, _twoPhaseRace, normalizeKanjiChar, handleResearch, getSeasonalFlower, filterAndDedupePool } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -1523,6 +1523,52 @@ console.log("\n[runBot: R2メタにkanjiCharが保存される]");
     const meta = bucket._getMeta();
     assert("【回帰】kanjiChar=nullもR2メタのキーとして保存される", meta !== null && "kanjiChar" in meta && meta.kanjiChar === null);
   }
+}
+
+// ---------------------------------------------------------------------------
+// getSeasonalFlower - 日付範囲テーブルから季節の花を返す
+// ---------------------------------------------------------------------------
+console.log("\n[getSeasonalFlower]");
+{
+  assert("01-01 → 寒椿", getSeasonalFlower("2026-01-01") === "寒椿");
+  assert("01-15 → 寒椿（境界値）", getSeasonalFlower("2026-01-15") === "寒椿");
+  assert("01-16 → 水仙", getSeasonalFlower("2026-01-16") === "水仙");
+  assert("02-01 → 蝋梅", getSeasonalFlower("2026-02-01") === "蝋梅");
+  assert("04-01 → 染井吉野", getSeasonalFlower("2026-04-01") === "染井吉野");
+  assert("06-16 → 苔", getSeasonalFlower("2026-06-16") === "苔");
+  assert("06-30 → 苔（境界値）", getSeasonalFlower("2026-06-30") === "苔");
+  assert("09-16 → 彼岸花", getSeasonalFlower("2026-09-16") === "彼岸花");
+  assert("12-01 → 銀杏", getSeasonalFlower("2026-12-01") === "銀杏");
+  assert("12-16 → 千両", getSeasonalFlower("2026-12-16") === "千両");
+  assert("12-31 → 千両（境界値）", getSeasonalFlower("2026-12-31") === "千両");
+}
+
+// ---------------------------------------------------------------------------
+// filterAndDedupePool - google-search-fallback除外 + theme重複除去
+// ---------------------------------------------------------------------------
+console.log("\n[filterAndDedupePool]");
+{
+  const entries = [
+    { theme: "郵政記念日",       sourceUrlKind: "vertexaisearch-skipped", sourceUrl: "https://x.com" },
+    { theme: "ネモフィラ",        sourceUrlKind: "grounding",              sourceUrl: "https://y.com" },
+    { theme: "郵政記念日",       sourceUrlKind: "vertexaisearch-skipped", sourceUrl: "https://z.com" }, // 重複
+    { theme: "アースデイ",        sourceUrlKind: "google-search-fallback", sourceUrl: "https://www.google.com/search?q=..." }, // 除外
+    { theme: "青年海外協力隊の日", sourceUrlKind: "json",                   sourceUrl: "https://a.com" },
+  ];
+  const result = filterAndDedupePool(entries);
+  assert("google-search-fallbackを除外する", result.every(e => e.sourceUrlKind !== "google-search-fallback"));
+  assert("theme重複を1件に絞る（郵政記念日は1件のみ）", result.filter(e => e.theme === "郵政記念日").length === 1);
+  assert("vertexaisearch-skippedは保持する", result.some(e => e.sourceUrlKind === "vertexaisearch-skipped"));
+  assert("フィルタ後3件（郵政・ネモフィラ・青年海外協力隊）", result.length === 3);
+  assert("先着順を維持（郵政記念日は0番目）", result[0].theme === "郵政記念日");
+}
+{
+  // 全件がgoogle-search-fallbackの場合は空配列
+  const allFallback = [
+    { theme: "A", sourceUrlKind: "google-search-fallback" },
+    { theme: "B", sourceUrlKind: "google-search-fallback" },
+  ];
+  assert("全件fallbackなら空配列を返す", filterAndDedupePool(allFallback).length === 0);
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);

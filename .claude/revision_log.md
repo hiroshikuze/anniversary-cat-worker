@@ -167,6 +167,24 @@
 - **ミス**: Worker側の重複防止チェック（R2メタ参照）で防げると考えていたが、両リクエストがほぼ同時にR2を読んだ場合（TOCTOUギャップ）はすり抜けることを見落としていた。ドキュメントにも「重複防止チェックが防ぐ」と誤った記述をしていた
 - **教訓**: TOCTOUギャップ（チェックと更新の間に他のリクエストが入る）はCloudflare Workersの分散環境では常に起きうる。フロント側で「同じidに対する同時呼び出し自体を防ぐ」設計で根本回避するのが正しいアプローチ。ドキュメントの「防止できる」という記述も同時に修正する
 
+### 2026-04 | sourceUrlKind の if ブロックが順次実行で上書きされ `vertexaisearch-skipped` が `google-search-fallback` に化ける
+
+- **状況**: プール方式を実装後、30日シミュレーションを実行すると fallback除外率90%・季節補充100%という異常な結果が出た
+- **原因**: `handleResearch()`の sourceUrlKind 分類を独立した複数の`if`ブロックで書いたため、上のブロックが`sourceUrlKind = "vertexaisearch-skipped"`と設定した後、下の`if (!result.sourceUrl && queries.length > 0)`ブロックが`sourceUrlKind = "google-search-fallback"`に上書きしていた。`vertexaisearch-skipped`ケースは`result.sourceUrl`を設定していなかったため、次のブロックの条件を満たしてしまった
+- **症状**: groundingが存在する`vertexaisearch-skipped`エントリが全件`google-search-fallback`と判定され、フィルタリングで除外されていた。7日シミュレーションで74.3%が誤除外
+- **修正**: 独立した`if`ブロック群を`if-else if`チェーンに書き直し、最初にマッチしたケースで処理を終える。`vertexaisearch-skipped`ケースにもGoogle検索URLを`result.sourceUrl`に設定して後続ブロックが発火しないようにした
+- **教訓**: sourceUrlKind のような「排他的分類」には必ず`if-else if`チェーンを使う。順次`if`ブロックは「後のブロックが前の結果を上書きする」バグを起こしやすい。シミュレーション（実測スクリプト）を先に実行したことで異常を即検出できた
+
+---
+
+### 2026-04 | 実在の速報ニュースをハルシネーションと誤判断
+
+- **状況**: `scripts/test-gemini-research-batch.mjs`の出力に`2026年三陸沖地震`が含まれており、「架空イベントのハルシネーション」とユーザーに報告した
+- **実態**: 前日（2026-04-21）に実際に発生した地震の速報ニュースだった。Geminiが最新ニュースをgroundingして返した正常な動作
+- **真の問題**: ハルシネーションではなく「実在するがにゃんバーサリーに不向きな時事災害情報」。現行の`google-search-fallback`フィルタでは除外できない（正規URLでgroundingされるため）
+- **対処**: `handleResearch()`プロンプトに「速報ニュース・災害・事故・訃報は除く」を明示追記することで根本対策。プール方式に限らず現行Botにも即時適用が必要
+- **教訓**: AIの出力が「おかしい」と感じたとき、ハルシネーションと即断する前に「最近の実際の出来事でないか」を確認する。特に時事的な名称（年号+地名+事象）は実在の可能性が高い
+
 ### 2026-04 | 定義・exportした関数を実際の処理フローで呼び出し忘れ（normalizeKanjiChar）
 
 - **状況**: `normalizeKanjiChar()`をexportし、ドキュメントにも「Workerはnormalizeした後に返す」と記載していたが、`handleResearch()`の`return result`前に呼び出すコードを書いていなかった。Geminiが`kanjiChar: null`を返すとフロントへnullが渡り、Tシャツ背面印刷が生成されなかった
