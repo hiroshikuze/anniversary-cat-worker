@@ -151,6 +151,134 @@ function toJSTDateStringWorker(date) {
 }
 
 // ---------------------------------------------------------------------------
+// 事前リサーチプール ― SEASONAL_FLOWERS / getSeasonalFlower / filterAndDedupePool
+// ---------------------------------------------------------------------------
+
+const SEASONAL_FLOWERS = [
+  { startMd: "01-01", endMd: "01-15", name: "寒椿" },
+  { startMd: "01-16", endMd: "01-31", name: "水仙" },
+  { startMd: "02-01", endMd: "02-14", name: "蝋梅" },
+  { startMd: "02-15", endMd: "02-28", name: "梅" },
+  { startMd: "03-01", endMd: "03-15", name: "菜の花" },
+  { startMd: "03-16", endMd: "03-31", name: "彼岸桜" },
+  { startMd: "04-01", endMd: "04-15", name: "染井吉野" },
+  { startMd: "04-16", endMd: "04-30", name: "藤" },
+  { startMd: "05-01", endMd: "05-15", name: "杜若" },
+  { startMd: "05-16", endMd: "05-31", name: "皐月" },
+  { startMd: "06-01", endMd: "06-15", name: "紫陽花" },
+  { startMd: "06-16", endMd: "06-30", name: "苔" },
+  { startMd: "07-01", endMd: "07-15", name: "蓮" },
+  { startMd: "07-16", endMd: "07-31", name: "桔梗" },
+  { startMd: "08-01", endMd: "08-15", name: "向日葵" },
+  { startMd: "08-16", endMd: "08-31", name: "百日紅" },
+  { startMd: "09-01", endMd: "09-15", name: "萩" },
+  { startMd: "09-16", endMd: "09-30", name: "彼岸花" },
+  { startMd: "10-01", endMd: "10-15", name: "秋桜" },
+  { startMd: "10-16", endMd: "10-31", name: "金木犀" },
+  { startMd: "11-01", endMd: "11-15", name: "菊" },
+  { startMd: "11-16", endMd: "11-30", name: "紅葉" },
+  { startMd: "12-01", endMd: "12-15", name: "銀杏" },
+  { startMd: "12-16", endMd: "12-31", name: "千両" },
+];
+
+/** 日付文字列（YYYY-MM-DD）から季節の花名を返す */
+export function getSeasonalFlower(dateStr) {
+  const md = dateStr.slice(5); // "YYYY-MM-DD" → "MM-DD"
+  return SEASONAL_FLOWERS.find(e => md >= e.startMd && md <= e.endMd)?.name ?? "梅";
+}
+
+/**
+ * handleResearch()の結果配列から google-search-fallback を除外し theme 重複を除去する。
+ * @param {object[]} entries - handleResearch()の戻り値の配列
+ * @returns {object[]}
+ */
+export function filterAndDedupePool(entries) {
+  const valid = entries.filter(e => e.sourceUrlKind !== "google-search-fallback");
+  const seen = new Set();
+  return valid.filter(e => {
+    if (seen.has(e.theme)) return false;
+    seen.add(e.theme);
+    return true;
+  });
+}
+
+/**
+ * 当日分のリサーチプールを生成してR2に保存し、Discord通知を送る。
+ * Cron `0 15 * * *`（毎日0:00 JST）から呼ばれる。
+ */
+async function generateResearchPool(env) {
+  const apiKey = env.GEMINI_API_KEY;
+  if (!apiKey || !env.IMAGE_BUCKET) {
+    console.log("[pool] スキップ: GEMINI_API_KEY または IMAGE_BUCKET 未設定");
+    return;
+  }
+
+  const todayJst = toJSTDateStringWorker(new Date());
+  const poolKey  = `research-pool/${todayJst}`;
+
+  // 既存プールがあればスキップ（Cron重複発火対策）
+  const existing = await env.IMAGE_BUCKET.get(`${poolKey}.json`);
+  if (existing) {
+    console.log(`[pool] ${todayJst} 既存プールあり・スキップ`);
+    return;
+  }
+
+  // Geminiプロンプト用の日付文字列
+  const [year, month, day] = todayJst.split("-").map(Number);
+  const dateStr = `${year}年${month}月${day}日`;
+
+  // 10件並列生成
+  const results = await Promise.allSettled(
+    Array.from({ length: 10 }, () => handleResearch({ date: dateStr }, apiKey))
+  );
+
+  const raw          = results.filter(r => r.status === "fulfilled").map(r => r.value);
+  const failedCount  = results.filter(r => r.status === "rejected").length;
+  const fbCount      = raw.filter(e => e.sourceUrlKind === "google-search-fallback").length;
+  let   entries      = filterAndDedupePool(raw);
+
+  console.log(`[pool] 取得 ${raw.length}/10件（失敗 ${failedCount}件・fallback除外 ${fbCount}件）→ dedup後 ${entries.length}件`);
+
+  // 3件未満なら季節の花で補充
+  let supplemented = false;
+  if (entries.length < 3) {
+    const flowerName = getSeasonalFlower(todayJst);
+    entries = [...entries, {
+      theme:        `${flowerName}の季節`,
+      description:  `今の季節を彩る${flowerName}`,
+      visualHint:   `${flowerName} flowers, Japanese garden, soft petals, gentle breeze`,
+      foodItem:     null,
+      kanjiChar:    null,
+      sourceUrl:    "",
+      sourceUrlKind: "seasonal-flower-fallback",
+    }];
+    supplemented = true;
+    console.log(`[pool] 季節の花補充: ${flowerName}`);
+  }
+
+  await env.IMAGE_BUCKET.put(
+    `${poolKey}.json`,
+    JSON.stringify({ entries, generatedAt: new Date().toISOString(), date: todayJst }),
+    { httpMetadata: { contentType: "application/json" } }
+  );
+
+  const themeList = entries.map((e, i) => `  [${i + 1}] ${e.theme}`).join("\n");
+  const msg = [
+    `✅ リサーチプール生成完了 ${todayJst}`,
+    `📊 生成 ${raw.length}/10件 → fallback除外 ${fbCount}件 → 重複除去後 ${entries.length - (supplemented ? 1 : 0)}件${supplemented ? " → 季節補充1件追加" : ""}`,
+    `📅 テーマ一覧:\n${themeList}`,
+  ].join("\n");
+
+  try {
+    await notifyDiscord(env.DISCORD_WEBHOOK_URL, msg);
+  } catch (e) {
+    console.warn(`[pool] Discord通知失敗: ${e.message}`);
+  }
+
+  console.log(`[pool] ${todayJst} 完了 ${entries.length}件`);
+}
+
+// ---------------------------------------------------------------------------
 // 指数バックオフ付きフェッチ（Worker 内 → Google API）
 // ---------------------------------------------------------------------------
 async function fetchWithRetry(url, options, maxRetries = 3) {
@@ -178,10 +306,10 @@ export async function handleResearch(body, apiKey) {
   const model = await selectBestModel(apiKey);
 
   const prompt =
-    `今日は${date}です。この日の日本の記念日・季節の花・重要なイベントを` +
-    `Google検索で調べ、最も特徴的なものを1つ選んでください。` +
+    `今日は${date}です。この日の日本の記念日・季節の行事・季節の花を` +
+    `Google検索で調べ、最も特徴的なものを1つ選んでください（速報ニュース・災害・事故・訃報は除く）。` +
     `回答は以下のJSONのみ（マークダウン・説明文は不要）:\n` +
-    `{"theme":"記念日名","description":"50文字以内の説明","visualHint":"このテーマをかわいい猫のイラストで表現するとき背景・小物・雰囲気として使える英語キーワードを5〜8語","foodItem":"その記念日の主な行為・目的が食べることである場合のみ食材・料理名をASCII英語で1〜3語。農業・収穫・行事の象徴として食材が登場するだけの場合はnull。そうでなければnull","kanjiChar":"このテーマを象徴する漢字一字（常用漢字・旧字体不可）。具体的な漢字が思い浮かばない場合はnull","sourceUrl":"参照した実際のURL"}`;
+    `{"theme":"記念日名","description":"50文字以内の説明（日付・曜日は含めない）","visualHint":"このテーマをかわいい猫のイラストで表現するとき背景・小物・雰囲気として使える英語キーワードを5〜8語","foodItem":"その記念日の主な行為・目的が食べることである場合のみ食材・料理名をASCII英語で1〜3語。農業・収穫・行事の象徴として食材が登場するだけの場合はnull。そうでなければnull","kanjiChar":"このテーマを象徴する漢字一字（常用漢字・旧字体不可）。具体的な漢字が思い浮かばない場合はnull","sourceUrl":"参照した実際のURL"}`;
 
   const res = await fetchWithRetry(
     `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
@@ -246,6 +374,7 @@ export async function handleResearch(body, apiKey) {
   }
 
   result.kanjiChar = normalizeKanjiChar(result.kanjiChar);
+  result.sourceUrlKind = sourceUrlKind;
 
   console.log(
     `[research] model=${model}` +
@@ -630,10 +759,17 @@ async function handleProxyImage(request, corsH) {
 // メインハンドラ
 // ---------------------------------------------------------------------------
 export default {
-  // ── Cron Trigger: Bluesky 営業 Bot（月〜金 10:00 UTC = 19:00 JST）──────────
+  // ── Cron Trigger ──────────────────────────────────────────────────────────
+  // "0 15 * * *"   → 毎日 0:00 JST  リサーチプール生成
+  // "0 10 * * 2-6" → 月〜金 19:00 JST  Bluesky 営業 Bot
   async scheduled(event, env, ctx) {
+    if (event.cron === "0 15 * * *") {
+      ctx.waitUntil(generateResearchPool(env));
+      return;
+    }
+
+    // Bot Cron（月〜金）+ 期限切れエントリのクリーンアップ
     ctx.waitUntil((async () => {
-      // 期限切れ R2/SUZURI エントリのクリーンアップ
       if (env.IMAGE_BUCKET) {
         try {
           const expiredIds = await listExpiredIds(env.IMAGE_BUCKET);
@@ -886,7 +1022,23 @@ ${itemsXml}
             return Response.json({ error: rl.message }, { status: 429, headers: corsH });
           }
         }
-        result = await handleResearch(body, apiKey);
+        // プールから取得を試みる（R2が利用可能かつ当日プールが存在する場合）
+        if (env.IMAGE_BUCKET) {
+          const todayJst = toJSTDateStringWorker(new Date());
+          const poolObj  = await env.IMAGE_BUCKET.get(`research-pool/${todayJst}.json`);
+          if (poolObj) {
+            const pool    = await poolObj.json();
+            const entries = pool.entries ?? [];
+            if (entries.length > 0) {
+              result = entries[Math.floor(Math.random() * entries.length)];
+              console.log(`[research] pool hit date=${todayJst} theme="${result.theme}"`);
+            }
+          }
+        }
+        // プールがない場合はリアルタイムGeminiにフォールバック
+        if (!result) {
+          result = await handleResearch(body, apiKey);
+        }
       } else if (url.pathname === "/generate") {
         if (!isBypassed(request, env)) {
           const clientIp = request.headers.get("CF-Connecting-IP") ?? "unknown";
