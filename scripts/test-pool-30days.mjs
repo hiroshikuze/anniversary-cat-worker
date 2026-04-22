@@ -60,11 +60,20 @@ function kindEmoji(kind) {
   }
 }
 
+const CALL_TIMEOUT_MS = 45_000;
+
 async function testOneDay(isoDate) {
   const dateStr = toJapaneseDate(isoDate);
 
   const results = await Promise.allSettled(
-    Array.from({ length: PARALLEL }, () => handleResearch({ date: dateStr }, apiKey))
+    Array.from({ length: PARALLEL }, () =>
+      Promise.race([
+        handleResearch({ date: dateStr }, apiKey),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("45s timeout")), CALL_TIMEOUT_MS)
+        ),
+      ])
+    )
   );
 
   const succeeded   = results.filter(r => r.status === "fulfilled").map(r => r.value);
