@@ -5,6 +5,31 @@
 - 関数は単一責務か → 複数の役割を持つ関数は分割する
 - 外部APIエラーは`throw new Error("説明: status=xxx")`形式で投げているか
 - `fetch`にはタイムアウト（`AbortSignal.timeout(ms)`）を設定しているか
+- **外部HTTP通信後は必ず`res.text()`で受けてから`JSON.parse()`する**（`res.json()`直呼びは禁止）
+
+  理由: CDN・ロードバランサー・Cloudflare自身が502などを平文・HTMLで返す場合、`res.json()`は`SyntaxError`を投げてクラッシュする（過去バグ: Bug#19）。
+
+  標準パターン（JSONパース失敗自体をエラーにする場合）:
+  ```js
+  const resText = await res.text();
+  let data;
+  try { data = JSON.parse(resText); } catch {
+    throw new Error(`[API名] 非JSONレスポンス: status=${res.status} body=${resText.slice(0, 120)}`);
+  }
+  if (!res.ok) {
+    throw new Error(`[API名] エラー: status=${res.status} message=${data.xxx ?? JSON.stringify(data)}`);
+  }
+  ```
+
+  エラーメッセージにparseデータが不要な場合（Blueskyのように`data.error`が存在する場合のみ使う場合）:
+  ```js
+  const resText = await res.text();
+  let data = {};
+  try { data = JSON.parse(resText); } catch { /**/ }
+  if (!res.ok) {
+    throw new Error(`[API名] エラー: ${data.error ?? res.status} ${data.message ?? ""}`);
+  }
+  ```
 - Cloudflare Workers環境ではNode.js専用API（`Buffer`等）を使っていないか
 - テスト用コードは`export`で切り出し、本番コードと混在させない
 - WASMモジュール（Photon等）は動的importで遅延ロードする（Node.jsテスト環境でのロード失敗回避）
