@@ -1526,6 +1526,57 @@ console.log("\n[runBot: R2メタにkanjiCharが保存される]");
 }
 
 // ---------------------------------------------------------------------------
+// 【回帰】runBot: R2プールあり→プールから取得、プールなし→handleResearch呼び出し
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: R2プールからのresearch取得]");
+{
+  const makeEnvWithPool = (poolEntries) => {
+    const store = {};
+    // JST当日キーをあらかじめ格納
+    const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const dateISO = `${jst.getFullYear()}-${String(jst.getMonth() + 1).padStart(2, "0")}-${String(jst.getDate()).padStart(2, "0")}`;
+    if (poolEntries !== null) {
+      store[`research-pool/${dateISO}.json`] = JSON.stringify({ entries: poolEntries });
+    }
+    const bucket = {
+      async put(key, value) { store[key] = value; },
+      async get(key) {
+        if (!(key in store)) return null;
+        return { json: async () => JSON.parse(store[key]) };
+      },
+    };
+    return {
+      GEMINI_API_KEY: "test-key",
+      BLUESKY_IDENTIFIER: "", BLUESKY_APP_PASSWORD: "",
+      DISCORD_WEBHOOK_URL: "",
+      IMAGE_BUCKET: bucket,
+    };
+  };
+  const makeGenerate = () => async () => ({ imageData: btoa("x"), mimeType: "image/png", source: "gemini" });
+
+  // プールあり → handleResearch を呼ばずプールから取得する
+  {
+    let researchCalled = false;
+    const mockResearch = async () => { researchCalled = true; return { theme: "直接呼出", description: "", sourceUrl: "" }; };
+    const poolEntry = { theme: "プール記念日", description: "プール説明", visualHint: "hint", kanjiChar: "花", foodItem: null, sourceUrl: "https://example.com" };
+    const env = makeEnvWithPool([poolEntry]);
+
+    await runBot(env, mockResearch, makeGenerate());
+    assert("プールあり: handleResearch()を呼ばない", !researchCalled);
+  }
+
+  // プールなし → handleResearch にフォールバックする
+  {
+    let researchCalled = false;
+    const mockResearch = async () => { researchCalled = true; return { theme: "フォールバック記念日", description: "", sourceUrl: "", kanjiChar: null }; };
+    const env = makeEnvWithPool(null);
+
+    await runBot(env, mockResearch, makeGenerate());
+    assert("プールなし: handleResearch()を呼ぶ", researchCalled);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // getSeasonalFlower - 日付範囲テーブルから季節の花を返す
 // ---------------------------------------------------------------------------
 console.log("\n[getSeasonalFlower]");

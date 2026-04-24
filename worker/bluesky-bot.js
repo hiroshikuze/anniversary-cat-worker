@@ -344,10 +344,24 @@ export async function runBot(env, handleResearch, handleGenerate) {
   }
 
   try {
-    // ── 1. 記念日リサーチ ──────────────────────────────────────────────────
-    console.log(`${prefix} research 開始`);
-    const research = await handleResearch({ date: dateStr }, apiKey);
-    console.log(`${prefix} research 完了 theme="${research.theme}"`);
+    // ── 1. 記念日リサーチ（R2プール優先・フォールバックはリアルタイムGemini）──
+    let research;
+    if (env.IMAGE_BUCKET) {
+      const poolObj = await env.IMAGE_BUCKET.get(`research-pool/${jstDateISO}.json`);
+      if (poolObj) {
+        const pool    = await poolObj.json();
+        const entries = pool.entries ?? [];
+        if (entries.length > 0) {
+          research = entries[Math.floor(Math.random() * entries.length)];
+          console.log(`${prefix} research プール取得 theme="${research.theme}"`);
+        }
+      }
+    }
+    if (!research) {
+      console.log(`${prefix} research 開始`);
+      research = await handleResearch({ date: dateStr }, apiKey);
+      console.log(`${prefix} research 完了 theme="${research.theme}"`);
+    }
 
     // ── 2. 画像生成 ────────────────────────────────────────────────────────
     console.log(`${prefix} generate 開始`);

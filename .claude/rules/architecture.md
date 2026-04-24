@@ -866,6 +866,14 @@ ctx.waitUntil()が途中終了した稀なケース向け。フロントの60秒
 - **テスト**: `scripts/test-bot.mjs`に`handleResearch`・`handleGenerate`の502平文レスポンス回帰テストを追加
 - **場所**: `worker/index.js` `handleResearch()` L327 / `handleGenerate()` L623 / `generateResearchPool()` L273
 
+### 20. runBot()がR2リサーチプールを参照せずhandleResearch()を直接呼んでいた（2026-04）
+
+- **原因**: プール方式実装時に`/research`エンドポイントのプール参照ロジックを`runBot()`に反映し忘れた。Botは0:00に生成済みのプールを無視して毎回Geminiをリアルタイム呼び出ししていた
+- **影響**: プール方式のハルシネーション低減効果がBotに適用されない。2026-04-24の502障害もプールを参照していれば回避できた
+- **修正**: `runBot()`の冒頭でR2プールを参照し、エントリがあれば`handleResearch()`を呼ばずに使用。プール未存在またはエントリなしの場合のみ従来の`handleResearch()`にフォールバック
+- **テスト**: `scripts/test-bot.mjs`に「プールあり→プールから取得」「プールなし→handleResearch呼び出し」のテストを追加
+- **場所**: `worker/bluesky-bot.js` `runBot()`
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
 
 - **【2026-04-23以降】`SUZURI_BASE_PRICES`の更新**
