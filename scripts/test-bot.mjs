@@ -17,7 +17,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, _twoPhaseRace, normalizeKanjiChar, handleResearch, getSeasonalFlower, filterAndDedupePool } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -1569,6 +1569,60 @@ console.log("\n[filterAndDedupePool]");
     { theme: "B", sourceUrlKind: "google-search-fallback" },
   ];
   assert("全件fallbackなら空配列を返す", filterAndDedupePool(allFallback).length === 0);
+}
+
+// ---------------------------------------------------------------------------
+// 【回帰】Gemini 502平文レスポンスでSyntaxErrorが伝播しない
+// ---------------------------------------------------------------------------
+console.log("\n[【回帰】handleResearch: 502平文レスポンス]");
+{
+  const origFetch = globalThis.fetch;
+
+  // Gemini が 502 + 平文ボディ（Cloudflare エラーページ形式）を返すケース
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 502,
+    text: async () => "error code: 502",
+    json: async () => { throw new SyntaxError(`Unexpected token 'e', "error code: 502" is not valid JSON`); },
+  });
+
+  try {
+    await handleResearch({ date: "4月24日" }, "dummy-key");
+    assert("502平文レスポンス: エラーが発生しなかった（失敗すべき）", false);
+  } catch (e) {
+    assert("502平文レスポンス: SyntaxErrorが伝播しない", !e.message.includes("Unexpected token"));
+    assert("502平文レスポンス: ステータスコードがメッセージに含まれる", e.message.includes("502"));
+  }
+
+  globalThis.fetch = origFetch;
+}
+
+console.log("\n[【回帰】handleGenerate: 502平文レスポンス（Pollinationsフォールバック確認）]");
+{
+  const origFetch = globalThis.fetch;
+
+  // Gemini が 502 + 平文ボディを返し、Pollinations は成功するケース
+  const POLLI_IMG = "data:image/png;base64,iVBORw0KGgo=";
+  globalThis.fetch = async (url) => {
+    if (typeof url === "string" && url.includes("pollinations")) {
+      return { ok: true, headers: { get: () => "image/png" }, arrayBuffer: async () => Buffer.from("png") };
+    }
+    return {
+      ok: false,
+      status: 502,
+      text: async () => "error code: 502",
+      json: async () => { throw new SyntaxError(`Unexpected token 'e', "error code: 502" is not valid JSON`); },
+    };
+  };
+
+  try {
+    const result = await handleGenerate({ theme: "テスト", description: "" }, "dummy-key");
+    assert("502平文レスポンス: Pollinationsフォールバックで成功する", result && result.source === "pollinations");
+  } catch (e) {
+    assert(`502平文レスポンス: SyntaxErrorが伝播しない (${e.message})`, !e.message.includes("Unexpected token"));
+  }
+
+  globalThis.fetch = origFetch;
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);

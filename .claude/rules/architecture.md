@@ -852,6 +852,20 @@ ctx.waitUntil()が途中終了した稀なケース向け。フロントの60秒
 - **テスト**: `scripts/test-bot.mjs` `[runBot: R2メタにkanjiCharが保存される]` セクションで2ケースをカバー（有効な漢字・null）
 - **場所**: `worker/bluesky-bot.js` L367 / `frontend/index.html` `loadSharedImage()` / `registerGalleryItemInBackground()`
 
+### 19. Gemini API 502平文レスポンスでSyntaxErrorが伝播しBotがクラッシュ（2026-04）
+
+- **症状**: Discord通知が `❌ [bot] エラー: Unexpected token 'e', "error code: 502" is not valid JSON`
+- **原因**: `handleResearch()`・`handleGenerate()`内で`await res.json()`を`res.ok`チェックより先に呼ぶため、Gemini/Cloudflareが502を平文テキスト（`"error code: 502"`）で返したとき`res.json()`がSyntaxErrorを投げる。このエラーは`runBot()`のcatchに伝播し、意味不明なメッセージでDiscordに通知される
+- **影響範囲**:
+  - Bot（`runBot()`→`handleResearch()`直接呼び出し）: クラッシュ
+  - ユーザー向け`/generate`（`handleGenerate()`）: 同じバグあり・Geminiが502を返した場合クラッシュ
+  - ユーザー向け`/research`: R2プール経由のため影響なし
+  - `generateResearchPool()`（0:00 Cron）: `Promise.allSettled()`でラップ済みのため影響なし
+- **修正**: `res.text()`で先にボディを取得→`JSON.parse()`でパース→失敗時はステータス付きエラーを投げる
+- **副次修正**: `generateResearchPool()`の`notifyDiscord()`呼び出しで絵文字引数を省略していたためDiscord通知の先頭が`❌`になっていた（メッセージ本文の`✅`と矛盾）。`"✅"`を明示渡しに修正
+- **テスト**: `scripts/test-bot.mjs`に`handleResearch`・`handleGenerate`の502平文レスポンス回帰テストを追加
+- **場所**: `worker/index.js` `handleResearch()` L327 / `handleGenerate()` L623 / `generateResearchPool()` L273
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
 
 - **【2026-04-23以降】`SUZURI_BASE_PRICES`の更新**
