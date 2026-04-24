@@ -439,10 +439,12 @@ function makeSuzuriFetch(itemsBody, materialsBody, { itemsOk = true, materialsOk
   return async (url, opts) => {
     const method = opts?.method ?? "GET";
     if (url.includes("/items") && method === "GET") {
-      return { ok: itemsOk, status: itemsOk ? 200 : 503, json: async () => itemsBody };
+      const body = JSON.stringify(itemsBody);
+      return { ok: itemsOk, status: itemsOk ? 200 : 503, text: async () => body, json: async () => itemsBody };
     }
     if (url.includes("/materials") && method === "POST") {
-      return { ok: materialsOk, status: materialsOk ? 200 : 400, json: async () => materialsBody };
+      const body = JSON.stringify(materialsBody);
+      return { ok: materialsOk, status: materialsOk ? 200 : 400, text: async () => body, json: async () => materialsBody };
     }
     throw new Error(`Unexpected fetch: ${method} ${url}`);
   };
@@ -542,6 +544,40 @@ const ENV = { SUZURI_API_KEY: "test-key" };
 }
 
 // ---------------------------------------------------------------------------
+// 【回帰】createSuzuriProducts: /materials が502平文レスポンスを返す場合
+// ---------------------------------------------------------------------------
+console.log("\n[【回帰】createSuzuriProducts: /materials 502平文レスポンス]");
+{
+  globalThis.fetch = async (url, opts) => {
+    const method = opts?.method ?? "GET";
+    if (url.includes("/items") && method === "GET") {
+      return { ok: true, status: 200, json: async () => MOCK_ITEMS_ALL_OK };
+    }
+    // /materials が 502 + 平文ボディを返す
+    return {
+      ok: false,
+      status: 502,
+      text: async () => "error code: 502",
+      json: async () => { throw new SyntaxError(`Unexpected token 'e', "error code: 502" is not valid JSON`); },
+    };
+  };
+  let threw = false;
+  let caughtError;
+  try {
+    await createSuzuriProducts("data:image/jpeg;base64,abc", "テスト", ENV);
+  } catch (e) {
+    threw = true;
+    caughtError = e;
+  }
+  globalThis.fetch = _origFetch;
+  assert("502平文レスポンス: エラーが発生する", threw);
+  assert("502平文レスポンス: SyntaxErrorが伝播しない",
+    !(caughtError?.message ?? "").includes("Unexpected token"));
+  assert("502平文レスポンス: ステータスコードがメッセージに含まれる",
+    (caughtError?.message ?? "").includes("502"));
+}
+
+// ---------------------------------------------------------------------------
 // createSuzuriProducts: slugFilter
 // ---------------------------------------------------------------------------
 console.log("\n[createSuzuriProducts: slugFilter]");
@@ -560,7 +596,8 @@ console.log("\n[createSuzuriProducts: slugFilter]");
       const filteredProducts = makeMaterialsRes().products.filter(p =>
         body.products.some(pp => pp.itemId === p.item.id)
       );
-      return { ok: true, status: 200, json: async () => ({ material: { id: 111 }, products: filteredProducts }) };
+      const resBody = { material: { id: 111 }, products: filteredProducts };
+      return { ok: true, status: 200, text: async () => JSON.stringify(resBody), json: async () => resBody };
     }
     throw new Error(`Unexpected fetch: ${method} ${url}`);
   };
@@ -602,7 +639,8 @@ console.log("\n[createSuzuriProducts: slugFilter]");
       const filteredProducts = makeMaterialsRes().products.filter(p =>
         body.products.some(pp => pp.itemId === p.item.id)
       );
-      return { ok: true, status: 200, json: async () => ({ material: { id: 222 }, products: filteredProducts }) };
+      const resBody = { material: { id: 222 }, products: filteredProducts };
+      return { ok: true, status: 200, text: async () => JSON.stringify(resBody), json: async () => resBody };
     }
     throw new Error(`Unexpected fetch: ${method} ${url}`);
   };
@@ -654,7 +692,8 @@ console.log("\n[createSuzuriProducts: トリブン価格]");
     }
     if (url.includes("/materials") && method === "POST") {
       capturedBody = JSON.parse(opts.body);
-      return { ok: true, status: 200, json: async () => makeMaterialsRes() };
+      const resBody = makeMaterialsRes();
+      return { ok: true, status: 200, text: async () => JSON.stringify(resBody), json: async () => resBody };
     }
     throw new Error(`Unexpected fetch: ${method} ${url}`);
   };

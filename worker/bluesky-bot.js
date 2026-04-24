@@ -139,7 +139,9 @@ async function createBlueskySession(identifier, password) {
     headers: { "Content-Type": "application/json" },
     body:    JSON.stringify({ identifier, password }),
   });
-  const data = await res.json();
+  const resText = await res.text();
+  let data = {};
+  try { data = JSON.parse(resText); } catch { /**/ }
   if (!res.ok) {
     throw new Error(`Bluesky 認証失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
   }
@@ -257,7 +259,9 @@ async function uploadBlob(accessJwt, imageBytes, mimeType) {
     },
     body: imageBytes,
   });
-  const data = await res.json();
+  const resText = await res.text();
+  let data = {};
+  try { data = JSON.parse(resText); } catch { /**/ }
   if (!res.ok) {
     throw new Error(`画像アップロード失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
   }
@@ -288,7 +292,9 @@ async function createPost(accessJwt, did, text, blobRef, mimeType, altText, page
     },
     body: JSON.stringify({ repo: did, collection: "app.bsky.feed.post", record }),
   });
-  const data = await res.json();
+  const resText = await res.text();
+  let data = {};
+  try { data = JSON.parse(resText); } catch { /**/ }
   if (!res.ok) {
     throw new Error(`投稿作成失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
   }
