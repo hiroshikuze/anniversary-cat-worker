@@ -852,6 +852,28 @@ ctx.waitUntil()が途中終了した稀なケース向け。フロントの60秒
 - **テスト**: `scripts/test-bot.mjs` `[runBot: R2メタにkanjiCharが保存される]` セクションで2ケースをカバー（有効な漢字・null）
 - **場所**: `worker/bluesky-bot.js` L367 / `frontend/index.html` `loadSharedImage()` / `registerGalleryItemInBackground()`
 
+### 19. Gemini API 502平文レスポンスでSyntaxErrorが伝播しBotがクラッシュ（2026-04）
+
+- **症状**: Discord通知が `❌ [bot] エラー: Unexpected token 'e', "error code: 502" is not valid JSON`
+- **原因**: `handleResearch()`・`handleGenerate()`内で`await res.json()`を`res.ok`チェックより先に呼ぶため、Gemini/Cloudflareが502を平文テキスト（`"error code: 502"`）で返したとき`res.json()`がSyntaxErrorを投げる。このエラーは`runBot()`のcatchに伝播し、意味不明なメッセージでDiscordに通知される
+- **影響範囲**:
+  - Bot（`runBot()`→`handleResearch()`直接呼び出し）: クラッシュ
+  - ユーザー向け`/generate`（`handleGenerate()`）: 同じバグあり・Geminiが502を返した場合クラッシュ
+  - ユーザー向け`/research`: R2プール経由のため影響なし
+  - `generateResearchPool()`（0:00 Cron）: `Promise.allSettled()`でラップ済みのため影響なし
+- **修正**: `res.text()`で先にボディを取得→`JSON.parse()`でパース→失敗時はステータス付きエラーを投げる
+- **副次修正**: `generateResearchPool()`の`notifyDiscord()`呼び出しで絵文字引数を省略していたためDiscord通知の先頭が`❌`になっていた（メッセージ本文の`✅`と矛盾）。`"✅"`を明示渡しに修正
+- **テスト**: `scripts/test-bot.mjs`に`handleResearch`・`handleGenerate`の502平文レスポンス回帰テストを追加
+- **場所**: `worker/index.js` `handleResearch()` L327 / `handleGenerate()` L623 / `generateResearchPool()` L273
+
+### 20. runBot()がR2リサーチプールを参照せずhandleResearch()を直接呼んでいた（2026-04）
+
+- **原因**: プール方式実装時に`/research`エンドポイントのプール参照ロジックを`runBot()`に反映し忘れた。Botは0:00に生成済みのプールを無視して毎回Geminiをリアルタイム呼び出ししていた
+- **影響**: プール方式のハルシネーション低減効果がBotに適用されない。2026-04-24の502障害もプールを参照していれば回避できた
+- **修正**: `runBot()`の冒頭でR2プールを参照し、エントリがあれば`handleResearch()`を呼ばずに使用。プール未存在またはエントリなしの場合のみ従来の`handleResearch()`にフォールバック
+- **テスト**: `scripts/test-bot.mjs`に「プールあり→プールから取得」「プールなし→handleResearch呼び出し」のテストを追加
+- **場所**: `worker/bluesky-bot.js` `runBot()`
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
 
 - **【2026-04-23以降】`SUZURI_BASE_PRICES`の更新**
@@ -973,6 +995,54 @@ GET /rss.xml
 
 ### 将来の改善アイデア（検討中・未実装）
 
+#### 外部記念日データソース調査結果（2026-04・補助的利用の検討）
+
+補助的な記念日情報源として以下の2ソースを調査した。
+
+**重要な注意**: サンドボックス環境からja.wikipedia.orgへのfetchが403でブロックされたため、Wikipedia APIに関する情報はエージェントの学習データ由来であり、公式ドキュメントを直接確認できていない。実装前に公式ドキュメント（`mediawiki.org/wiki/API:Main_page`、`api.wikimedia.org`）で再確認すること。
+
+##### 1. Wikipedia MediaWiki API
+
+| 項目 | 内容 |
+| --- | --- |
+| ライセンス | CC BY-SA 4.0（クレジット表記・ShareAlike必須） |
+| 商用利用 | 可 |
+| レート制限 | 500リクエスト/時/IP（非認証）、5,000リクエスト/時（Personal API Token） |
+| User-Agent | 必須。未設定または汎用値は403。`NyanversaryBot/1.0 (URL; email)`形式で設定 |
+
+**致命的な問題点:**
+
+- REST v1 `/page/summary/`の`extract`フィールドに記念日セクションは含まれない。Action API（wikitext全文取得）が必要
+- wikitextのパースが複雑（`[[リンク]]`・`{{テンプレート}}`の除去、セクション番号変動への対応）
+- `onthisday/holidays` APIは日本語版の記念日を構造化データで返さない（英語版専用）
+- Cloudflare WorkersはIPが共有のため、500リクエスト/時の枠を他Workerと奪い合うリスク
+- 日によって記念日の掲載数が0〜10件以上とばらつく
+
+**補助的活用案**: `google-search-fallback`で除外されたエントリをWikipedia日付記事で照合し、記載があればWikipedia URLをsourceUrlとして採用する二次検証に利用できる。ただし実装コストが高く、Geminiのトレーニングデータ自体がWikipediaを含むため循環的な検証になるという限界もある。
+
+##### 2. 内閣府 祝日CSV / @holiday-jp
+
+| 項目 | 内容 |
+| --- | --- |
+| ライセンス | 政府標準利用規約（CC BY 4.0相当）、出典明記必須 |
+| フォーマット | Shift-JIS CSV・15〜25KB・2026〜2027年分収録 |
+| Workers対応 | `TextDecoder('shift-jis')`で対応可能 |
+
+**致命的な制限**: 国民の祝日のみ収録。「カレーの日」「大仏の日」のような記念日は一切含まれない。記念日リサーチの補助にはならない。
+
+**有用な用途**: 「祝日当日にボットを休止する」「祝日であることをDiscord通知に付記する」等の祝日判定に限定して使える。
+
+**推奨実装**: 内閣府サーバーへの直接アクセス可否が未確認のため、`@holiday-jp/holiday_jp` npmパッケージ（MIT・2050年までのデータをバンドル・約211KB・ネットワーク不要）が安全。
+
+##### 総合結論
+
+`google-search-fallback`率74.3%は外部ソース追加より以下の方法でコスト対効果高く対処できる:
+
+1. 並列生成数を10件→15〜20件に増やす
+2. `handleResearch()`プロンプトを強化してGeminiにsourceUrlを付けさせやすくする
+
+外部ソースを追加するとしても、記念日リサーチへの直接的な貢献は限定的。`@holiday-jp`は祝日判定など別用途に、Wikipedia APIは二次検証として、それぞれ限定的に使うのが現実的。
+
 #### ゲストランダム参加機能（未着手・2026-04）
 
 メインの猫に加えて、1/10の確率でゲスト動物がもう1匹登場する演出。
@@ -1021,11 +1091,11 @@ GET /rss.xml
   - 例: 普段は `"grooming itself serenely"` でも、子猫がいるときは `"calmly watching over the kitten nearby"` に変える
   - 完全上書きか追記かは実装時に検討する
 
-##### 未決定事項（実装前に要判断）
+##### 確定事項（2026-04-23）
 
-1. 猫ゲスト（No.7）の毛柄「同系・対照・ランダム」の確率比（兄弟感を出したければ同系を高めに）
-2. 子猫（No.8）で主人公の性格プロンプトをどこまで書き換えるか（完全上書きか追記か）
-3. ゲスト候補の全体確率（10%固定か、将来的に調整するか）
+1. **猫ゲスト（No.7）の毛柄確率比**: 同系60・対照30・ランダム10
+2. **子猫（No.8）の主人公プロンプト変更**: 既存の性格プロンプトに保護者修飾を追記（完全上書きしない）
+3. **ゲスト全体確率**: `GUEST_ANIMAL_PROBABILITY`定数で定義し、必要に応じて修正可能にする
 
 #### 事前リサーチプール方式（実装済み・2026-04）
 

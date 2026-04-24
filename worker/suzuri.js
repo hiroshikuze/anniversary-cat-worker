@@ -155,7 +155,11 @@ export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = nu
     signal: AbortSignal.timeout(30_000),
   });
 
-  const data = await res.json();
+  const resText = await res.text();
+  let data;
+  try { data = JSON.parse(resText); } catch {
+    throw new Error(`SUZURI商品生成失敗: status=${res.status} body=${resText.slice(0, 120)}`);
+  }
   if (!res.ok) {
     throw new Error(`SUZURI商品生成失敗: status=${res.status} message=${data.message ?? JSON.stringify(data)}`);
   }

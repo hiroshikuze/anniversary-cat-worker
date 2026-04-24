@@ -270,7 +270,7 @@ async function generateResearchPool(env) {
   ].join("\n");
 
   try {
-    await notifyDiscord(env.DISCORD_WEBHOOK_URL, msg);
+    await notifyDiscord(env.DISCORD_WEBHOOK_URL, msg, "✅");
   } catch (e) {
     console.warn(`[pool] Discord通知失敗: ${e.message}`);
   }
@@ -324,9 +324,15 @@ export async function handleResearch(body, apiKey) {
     }
   );
 
-  const data = await res.json();
+  const resText = await res.text();
   if (!res.ok) {
-    throw new Error(data.error?.message || `Gemini API エラー (${res.status})`);
+    let msg;
+    try { msg = JSON.parse(resText).error?.message; } catch { msg = resText.slice(0, 120); }
+    throw new Error(`Gemini API エラー (${res.status}): ${msg ?? ""}`);
+  }
+  let data;
+  try { data = JSON.parse(resText); } catch {
+    throw new Error(`Gemini レスポンス解析エラー: ${resText.slice(0, 120)}`);
   }
 
   const rawText =
@@ -577,7 +583,7 @@ function buildPollinationsUrl(theme, description, persona, personality, model = 
 // ---------------------------------------------------------------------------
 // /generate  ― Gemini と Pollinations を並列実行し、先に成功した方を返す
 // ---------------------------------------------------------------------------
-async function handleGenerate(body, apiKey) {
+export async function handleGenerate(body, apiKey) {
   const { theme, description } = body;
   if (!theme) throw new Error("theme フィールドが必要です");
 
@@ -620,9 +626,11 @@ async function handleGenerate(body, apiKey) {
           signal: AbortSignal.timeout(15_000),
         }
       );
-      const data = await res.json();
+      const resText = await res.text();
       if (!res.ok) {
-        const msg = data.error?.message ?? `Gemini エラー (${res.status})`;
+        let msg;
+        try { msg = JSON.parse(resText).error?.message; } catch { msg = resText.slice(0, 120); }
+        msg = msg ?? `Gemini エラー (${res.status})`;
         // モデルが存在しない / API バージョン非対応 → 次の候補へ
         if (res.status === 404 || msg.includes("not found") || msg.includes("not supported")) {
           console.warn(`[generate] model=${model} unavailable(${res.status}): ${msg.slice(0, 100)}`);
@@ -635,6 +643,10 @@ async function handleGenerate(body, apiKey) {
         }
         // その他のエラー（クォータ超過・安全フィルタ等）は即座に失敗
         throw new Error(msg);
+      }
+      let data;
+      try { data = JSON.parse(resText); } catch {
+        throw new Error(`Gemini レスポンス解析エラー: ${resText.slice(0, 120)}`);
       }
       const parts = data.candidates?.[0]?.content?.parts ?? [];
       const imagePart = parts.find((p) => p.inlineData);

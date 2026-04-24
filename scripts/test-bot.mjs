@@ -17,7 +17,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, _twoPhaseRace, normalizeKanjiChar, handleResearch, getSeasonalFlower, filterAndDedupePool } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -439,10 +439,12 @@ function makeSuzuriFetch(itemsBody, materialsBody, { itemsOk = true, materialsOk
   return async (url, opts) => {
     const method = opts?.method ?? "GET";
     if (url.includes("/items") && method === "GET") {
-      return { ok: itemsOk, status: itemsOk ? 200 : 503, json: async () => itemsBody };
+      const body = JSON.stringify(itemsBody);
+      return { ok: itemsOk, status: itemsOk ? 200 : 503, text: async () => body, json: async () => itemsBody };
     }
     if (url.includes("/materials") && method === "POST") {
-      return { ok: materialsOk, status: materialsOk ? 200 : 400, json: async () => materialsBody };
+      const body = JSON.stringify(materialsBody);
+      return { ok: materialsOk, status: materialsOk ? 200 : 400, text: async () => body, json: async () => materialsBody };
     }
     throw new Error(`Unexpected fetch: ${method} ${url}`);
   };
@@ -542,6 +544,40 @@ const ENV = { SUZURI_API_KEY: "test-key" };
 }
 
 // ---------------------------------------------------------------------------
+// 【回帰】createSuzuriProducts: /materials が502平文レスポンスを返す場合
+// ---------------------------------------------------------------------------
+console.log("\n[【回帰】createSuzuriProducts: /materials 502平文レスポンス]");
+{
+  globalThis.fetch = async (url, opts) => {
+    const method = opts?.method ?? "GET";
+    if (url.includes("/items") && method === "GET") {
+      return { ok: true, status: 200, json: async () => MOCK_ITEMS_ALL_OK };
+    }
+    // /materials が 502 + 平文ボディを返す
+    return {
+      ok: false,
+      status: 502,
+      text: async () => "error code: 502",
+      json: async () => { throw new SyntaxError(`Unexpected token 'e', "error code: 502" is not valid JSON`); },
+    };
+  };
+  let threw = false;
+  let caughtError;
+  try {
+    await createSuzuriProducts("data:image/jpeg;base64,abc", "テスト", ENV);
+  } catch (e) {
+    threw = true;
+    caughtError = e;
+  }
+  globalThis.fetch = _origFetch;
+  assert("502平文レスポンス: エラーが発生する", threw);
+  assert("502平文レスポンス: SyntaxErrorが伝播しない",
+    !(caughtError?.message ?? "").includes("Unexpected token"));
+  assert("502平文レスポンス: ステータスコードがメッセージに含まれる",
+    (caughtError?.message ?? "").includes("502"));
+}
+
+// ---------------------------------------------------------------------------
 // createSuzuriProducts: slugFilter
 // ---------------------------------------------------------------------------
 console.log("\n[createSuzuriProducts: slugFilter]");
@@ -560,7 +596,8 @@ console.log("\n[createSuzuriProducts: slugFilter]");
       const filteredProducts = makeMaterialsRes().products.filter(p =>
         body.products.some(pp => pp.itemId === p.item.id)
       );
-      return { ok: true, status: 200, json: async () => ({ material: { id: 111 }, products: filteredProducts }) };
+      const resBody = { material: { id: 111 }, products: filteredProducts };
+      return { ok: true, status: 200, text: async () => JSON.stringify(resBody), json: async () => resBody };
     }
     throw new Error(`Unexpected fetch: ${method} ${url}`);
   };
@@ -602,7 +639,8 @@ console.log("\n[createSuzuriProducts: slugFilter]");
       const filteredProducts = makeMaterialsRes().products.filter(p =>
         body.products.some(pp => pp.itemId === p.item.id)
       );
-      return { ok: true, status: 200, json: async () => ({ material: { id: 222 }, products: filteredProducts }) };
+      const resBody = { material: { id: 222 }, products: filteredProducts };
+      return { ok: true, status: 200, text: async () => JSON.stringify(resBody), json: async () => resBody };
     }
     throw new Error(`Unexpected fetch: ${method} ${url}`);
   };
@@ -654,7 +692,8 @@ console.log("\n[createSuzuriProducts: トリブン価格]");
     }
     if (url.includes("/materials") && method === "POST") {
       capturedBody = JSON.parse(opts.body);
-      return { ok: true, status: 200, json: async () => makeMaterialsRes() };
+      const resBody = makeMaterialsRes();
+      return { ok: true, status: 200, text: async () => JSON.stringify(resBody), json: async () => resBody };
     }
     throw new Error(`Unexpected fetch: ${method} ${url}`);
   };
@@ -1526,6 +1565,57 @@ console.log("\n[runBot: R2メタにkanjiCharが保存される]");
 }
 
 // ---------------------------------------------------------------------------
+// 【回帰】runBot: R2プールあり→プールから取得、プールなし→handleResearch呼び出し
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: R2プールからのresearch取得]");
+{
+  const makeEnvWithPool = (poolEntries) => {
+    const store = {};
+    // JST当日キーをあらかじめ格納
+    const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const dateISO = `${jst.getFullYear()}-${String(jst.getMonth() + 1).padStart(2, "0")}-${String(jst.getDate()).padStart(2, "0")}`;
+    if (poolEntries !== null) {
+      store[`research-pool/${dateISO}.json`] = JSON.stringify({ entries: poolEntries });
+    }
+    const bucket = {
+      async put(key, value) { store[key] = value; },
+      async get(key) {
+        if (!(key in store)) return null;
+        return { json: async () => JSON.parse(store[key]) };
+      },
+    };
+    return {
+      GEMINI_API_KEY: "test-key",
+      BLUESKY_IDENTIFIER: "", BLUESKY_APP_PASSWORD: "",
+      DISCORD_WEBHOOK_URL: "",
+      IMAGE_BUCKET: bucket,
+    };
+  };
+  const makeGenerate = () => async () => ({ imageData: btoa("x"), mimeType: "image/png", source: "gemini" });
+
+  // プールあり → handleResearch を呼ばずプールから取得する
+  {
+    let researchCalled = false;
+    const mockResearch = async () => { researchCalled = true; return { theme: "直接呼出", description: "", sourceUrl: "" }; };
+    const poolEntry = { theme: "プール記念日", description: "プール説明", visualHint: "hint", kanjiChar: "花", foodItem: null, sourceUrl: "https://example.com" };
+    const env = makeEnvWithPool([poolEntry]);
+
+    await runBot(env, mockResearch, makeGenerate());
+    assert("プールあり: handleResearch()を呼ばない", !researchCalled);
+  }
+
+  // プールなし → handleResearch にフォールバックする
+  {
+    let researchCalled = false;
+    const mockResearch = async () => { researchCalled = true; return { theme: "フォールバック記念日", description: "", sourceUrl: "", kanjiChar: null }; };
+    const env = makeEnvWithPool(null);
+
+    await runBot(env, mockResearch, makeGenerate());
+    assert("プールなし: handleResearch()を呼ぶ", researchCalled);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // getSeasonalFlower - 日付範囲テーブルから季節の花を返す
 // ---------------------------------------------------------------------------
 console.log("\n[getSeasonalFlower]");
@@ -1569,6 +1659,60 @@ console.log("\n[filterAndDedupePool]");
     { theme: "B", sourceUrlKind: "google-search-fallback" },
   ];
   assert("全件fallbackなら空配列を返す", filterAndDedupePool(allFallback).length === 0);
+}
+
+// ---------------------------------------------------------------------------
+// 【回帰】Gemini 502平文レスポンスでSyntaxErrorが伝播しない
+// ---------------------------------------------------------------------------
+console.log("\n[【回帰】handleResearch: 502平文レスポンス]");
+{
+  const origFetch = globalThis.fetch;
+
+  // Gemini が 502 + 平文ボディ（Cloudflare エラーページ形式）を返すケース
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 502,
+    text: async () => "error code: 502",
+    json: async () => { throw new SyntaxError(`Unexpected token 'e', "error code: 502" is not valid JSON`); },
+  });
+
+  try {
+    await handleResearch({ date: "4月24日" }, "dummy-key");
+    assert("502平文レスポンス: エラーが発生しなかった（失敗すべき）", false);
+  } catch (e) {
+    assert("502平文レスポンス: SyntaxErrorが伝播しない", !e.message.includes("Unexpected token"));
+    assert("502平文レスポンス: ステータスコードがメッセージに含まれる", e.message.includes("502"));
+  }
+
+  globalThis.fetch = origFetch;
+}
+
+console.log("\n[【回帰】handleGenerate: 502平文レスポンス（Pollinationsフォールバック確認）]");
+{
+  const origFetch = globalThis.fetch;
+
+  // Gemini が 502 + 平文ボディを返し、Pollinations は成功するケース
+  const POLLI_IMG = "data:image/png;base64,iVBORw0KGgo=";
+  globalThis.fetch = async (url) => {
+    if (typeof url === "string" && url.includes("pollinations")) {
+      return { ok: true, headers: { get: () => "image/png" }, arrayBuffer: async () => Buffer.from("png") };
+    }
+    return {
+      ok: false,
+      status: 502,
+      text: async () => "error code: 502",
+      json: async () => { throw new SyntaxError(`Unexpected token 'e', "error code: 502" is not valid JSON`); },
+    };
+  };
+
+  try {
+    const result = await handleGenerate({ theme: "テスト", description: "" }, "dummy-key");
+    assert("502平文レスポンス: Pollinationsフォールバックで成功する", result && result.source === "pollinations");
+  } catch (e) {
+    assert(`502平文レスポンス: SyntaxErrorが伝播しない (${e.message})`, !e.message.includes("Unexpected token"));
+  }
+
+  globalThis.fetch = origFetch;
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
