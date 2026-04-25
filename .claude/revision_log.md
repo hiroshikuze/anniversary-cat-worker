@@ -205,6 +205,15 @@
 - **修正**: `updateDateDisplay(date = null)`にオプション引数を追加。`loadSharedImage()`成功時に`updateDateDisplay(new Date(data.createdAt))`を呼ぶ。また`timeZone: "Asia/Tokyo"`を追加しユーザーのブラウザ環境に関わらず常にJSTで表示するよう修正（副次的なタイムゾーンバグも解消）
 - **教訓**: R2から日時メタデータを取得する画面では、表示に使う日時も必ずそのメタデータから引く。「今日の日付を表示する」関数を共有ビューでもそのまま流用するのは危険
 
+### 2026-04 | 共有URLのスピナー中も日付バッジを正しく表示すべき
+
+- **状況**: `loadSharedImage()`が`/image/:id`のfetch完了後に日付を更新していたため、スピナー（🎨）表示中は「今日の日付」が見えていた
+- **修正方針**:
+  - `bot/YYYY-MM-DD` ID: IDから直接日付を取得（`id.slice(4)`）してfetch前に`updateDateDisplay()`を呼ぶ
+  - `user/{uuid}` ID: 軽量な`/meta/:id`をバックグラウンドfetchしてcreatedAtを先行取得する（`.then()`チェーン・エラーは無視）
+  - `/image/:id`完了時の`updateDateDisplay()`も残す（確定値による最終更新）
+- **教訓**: ロード中に「今日の日付」が見えるとユーザーは混乱する。日付のような表示情報は最速で確定できるタイミングで更新する
+
 ### 2026-04 | フロントエンドDOMに依存する関数はunit testが書けない
 
 - **状況**: `resetToInitial()`・`updateDateDisplay()`はDOM APIに依存しているため、`test-bot.mjs`（Node.js環境）ではテストが書けなかった
