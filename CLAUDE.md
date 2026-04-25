@@ -143,6 +143,8 @@ FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 | 外部APIレスポンスをMapにする際は整数IDをキーにする | 文字列名はAPIバージョン・ロケールで表記が変わる（過去バグ: SUZURI item.name 表記ゆれ） |
 | Pollinationsプロンプトの先頭は`kawaii watercolor cat`固定 | Fluxモデルは前半トークン重視。先頭に猫・スタイルを宣言することで一貫した品質を保つ |
 | ボットはSUZURI登録しない。初回訪問者ブラウザに委譲する | ボット実行時間短縮 + ブラウザ側2048pxリサイズで印刷品質向上。重複防止はWorker側の`/suzuri-create`冒頭チェックで担保 |
+| フロントの日付表示は`timeZone: "Asia/Tokyo"`を明示する | ブラウザのロケール設定に依存すると海外ユーザーでJST日付がずれる（共有URLで記念日と日付が矛盾して見える問題） |
+| 共有URLで表示する日付は`data.createdAt`を使う（`new Date()`は使わない） | `new Date()`は閲覧日になるため、過去に生成した画像を共有された際に記念日の内容と日付が矛盾する |
 
 ---
 
