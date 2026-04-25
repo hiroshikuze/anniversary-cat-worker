@@ -959,6 +959,19 @@
     async function loadSharedImage(id) {
       isSharedView    = true;
       currentSharedId = id;
+
+      // スピナー表示前に日付を確定させる
+      if (id.startsWith("bot/")) {
+        // bot/YYYY-MM-DD はIDから直接取得（fetchなし）
+        updateDateDisplay(new Date(id.slice(4) + "T00:00:00+09:00"));
+      } else {
+        // user ID は /meta/:id を先行fetchしてcreatedAtを取得
+        fetch(`${WORKER_URL}/meta/${id}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(meta => { if (meta?.createdAt) updateDateDisplay(new Date(meta.createdAt)); })
+          .catch(() => {});
+      }
+
       showGenerate("loading");
       try {
         const res = await fetch(`${WORKER_URL}/image/${id}`);
