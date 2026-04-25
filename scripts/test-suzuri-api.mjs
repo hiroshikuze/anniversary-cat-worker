@@ -67,7 +67,7 @@ for (const [slug, targetId] of Object.entries(SUZURI_ITEM_IDS)) {
   // idは整数比較・文字列比較の両方で探す
   const found = items.find(i => i.id === targetId || String(i.id) === String(targetId));
   if (found) {
-    console.log(`  slug="${slug}" id=${found.id} (型:${typeof found.id}) name="${found.name}" available=${found.available} (型:${typeof found.available})`);
+    console.log(`  slug="${slug}" id=${found.id} name="${found.name}" price=${found.price} (型:${typeof found.price})`);
   } else {
     console.warn(`  ⚠️  slug="${slug}" targetId=${targetId} → APIレスポンスに見つからない`);
   }
