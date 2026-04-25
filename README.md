@@ -20,23 +20,28 @@ AI-powered daily cat illustration generator inspired by today's anniversary.
 
 - 今日の日付をもとにAIが記念日を自動リサーチ
 - 記念日テーマに合わせた水彩画風の猫イラストをAI生成
+- 生成したイラストをSUZURIでグッズ購入可能（Tシャツ・ステッカー・缶バッジ・アクキー）
+- 共有URLで生成したイラストを友達と共有可能（生成後14日間）
+- 過去14日間のボット作品をギャラリーで閲覧可能
+- 毎平日19:00 JSTにBotがBlueskyへ自動投稿
 - 日本語・英語の表示切り替えに対応
-- 生成したイラストをワンクリックで保存可能
 
 ## 使用方法
 
 1. 「🔍 今日の記念日を調べる」ボタンをクリックします。
 2. AIが今日の記念日をリサーチし、自動的に猫イラストの生成を開始します。
 3. 水彩画風の猫イラストとテーマの解説が表示されます。
-4. 「🔄 もう一度生成」で別パターンのイラストを生成、「💾 保存する」でダウンロードできます。
+4. 「🔄 もう一度生成」で別パターンのイラストを生成できます。
+5. スマートフォンでは「🔗 共有する」でOS標準の共有シートが開き、PCでは「💾 保存する」でダウンロードできます。
+6. グッズ購入ボタンから、イラストを使ったSUZURIのグッズページを開けます（生成後14日間のみ）。
 
 ## 使用技術
 
 - **フロントエンド**: HTML / JavaScript / Tailwind CSS
-- **バックエンド**: Cloudflare Workers
+- **バックエンド**: Cloudflare Workers / Cloudflare R2
 - **AI（記念日リサーチ）**: Google Gemini API（Grounding with Google Search）
 - **AI（画像生成）**: Google Gemini API / Pollinations.ai（フォールバック）
-- **AI（画像アップスケール）**: fal.ai AuraSR（SUZURI印刷用高解像度化）
+- **AI（画像アップスケール）**: fal.ai ESRGAN（SUZURI印刷用高解像度化）
 - **グッズ販売**: SUZURI API
 - **SNS投稿**: Bluesky AT Protocol
 
