@@ -176,8 +176,10 @@
 
     <!-- ヘッダー -->
     <div class="text-center mb-8">
-      <div class="text-6xl mb-3">🐱</div>
-      <h1 class="text-2xl font-medium text-pink-700 leading-snug mb-1" data-i18n="pageTitle">にゃんバーサリー</h1>
+      <div class="cursor-pointer select-none inline-block" onclick="resetToInitial()">
+        <div class="text-6xl mb-3">🐱</div>
+        <h1 class="text-2xl font-medium text-pink-700 leading-snug mb-1" data-i18n="pageTitle">にゃんバーサリー</h1>
+      </div>
       <p class="text-sm text-pink-400 mb-4" data-i18n="subtitle">
         今日の記念日を調べて、水彩画風の猫を生成します
       </p>
@@ -519,13 +521,22 @@
     // ----------------------------------------------------------
     // 初期化
     // ----------------------------------------------------------
-    function updateDateDisplay() {
-      const now = new Date();
+    function updateDateDisplay(date = null) {
+      const d = date ?? new Date();
       const locale = t("dateLocale");
       document.getElementById("today-date").textContent =
-        now.toLocaleDateString(locale, {
+        d.toLocaleDateString(locale, {
           year: "numeric", month: "long", day: "numeric", weekday: "long",
+          timeZone: "Asia/Tokyo",
         });
+    }
+
+    function resetToInitial() {
+      isSharedView    = false;
+      currentSharedId = null;
+      history.replaceState(null, "", window.location.pathname);
+      updateDateDisplay();
+      showGenerate("waiting");
     }
 
     // ギャラリー定数（init() IIFEより前に宣言しないとTDZエラーになる）
@@ -968,6 +979,8 @@
           imgEl.src = displayUrl;
         });
         lastImageUrl = displayUrl;
+
+        if (data.createdAt) updateDateDisplay(new Date(data.createdAt));
 
         document.getElementById("g-result-label").textContent = data.theme ?? "";
         const descEl = document.getElementById("g-result-description");
