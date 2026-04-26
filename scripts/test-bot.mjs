@@ -661,11 +661,11 @@ console.log("\n[createSuzuriProducts: slugFilter]");
 console.log("\n[SUZURI_TORIBUN]");
 
 {
-  // ベース価格 × 30% 切り捨てが正しいこと
-  assert("t-shirt: Math.floor(1980 × 0.30) = 594",        SUZURI_TORIBUN["t-shirt"]         === 594);
-  assert("sticker: Math.floor(385 × 0.30) = 115",         SUZURI_TORIBUN["sticker"]          === 115);
-  assert("can-badge: Math.floor(385 × 0.30) = 115",       SUZURI_TORIBUN["can-badge"]        === 115);
-  assert("acrylic-keychain: Math.floor(495 × 0.30) = 148", SUZURI_TORIBUN["acrylic-keychain"] === 148);
+  // ベース価格 × 30% 切り捨てが正しいこと（2026-04 GET /api/v1/items exemplaryバリアントで確認）
+  assert("t-shirt: Math.floor(2200 × 0.30) = 660",         SUZURI_TORIBUN["t-shirt"]         === 660);
+  assert("sticker: Math.floor(466 × 0.30) = 139",          SUZURI_TORIBUN["sticker"]          === 139);
+  assert("can-badge: Math.floor(720 × 0.30) = 216",        SUZURI_TORIBUN["can-badge"]        === 216);
+  assert("acrylic-keychain: Math.floor(1009 × 0.30) = 302", SUZURI_TORIBUN["acrylic-keychain"] === 302);
   // 全商品に正の取り分が設定されている
   const allPositive = Object.values(SUZURI_TORIBUN).every(v => v > 0);
   assert("全商品のトリブンが 0 より大きい", allPositive);
@@ -704,9 +704,9 @@ console.log("\n[createSuzuriProducts: トリブン価格]");
   assert("POST /materials に products が含まれる", Array.isArray(capturedBody?.products));
   const tshirt = capturedBody?.products?.find(p => p.itemId === SUZURI_ITEM_IDS["t-shirt"]);
   const sticker = capturedBody?.products?.find(p => p.itemId === SUZURI_ITEM_IDS["sticker"]);
-  assert("t-shirt の price が SUZURI_TORIBUN と一致（594円）",
+  assert("t-shirt の price が SUZURI_TORIBUN と一致（660円）",
     tshirt?.price === SUZURI_TORIBUN["t-shirt"]);
-  assert("sticker の price が SUZURI_TORIBUN と一致（115円）",
+  assert("sticker の price が SUZURI_TORIBUN と一致（139円）",
     sticker?.price === SUZURI_TORIBUN["sticker"]);
   const allHavePrice = capturedBody?.products?.every(p => typeof p.price === "number" && p.price > 0);
   assert("全商品に正の price が設定されている", allHavePrice);
