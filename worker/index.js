@@ -600,7 +600,7 @@ export async function handleGenerate(body, apiKey) {
     (eatingAction ? `Cat action: ${eatingAction}. `                   : "") +
     `Theme: ${theme}. ` +
     (description  ? `Context: ${description}. `              : "") +
-    (visualHint   ? `Visual elements to incorporate: ${visualHint}. ` : "") +
+    (visualHint   ? `Setting and surrounding atmosphere; the cat may naturally interact with theme-related items (approaching, touching, or holding them as fits the scene): ${visualHint}. ` : "") +
     `Style: soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ` +
     `white background, Japanese illustration style. ` +
     `High quality charming illustration. ` +
