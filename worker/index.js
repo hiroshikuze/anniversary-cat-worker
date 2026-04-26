@@ -468,8 +468,8 @@ export function pickPersona() {
 // 攻撃的・神経質・触られ嫌い・衝動的なタイプは除外。ツンデレはRare(3%)。
 const CAT_PERSONALITIES = [
   { weight: 35, desc: "gazing lovingly at viewer, sitting close, soft gentle expression" },
-  { weight: 30, desc: "crouching in playful pounce position, alert bright eyes, paw reaching for theme item" },
-  { weight: 25, desc: "leaning forward with wide curious eyes, carefully investigating the theme item" },
+  { weight: 30, desc: "crouching in playful pounce position, alert bright eyes, paw gently resting near a theme-related item" },
+  { weight: 25, desc: "leaning forward with wide curious eyes, immersed in the seasonal atmosphere of the theme" },
   { weight:  7, desc: "grooming itself serenely, self-contained and peaceful" },
   { weight:  3, desc: "sitting with back slightly turned, dignified aloof expression, secretly glancing back" },
   // Omakase: AIにポーズ・表情を自由に決めさせる (weight 10)
@@ -600,7 +600,7 @@ export async function handleGenerate(body, apiKey) {
     (eatingAction ? `Cat action: ${eatingAction}. `                   : "") +
     `Theme: ${theme}. ` +
     (description  ? `Context: ${description}. `              : "") +
-    (visualHint   ? `Visual elements to incorporate: ${visualHint}. ` : "") +
+    (visualHint   ? `Setting and surrounding atmosphere (use as background scenery and ambient elements around the cat, not as objects held or grabbed by the cat): ${visualHint}. ` : "") +
     `Style: soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ` +
     `white background, Japanese illustration style. ` +
     `High quality charming illustration. ` +
