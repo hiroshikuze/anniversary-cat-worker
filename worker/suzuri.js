@@ -49,14 +49,15 @@ export const SUZURI_ITEM_IDS = {
 
 /**
  * クリエイター取り分（トリブン）= ベース価格 × 30%（切り捨て）
- * ベース価格は GET /api/v1/items の price フィールドより（2026-03確認済み）
+ * ベース価格は GET /api/v1/items のexemplaryバリアントの price フィールドより
+ * 2026-04確認済み（sticker/can-badge/acrylic-keychain）。t-shirtは2026-04-23改定+220円推定
  */
 const PRICE_MARGIN_RATE = 0.30;
 const SUZURI_BASE_PRICES = {
-  "t-shirt":         1980,
-  "sticker":         385,
-  "can-badge":       385,
-  "acrylic-keychain": 495,
+  "t-shirt":          2200,
+  "sticker":          466,
+  "can-badge":        720,
+  "acrylic-keychain": 1009,
 };
 export const SUZURI_TORIBUN = Object.fromEntries(
   Object.entries(SUZURI_BASE_PRICES).map(([slug, base]) => [
@@ -76,7 +77,9 @@ async function fetchAvailableItemIds(env) {
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;
-    const data = await res.json();
+    const resText = await res.text();
+    let data = {};
+    try { data = JSON.parse(resText); } catch { /**/ }
     const items = data.items ?? [];
     // available フィールドが明示的に false のアイテムを除外（ない場合は有効とみなす）
     return new Set(items.filter(i => i.available !== false).map(i => i.id));
