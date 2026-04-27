@@ -866,6 +866,21 @@ export default {
       });
     }
 
+    // GET: Tシャツ背面印刷テクスチャ（R2に保存された back.jpg を返す・SUZURI向け）
+    if (request.method === "GET" && url.pathname.startsWith("/back/")) {
+      const id = decodeURIComponent(url.pathname.slice("/back/".length));
+      if (!id || !env.IMAGE_BUCKET) return new Response("Not Found", { status: 404, headers: corsH });
+      const obj = await env.IMAGE_BUCKET.get(`${id}/back.jpg`);
+      if (!obj) return new Response("Not Found", { status: 404, headers: corsH });
+      return new Response(obj.body, {
+        headers: {
+          "Content-Type": obj.httpMetadata?.contentType ?? "image/jpeg",
+          "Cache-Control": "public, max-age=86400",
+          ...corsH,
+        },
+      });
+    }
+
     // GET: RSSフィード（直近14日のボット作品）
     if (request.method === "GET" && url.pathname === "/rss.xml") {
       const PAGES_URL  = "https://hiroshikuze.github.io/anniversary-cat-worker";
@@ -1127,6 +1142,25 @@ ${itemsXml}
         if (isRightGroup) {
           const workerOrigin = new URL(request.url).origin;
 
+          // backTexture を R2 にアップロードして Worker URL に変換する
+          // （SUZURI の sub_materials.texture は base64 data URI を受け付けず無視するため）
+          let resolvedBackTexture = backTexture ?? null;
+          if (backTexture?.startsWith("data:") && r2Id && env.IMAGE_BUCKET) {
+            try {
+              const [, dataPart] = backTexture.split(",", 2);
+              const binaryStr = atob(dataPart);
+              const bytes = new Uint8Array(binaryStr.length);
+              for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+              await env.IMAGE_BUCKET.put(`${r2Id}/back.jpg`, bytes, {
+                httpMetadata: { contentType: "image/jpeg" },
+              });
+              resolvedBackTexture = `${workerOrigin}/back/${r2Id}`;
+              console.log(`[suzuri-create] backTexture R2保存完了 → ${resolvedBackTexture}`);
+            } catch (e) {
+              console.warn(`[suzuri-create] backTexture R2保存失敗（base64フォールバック）: ${e.message}`);
+            }
+          }
+
           // fal.ai Queue にジョブ投入（ctx.waitUntil 前に実行 → request_id を確実に R2 保存）
           let falRequestId = null;
           try {
@@ -1196,7 +1230,7 @@ ${itemsXml}
             }
             console.log(`[suzuri-create] texture type=${suzuriTexture.startsWith("data:") ? "base64" : "url"}`);
             try {
-              const sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, backTexture ?? null, description ?? "", r2Id ?? null);
+              const sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, resolvedBackTexture, description ?? "", r2Id ?? null);
               if (r2Id && env.IMAGE_BUCKET) {
                 await updateMetaInR2(env.IMAGE_BUCKET, r2Id, { products: sr.products });
               }

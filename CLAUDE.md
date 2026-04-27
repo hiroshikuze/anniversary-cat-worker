@@ -138,6 +138,7 @@ FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 | 画像生成は2フェーズ方式（priorityMs=12,000ms） | Gemini平均8361ms・最大10203ms（実測）。Phase1でGemini優先、失敗時Pollinationsで即返却 |
 | fal.aiはAuraSR 4xではなくESRGAN 2xを使用 | AuraSR 4x出力は~24MB・SUZURI 20MB上限超過（実測確認済み）、ESRGAN 2xは~6MBで安定 |
 | fal.ai CDN URLを直接SUZURIに渡さない | fal.aiのCDN URLは制限あり・TTL短く、SUZURI側fetchで0バイトエラーになる。R2経由の`/hires/:id`URLを渡す |
+| `sub_materials[].texture`はURLのみ（base64不可） | SUZURI APIのメイン`texture`はbase64を受け付けるが`sub_materials.texture`はURLのみ対応。base64で渡すと無視されて背面が白になる。R2アップロード後に`/back/:id`URLで渡す |
 | t-shirt+stickerグループのSUZURI登録は`ctx.waitUntil()`でバックグラウンド処理 | Wall-clock時間制限（~30秒）内でfal.ai処理は完了しない。Queue API（request_id保存→ポーリング）方式を使う |
 | fal.ai Queue APIのrequest_idは`ctx.waitUntil()`より前にR2へ保存 | ctx.waitUntil()がwall-clock超過で強制終了しても、IDだけは確実に残す保証が必要 |
 | 外部APIレスポンスをMapにする際は整数IDをキーにする | 文字列名はAPIバージョン・ロケールで表記が変わる（過去バグ: SUZURI item.name 表記ゆれ） |
