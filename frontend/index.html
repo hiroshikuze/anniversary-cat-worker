@@ -682,6 +682,8 @@
           a.target = "_blank";
           a.rel = "noopener";
           a.className = "block rounded-xl overflow-hidden border border-pink-200 hover:border-pink-400 hover:shadow-sm transition-all bg-white";
+          a.setAttribute("data-umami-event", "suzuri-click");
+          a.setAttribute("data-umami-event-slug", p.slug);
           const img = document.createElement("img");
           img.src = p.previewImageUrl;
           img.alt = name;
@@ -705,6 +707,8 @@
           a.target = "_blank";
           a.rel = "noopener";
           a.className = "btn-secondary py-2 px-3 rounded-xl text-sm font-medium text-center flex items-center justify-center gap-1";
+          a.setAttribute("data-umami-event", "suzuri-click");
+          a.setAttribute("data-umami-event-slug", p.slug);
           a.textContent = `${icon} ${name}`;
           listEl.appendChild(a);
         } else if (p.queued) {
