@@ -1091,6 +1091,39 @@ GET /rss.xml
 2. **子猫（No.8）の主人公プロンプト変更**: 既存の性格プロンプトに保護者修飾を追記（完全上書きしない）
 3. **ゲスト全体確率**: `GUEST_ANIMAL_PROBABILITY`定数で定義し、必要に応じて修正可能にする
 
+##### 確定事項（2026-04-27）
+
+4. **CAT_PERSONALITIES に「丸まってうとうと」を追加（weight 7）**
+   - desc: `"curled up softly, head gently drooping in a cozy drowsy nap"`
+   - 追加後の合計weight: 117（各比率は下記）
+   - 見つめる・寄り添う 35/117=29.9%、テーマに手を伸ばす 30/117=25.6%、好奇心旺盛 25/117=21.4%
+   - 丸まってうとうと 7/117=6.0%、セルフグルーミング 7/117=6.0%、ツンデレ 3/117=2.6%、おまかせ 10/117=8.5%
+
+5. **犬ゲストのバリアント確定**（SNS人気データを基に選定）
+
+   | 犬種 | バリアント | 根拠 |
+   | --- | --- | --- |
+   | ゴールデンレトリーバー | `"golden retriever"` 1種 | 毛色バリアント不要 |
+   | 柴犬 | `"red shiba inu"` / `"black-and-tan shiba inu"` / `"cream shiba inu"` | Instagram日本No.1「まる」は赤柴。クリームはSNS人気上昇中 |
+   | フレンチブルドッグ | `"brindle French Bulldog"` / `"pied French Bulldog"` | ブリンドルが人気1位、パイドが2位。Instagram世界ハッシュタグ数1位犬種 |
+
+   - 白柴はソフトバンクお父さん犬（実際は**北海道犬**）との混同注意。クリーム柴として収録
+   - 北海道犬は別途追加しない（犬種数過多を避ける）
+
+6. **ウサギゲストのバリアント**（検討中・2026-04-27）
+   - SNSデータ: 日本1位=ネザーランドドワーフ、2位=ホーランドロップ。世界SNS=ホーランドロップ・ライオンヘッド・ミニレッキス
+   - 候補: `"Holland Lop rabbit"` / `"Netherland Dwarf rabbit"` / `"Lionhead rabbit"`
+   - → ユーザー確認中
+
+7. **その他動物ゲストの初案**（確認中・2026-04-27）
+
+   | 種別 | バリアント案 | 性格案 |
+   | --- | --- | --- |
+   | パンダ | `"giant panda cub"` 1種 | `"sitting round and roly-poly, holding bamboo with both paws"` |
+   | ペンギン | `"little blue penguin"` / `"emperor penguin chick"` | `"waddling cheerfully with flippers out, sociable and bright-eyed"` |
+   | 豚 | `"pink miniature pig"` 1種 | `"trotting over with snout twitching, cheerful and friendly"` |
+   | 鶏 | `"fluffy white Silkie chicken"` / `"colorful bantam rooster"` | `"pecking nearby and tilting head sideways with sharp curious eyes"` |
+
 #### 事前リサーチプール方式（実装済み・2026-04）
 
 ハルシネーション対策として、毎日深夜に翌日（当日）の記念日候補を複数件生成・フィルタリングしてR2に保存し、ボット投稿・ユーザー手動操作の両方でそのプールから選択する方式。
