@@ -214,15 +214,13 @@
   - `/image/:id`完了時の`updateDateDisplay()`も残す（確定値による最終更新）
 - **教訓**: ロード中に「今日の日付」が見えるとユーザーは混乱する。日付のような表示情報は最速で確定できるタイミングで更新する
 
-### 2026-04 | SUZURI sub_materials.texture がbase64 data URIを受け付けない
+### 2026-04 | SUZURI `sub_materials.texture` がbase64 data URIを受け付けない
 
-- **状況**: Tシャツのバックプリント（漢字/🐾）がSUZURIに反映されず、背面が白のまま。手動生成でも再現
-- **原因**: メインの`texture`フィールドはbase64 data URIを受け付けるが、`sub_materials[].texture`はURLのみ受け付けると推測。SUZURI APIは不正な`sub_materials.texture`を無視して200を返すため、Workerのログにはエラーが出ない
-- **修正**: backTextureをbase64のままSUZURIに渡すのをやめ、R2にアップロード（`{r2Id}/back.jpg`）してWorker URLを経由する方式に変更。`GET /back/:id`エンドポイントを追加してR2から返す
-- **教訓**:
-  - 外部APIが「成功ステータスを返している」かつ「一部フィールドのみ無視」する場合はエラーが出ない。本番ログが正常でもUI確認は必要
-  - 公式APIドキュメントに「base64 data URI可」と書いてあっても、サブフィールドに同じ制約が適用されるとは限らない
-  - hires画像と同様に「base64はWorker経由でURLに変換してから外部APIに渡す」原則を全フィールドに適用する
+- **状況**: Tシャツ背面に漢字または🐾を印刷するため、`createSuzuriProducts()`の`sub_materials[0].texture`にbase64 data URI（`data:image/jpeg;base64,...`）を渡していた
+- **症状**: Tシャツは作成されるが背面は完全に白（printが入らない）。SUZURI APIは200を返すのでエラーが検出できない
+- **原因推定**: SUZURIの`sub_materials.texture`はURLのみ受け付け、base64を渡すと黙って無視する可能性が高い。メインの`texture`フィールドはbase64対応を確認済みだが、`sub_materials.texture`の仕様は公式ドキュメント（PDFを直接確認済み）に明示されていなかった
+- **修正**: `/suzuri-create`ハンドラで、backTextureをR2に`${r2Id}/back.jpg`としてアップロードし、`${workerOrigin}/back/${r2Id}`というWorker URLをSUZURIに渡す。Worker URLはSUZURIから安定してアクセスできる（`/hires/:id`で動作確認済みの方式と同一）。`r2Id`がない場合はbase64フォールバック（現状維持）
+- **教訓**: 第三者APIの`texture`フィールドにbase64が使える場合でも、ネストした`sub_materials.texture`では非対応の可能性がある。エラーが返らないAPIでのデバッグは「成功しているのに結果が反映されない」パターンになる。URLが使える場合は常にURLを優先する
 
 ### 2026-04 | フロントエンドDOMに依存する関数はunit testが書けない
 
