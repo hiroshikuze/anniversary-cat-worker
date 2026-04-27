@@ -1374,10 +1374,17 @@ console.log("\n[pickEatingAction]");
 // ---------------------------------------------------------------------------
 console.log("\n[shouldRegisterGalleryItem]");
 
-// production logic: !(products?.length > 0) && id !== currentPageId
-function shouldRegisterGalleryItem(id, currentPageId, products) {
-  return !(products?.length > 0) && id !== currentPageId;
+const ALL_SUZURI_SLUGS_TEST = ["t-shirt", "sticker", "can-badge", "acrylic-keychain"];
+function allSuzuriProductsRegistered(products) {
+  const registered = new Set((products ?? []).map(p => p.slug));
+  return ALL_SUZURI_SLUGS_TEST.every(s => registered.has(s));
 }
+// production logic: !allSuzuriProductsRegistered(products) && id !== currentPageId
+function shouldRegisterGalleryItem(id, currentPageId, products) {
+  return !allSuzuriProductsRegistered(products) && id !== currentPageId;
+}
+
+const ALL_4 = ALL_SUZURI_SLUGS_TEST.map(slug => ({ slug }));
 
 assert(
   "products未登録かつ別のidは登録すべき",
@@ -1388,12 +1395,37 @@ assert(
   shouldRegisterGalleryItem("bot/2026-04-19", "bot/2026-04-19", []) === false
 );
 assert(
-  "products登録済みは登録しない",
-  shouldRegisterGalleryItem("bot/2026-04-18", null, [{ slug: "t-shirt" }]) === false
+  "全4商品登録済みは登録しない",
+  shouldRegisterGalleryItem("bot/2026-04-18", null, ALL_4) === false
 );
 assert(
   "currentPageIdがnull（通常ページ）は登録する",
   shouldRegisterGalleryItem("bot/2026-04-18", null, []) === true
+);
+assert(
+  "【回帰】缶バッジ・アクキーのみ登録済みでTシャツ・ステッカーが未登録なら登録すべき",
+  shouldRegisterGalleryItem("bot/2026-04-18", null, [{ slug: "can-badge" }, { slug: "acrylic-keychain" }]) === true
+);
+assert(
+  "【回帰】1商品だけ登録済みでも残りが未登録なら登録すべき",
+  shouldRegisterGalleryItem("bot/2026-04-18", null, [{ slug: "t-shirt" }]) === true
+);
+
+assert(
+  "allSuzuriProductsRegistered: 全4件揃い → true",
+  allSuzuriProductsRegistered(ALL_4) === true
+);
+assert(
+  "allSuzuriProductsRegistered: 空配列 → false",
+  allSuzuriProductsRegistered([]) === false
+);
+assert(
+  "allSuzuriProductsRegistered: 3件（t-shirt欠け）→ false",
+  allSuzuriProductsRegistered([{ slug: "sticker" }, { slug: "can-badge" }, { slug: "acrylic-keychain" }]) === false
+);
+assert(
+  "allSuzuriProductsRegistered: undefined → false",
+  allSuzuriProductsRegistered(undefined) === false
 );
 
 // ---------------------------------------------------------------------------

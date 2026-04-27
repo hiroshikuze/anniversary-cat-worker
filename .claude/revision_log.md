@@ -222,6 +222,15 @@
 - **修正**: `/suzuri-create`ハンドラで、backTextureをR2に`${r2Id}/back.jpg`としてアップロードし、`${workerOrigin}/back/${r2Id}`というWorker URLをSUZURIに渡す。Worker URLはSUZURIから安定してアクセスできる（`/hires/:id`で動作確認済みの方式と同一）。`r2Id`がない場合はbase64フォールバック（現状維持）
 - **教訓**: 第三者APIの`texture`フィールドにbase64が使える場合でも、ネストした`sub_materials.texture`では非対応の可能性がある。エラーが返らないAPIでのデバッグは「成功しているのに結果が反映されない」パターンになる。URLが使える場合は常にURLを優先する
 
+### 2026-04 | 一部商品のみ登録済みの場合にTシャツ・ステッカーが永遠に作成されない
+
+- **状況**: 通信不良等でTシャツ・ステッカーの登録に失敗し、缶バッジ・アクキーのみ登録済みの状態でリロード
+- **症状**: リロード後もTシャツ・ステッカーが表示されない（手動リトライ不可）
+- **原因**: `loadSharedImage()`と`loadGallery()`の判定が`products?.length > 0`（1件でも登録済みか）だったため、缶バッジ・アクキーが2件登録された時点で「登録完了」と判断し`createSuzuriFromImage()`を呼ばなくなっていた
+- **修正**: 判定を`allSuzuriProductsRegistered(products)`（全4スラッグが揃っているか）に変更。Worker側の重複防止チェックが登録済みスラッグをスキップするため、`createSuzuriFromImage()`を再実行しても二重登録にはならない
+- **テスト**: `shouldRegisterGalleryItem`の内部ロジックを新条件に更新。回帰テスト2件（缶バッジ・アクキーのみ登録済み → 登録すべき）と`allSuzuriProductsRegistered`の正常系・境界値4件を追加
+- **教訓**: 「登録済みかどうか」の判定は「何か1件でもある」ではなく「期待する全件が揃っている」で判定する。部分的な成功状態を「完了」と誤認するとリトライ不能になる
+
 ### 2026-04 | フロントエンドDOMに依存する関数はunit testが書けない
 
 - **状況**: `resetToInitial()`・`updateDateDisplay()`はDOM APIに依存しているため、`test-bot.mjs`（Node.js環境）ではテストが書けなかった
