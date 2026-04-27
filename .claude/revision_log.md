@@ -214,6 +214,16 @@
   - `/image/:id`完了時の`updateDateDisplay()`も残す（確定値による最終更新）
 - **教訓**: ロード中に「今日の日付」が見えるとユーザーは混乱する。日付のような表示情報は最速で確定できるタイミングで更新する
 
+### 2026-04 | SUZURI sub_materials.texture がbase64 data URIを受け付けない
+
+- **状況**: Tシャツのバックプリント（漢字/🐾）がSUZURIに反映されず、背面が白のまま。手動生成でも再現
+- **原因**: メインの`texture`フィールドはbase64 data URIを受け付けるが、`sub_materials[].texture`はURLのみ受け付けると推測。SUZURI APIは不正な`sub_materials.texture`を無視して200を返すため、Workerのログにはエラーが出ない
+- **修正**: backTextureをbase64のままSUZURIに渡すのをやめ、R2にアップロード（`{r2Id}/back.jpg`）してWorker URLを経由する方式に変更。`GET /back/:id`エンドポイントを追加してR2から返す
+- **教訓**:
+  - 外部APIが「成功ステータスを返している」かつ「一部フィールドのみ無視」する場合はエラーが出ない。本番ログが正常でもUI確認は必要
+  - 公式APIドキュメントに「base64 data URI可」と書いてあっても、サブフィールドに同じ制約が適用されるとは限らない
+  - hires画像と同様に「base64はWorker経由でURLに変換してから外部APIに渡す」原則を全フィールドに適用する
+
 ### 2026-04 | フロントエンドDOMに依存する関数はunit testが書けない
 
 - **状況**: `resetToInitial()`・`updateDateDisplay()`はDOM APIに依存しているため、`test-bot.mjs`（Node.js環境）ではテストが書けなかった
