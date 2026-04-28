@@ -13,7 +13,7 @@ import { updateMetaInR2 } from "../worker/r2-storage.js";
 import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptionForTest } from "../worker/suzuri.js";
 
 import {
-  buildPostText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
+  buildPostText, buildMastodonText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
@@ -104,6 +104,11 @@ console.log("\n[buildPostText: テーマタグ]");
 {
   const text = buildPostText("ねこの日", "猫を愛でる記念日です");
   assert("テーマタグ #ねこの日 が含まれる", text.includes("#ねこの日"));
+
+  // テーマタグが固定タグより先頭に来ること（Instagramで末尾省略しやすくするため）
+  const themeIdx = text.indexOf("#ねこの日");
+  const catIdx   = text.indexOf("#cat");
+  assert("テーマタグ #ねこの日 が #cat より前に来る", themeIdx < catIdx);
 
   // 300 grapheme以内に収まること（テーマタグ追加後）
   const graphemes = [...new Intl.Segmenter().segment(text)];
@@ -2154,6 +2159,67 @@ console.log("\n[pickGuestAnimal]");
       ratioC >= 0.25 && ratioC <= 0.42
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// buildMastodonText
+// ---------------------------------------------------------------------------
+console.log("\n[buildMastodonText]");
+{
+  // 正常系: 日英両方あり（英語優先フォーマット）
+  const text = buildMastodonText("ねこの日", "猫を愛でる記念日です", "Cat Day", "A day to celebrate cats");
+  assert("themeEn が含まれる", text.includes("Cat Day"));
+  assert("descriptionEn が含まれる", text.includes("A day to celebrate cats"));
+  assert("日本語テーマが含まれる", text.includes("ねこの日"));
+  assert("日本語説明が含まれる", text.includes("猫を愛でる記念日です"));
+  assert("サイトURLが含まれる", text.includes("hiroshikuze.github.io/anniversary-cat-worker/"));
+  assert("ハッシュタグ #cat が含まれる", text.includes("#cat"));
+  assert("ハッシュタグ #猫 が含まれる", text.includes("#猫"));
+  assert("#Nyaniversary が含まれる", text.includes("#Nyaniversary"));
+  // 英語セクションが日本語セクションより前に来る（英語優先）
+  const enIdx = text.indexOf("Today is");
+  const jaIdx = text.indexOf("今日は");
+  assert("英語セクションが日本語セクションより前に来る", enIdx < jaIdx);
+}
+
+{
+  // themeEn が空の場合は buildPostText() 相当の日本語フォールバック
+  const text = buildMastodonText("ねこの日", "猫を愛でる記念日です", "", "");
+  assert("themeEn 空: 日本語テーマが含まれる", text.includes("ねこの日"));
+  assert("themeEn 空: Today is が含まれない", !text.includes("Today is"));
+  assert("themeEn 空: #Nyaniversary が含まれない", !text.includes("#Nyaniversary"));
+}
+
+{
+  // descriptionEn が空の場合は英語説明行のみ省略
+  const text = buildMastodonText("ねこの日", "猫を愛でる記念日です", "Cat Day", "");
+  assert("descriptionEn 空: themeEn は含まれる", text.includes("Cat Day"));
+  assert("descriptionEn 空: 英語説明は省略される", !text.includes("A day to celebrate"));
+  assert("descriptionEn 空: 英語セクションは残る", text.includes("Today is"));
+}
+
+{
+  // 500文字以内に収まること（Mastodon一般的な上限）
+  const text = buildMastodonText(
+    "世界パンダの日", "パンダを愛でる世界的な記念日。パンダの保護を考える日です。",
+    "World Panda Day", "A global day to celebrate giant pandas and raise awareness of their conservation."
+  );
+  assert(`500文字以内 (実測: ${text.length})`, text.length <= 500);
+}
+
+{
+  // テーマタグが先頭に来ること（英語優先フォーマット・ハッシュタグセクション先頭）
+  const text = buildMastodonText("ねこの日", "猫の記念日", "Cat Day", "A cat day");
+  assert("テーマタグ #ねこの日 が含まれる", text.includes("#ねこの日"));
+  const themeIdx = text.lastIndexOf("#ねこの日");
+  const catIdx   = text.lastIndexOf("#cat");
+  assert("テーマタグ #ねこの日 が #cat より前に来る（ハッシュタグセクション）", themeIdx < catIdx);
+}
+
+{
+  // pageUrlEn（?lang=en URL）が含まれること
+  const text = buildMastodonText("ねこの日", "猫の記念日", "Cat Day", "A cat day");
+  assert("lang=en パラメータ付きURLが含まれる", text.includes("lang=en"));
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);

@@ -33,7 +33,7 @@ anniversary-cat-worker/
 
 | メソッド | パス | 説明 |
 | --- | --- | --- |
-| POST | `/research` | Gemini + Google Searchで記念日テキスト取得 |
+| POST | `/research` | Gemini + Google Searchで記念日テキスト取得（`themeEn`/`descriptionEn`含む） |
 | POST | `/generate` | Gemini画像生成（Pollinationsフォールバックあり） |
 | GET | `/proxy-image?url=...` | Pollinations.ai画像のCORSプロキシ |
 | GET | `/image/:id` | R2保存画像+メタデータの取得（`bot/YYYY-MM-DD`または`user/{uuid}`） |
@@ -288,11 +288,13 @@ const KNOWN_CANDIDATES = [
 
 - Botアカウント: `@nyanmusu.bsky.social`
 - 投稿スケジュール: 月〜金 19:00 JST（UTC 10:00）、Cron式: `0 10 * * 2-6`
-- ハッシュタグ: `#AIart #cat #kitten #ほのぼの #猫`（固定）＋テーマ由来の動的タグ1件（AT Protocol facets形式で付与）
+- ハッシュタグ: テーマ由来の動的タグ1件を先頭に置き、固定タグ`#AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー`を後続（Instagramで末尾タグを省略しやすくするため）
 - エラー時: リトライなし（`/generate`内部にPollinationsフォールバックあり）
 - Mastodon同時投稿: `Promise.allSettled`で並列実行。Mastodon失敗はBluesky投稿に影響しない。シークレット未設定時はスキップ
 
 ### 投稿テキスト形式
+
+#### Bluesky（`buildPostText()`・日本語のみ）
 
 ```text
 今日は「{theme}」の日！🐱       ← theme が「の日」で終わる場合は「の日」を省略
@@ -301,10 +303,35 @@ const KNOWN_CANDIDATES = [
 あなたも今日の #にゃんバーサリー を作ってみませんか？
 https://hiroshikuze.github.io/anniversary-cat-worker/
 
-#AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー #{theme正規化}
+#{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー
 ```
 
-300 grapheme以内に収まる設計（実測 ~210 grapheme）。
+300 grapheme以内に収まる設計（実測 ~210 grapheme）。テーマタグを先頭にすることでInstagram手動投稿時に末尾タグを省略しやすくしている。
+
+#### Mastodon（`buildMastodonText()`・英語優先・日英二言語）
+
+英語を先に置くことで海外ユーザーへのリーチを優先する。`pageUrlEn` は `?lang=en` クエリ付きの英語ダイレクトURL（`${SITE_URL}?lang=en` または `${SITE_URL}?id=${r2Id}&lang=en`）。
+
+```text
+Today is "{themeEn}"!
+{descriptionEn}
+
+Why don't you try making your own #Nyaniversary #にゃんバーサリー today?
+{pageUrlEn}
+
+今日は「{theme}」！🐱
+{description}
+
+あなたも今日の #にゃんバーサリー を作ってみませんか？
+{pageUrl}
+
+#{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #Nyaniversary #にゃんバーサリー
+```
+
+- `themeEn`・`descriptionEn`は`handleResearch()`がGeminiから取得する英語フィールド
+- `themeEn`が空の場合は英語セクション全体を省略し、Blueskyと同一テキスト（`buildPostText()`）にフォールバック
+- `descriptionEn`が空の場合は英語説明行のみ省略
+- 想定文字数: ~420文字（Mastodon標準上限500文字以内）
 
 **「の日」重複防止ロジック（`buildPostText`）:**
 
@@ -356,11 +383,14 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 📋 Pollinationsプロンプト:       ← Pollinations採用時は「（採用）」付き
 {pollinationsPrompt}             ← pollinationsPromptがある場合のみ
 
-📣 投稿テキスト（Mastodon・X・Instagram等に転載用）:
-{buildPostText()の出力全文}      ← Blueskyと同一テキスト・ハッシュタグ・URL含む
+📣 Bluesky投稿テキスト（X・Instagram等に転載用）:
+{buildPostText()の出力全文}      ← 日本語のみ・ハッシュタグ・URL含む
+
+📣 Mastodon投稿テキスト（二言語・転載用）:
+{buildMastodonText()の出力全文}  ← 日英二言語・ハッシュタグ・URL含む
 ```
 
-**設計意図**: 📣セクションをそのままコピーして他SNSに貼り付けられる。🔗行は投稿テキスト内にURLが含まれるため省略。どちらのAIが採用されたかは「（採用）」表示で確認できる。採用されなかった方のプロンプトも記載されるため、手動で再実行して比較検証が可能。
+**設計意図**: 📣セクションをそのままコピーして他SNSに貼り付けられる。Bluesky（日本語）・Mastodon（日英）それぞれの転載用テキストを並記。どちらのAIが採用されたかは「（採用）」表示で確認できる。採用されなかった方のプロンプトも記載されるため、手動で再実行して比較検証が可能。
 
 ### Bluesky AT Protocolエンドポイント
 
@@ -385,7 +415,7 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 
 **タイムアウト**: アップロード・投稿ともに`AbortSignal.timeout(30_000)`（30秒）。
 
-**テキスト**: Blueskyと同一テキストをそのまま使用。Mastodonはハッシュタグを自動認識するためAT Protocol facetsは不要。
+**テキスト**: `buildMastodonText()`で生成した**英語優先・日英二言語テキスト**を使用（`pageUrlEn`含む）。Mastodonはハッシュタグを自動認識するためAT Protocol facetsは不要。`themeEn`未取得時は`buildPostText()`（日本語）にフォールバック。
 
 **シークレット設定**:
 ```bash

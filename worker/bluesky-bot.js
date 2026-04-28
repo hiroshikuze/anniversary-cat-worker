@@ -37,8 +37,9 @@ export const BLUESKY_MAX_IMAGE_BYTES = 976_000; // Bluesky上限 1,000,000 bytes
 const MASTODON_UPLOAD_TIMEOUT_MS = 30_000;
 const MASTODON_POST_TIMEOUT_MS   = 30_000;
 
-const HASHTAG_LIST = ["#AIart", "#cat", "#kitten", "#ほのぼの", "#猫", "#にゃんバーサリー"];
-const HASHTAGS     = HASHTAG_LIST.join(" ");
+const HASHTAG_LIST        = ["#AIart", "#cat", "#kitten", "#ほのぼの", "#猫", "#にゃんバーサリー"];
+const HASHTAGS            = HASHTAG_LIST.join(" ");
+const MASTODON_EXTRA_TAGS = ["#Nyaniversary"];
 
 // ---------------------------------------------------------------------------
 // 投稿テキスト生成
@@ -72,9 +73,52 @@ export function buildPostText(theme, description, pageUrl = SITE_URL) {
   const body     = description ? `\n${description}` : "";
   const cta      = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${pageUrl}`;
   const themeTag = buildThemeTag(theme);
-  const allTags  = themeTag ? `${HASHTAGS} ${themeTag}` : HASHTAGS;
+  const allTags  = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
   const tags     = `\n\n${allTags}`;
   return header + body + cta + tags;
+}
+
+/**
+ * Mastodon 投稿テキストを生成する（英語優先・日英二言語）。
+ * themeEn が空の場合は buildPostText() 相当の日本語のみにフォールバック。
+ * descriptionEn が空の場合は英語説明行のみ省略（英語セクションは残す）。
+ * @param {string} theme
+ * @param {string} description
+ * @param {string} [themeEn]
+ * @param {string} [descriptionEn]
+ * @param {string} [pageUrl]
+ */
+export function buildMastodonText(theme, description, themeEn = "", descriptionEn = "", pageUrl = SITE_URL) {
+  const safeThemeEn = (themeEn ?? "").replace(/[^\x20-\x7E]/g, "").trim();
+  const safeDescEn  = (descriptionEn ?? "").replace(/[^\x20-\x7E]/g, "").trim();
+
+  const themeTag    = buildThemeTag(theme);
+  const mastoTags   = [...MASTODON_EXTRA_TAGS, ...HASHTAG_LIST];
+  const tagStr      = themeTag
+    ? `${themeTag} ${mastoTags.join(" ")}`
+    : mastoTags.join(" ");
+
+  // themeEn がない場合は日本語のみ（buildPostText 相当）
+  if (!safeThemeEn) {
+    const header  = theme.endsWith("の日") ? `今日は「${theme}」！🐱` : `今日は「${theme}」の日！🐱`;
+    const jpDesc  = description ? `\n${description}` : "";
+    const cta     = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${pageUrl}`;
+    const fallbackTags = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
+    return header + jpDesc + cta + `\n\n${fallbackTags}`;
+  }
+
+  // pageUrlEn: 既存クエリに lang=en を追加
+  const pageUrlEn = pageUrl.includes("?") ? `${pageUrl}&lang=en` : `${pageUrl}?lang=en`;
+
+  const enHeader  = `Today is "${safeThemeEn}"!`;
+  const enDesc    = safeDescEn ? `\n${safeDescEn}` : "";
+  const enCta     = `\n\nWhy don't you try making your own #Nyaniversary #にゃんバーサリー today?\n${pageUrlEn}`;
+
+  const jaHeader  = theme.endsWith("の日") ? `今日は「${theme}」！🐱` : `今日は「${theme}」の日！🐱`;
+  const jaDesc    = description ? `\n${description}` : "";
+  const jaCta     = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${pageUrl}`;
+
+  return enHeader + enDesc + enCta + "\n\n" + jaHeader + jaDesc + jaCta + `\n\n${tagStr}`;
 }
 
 /**
@@ -465,8 +509,13 @@ export async function runBot(env, handleResearch, handleGenerate) {
     const imageBytes = base64ToBytes(shrunk.imageData);
     const mimeType   = shrunk.mimeType;
 
-    const themeTag = buildThemeTag(research.theme);
-    const text     = buildPostText(research.theme, research.description ?? "", pageUrl);
+    const themeTag    = buildThemeTag(research.theme);
+    const text        = buildPostText(research.theme, research.description ?? "", pageUrl);
+    const mastoText   = buildMastodonText(
+      research.theme, research.description ?? "",
+      research.themeEn ?? "", research.descriptionEn ?? "",
+      pageUrl
+    );
     const desc     = research.description ?? "";
     const altText  = desc
       ? `にゃんバーサリー - 「${research.theme}」の日！${desc}（AIが生成した水彩画風の猫イラスト）`
@@ -475,7 +524,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
     // ── 5. Bluesky + Mastodon 並列投稿 ───────────────────────────────────
     console.log(`${prefix} Bluesky + Mastodon 投稿 開始`);
     const [bskyResult, mastoResult] = await Promise.allSettled([
-      // Bluesky
+      // Bluesky（日本語のみ）
       (async () => {
         const { accessJwt, did } = await createBlueskySession(
           env.BLUESKY_IDENTIFIER, env.BLUESKY_APP_PASSWORD
@@ -483,14 +532,14 @@ export async function runBot(env, handleResearch, handleGenerate) {
         const blobRef = await uploadBlob(accessJwt, imageBytes, mimeType);
         return createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl, themeTag);
       })(),
-      // Mastodon（シークレット未設定時はスキップ）
+      // Mastodon（日英二言語・シークレット未設定時はスキップ）
       (env.MASTODON_INSTANCE_URL && env.MASTODON_ACCESS_TOKEN)
         ? (async () => {
             const mediaId = await uploadMediaToMastodon(
               env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, imageBytes, mimeType, altText
             );
             return postStatusToMastodon(
-              env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, text, mediaId
+              env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, mastoText, mediaId
             );
           })()
         : Promise.resolve(null),
@@ -544,7 +593,8 @@ export async function runBot(env, handleResearch, handleGenerate) {
         `🖼 ソース: ${generated.source}`,
         generated.prompt            ? `\n📋 Geminiプロンプト${generated.source === "gemini" ? "（採用）" : ""}:\n${generated.prompt}` : null,
         generated.pollinationsPrompt ? `\n📋 Pollinationsプロンプト${generated.source === "pollinations" ? "（採用）" : ""}:\n${generated.pollinationsPrompt}` : null,
-        `\n📣 投稿テキスト（X・Instagram等に転載用）:\n${text}`,
+        `\n📣 Bluesky投稿テキスト（X・Instagram等に転載用）:\n${text}`,
+        `\n📣 Mastodon投稿テキスト（二言語・転載用）:\n${mastoText}`,
       ].filter(Boolean).join("\n");
       await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, bskyOk ? "✅" : "❌");
     } catch (_) { /* 通知失敗は無視 */ }
