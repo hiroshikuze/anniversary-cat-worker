@@ -17,7 +17,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -1003,10 +1003,10 @@ console.log("\n[pickPersonality]");
 }
 
 {
-  // 1000回試行して全5タイプ＋null が出現すること
+  // 1000回試行して全6タイプ＋null が出現すること（うとうとを追加したため6種+おまかせ）
   const seen = new Set();
   for (let i = 0; i < 1000; i++) seen.add(pickPersonality());
-  assert("1000回試行で全5タイプ＋おまかせ(null)が出現する", seen.size === 6);
+  assert("1000回試行で全6タイプ＋おまかせ(null)が出現する", seen.size === 7);
   assert("1000回試行でおまかせ(null)が出現する", seen.has(null));
 }
 
@@ -1713,6 +1713,179 @@ console.log("\n[【回帰】handleGenerate: 502平文レスポンス（Pollinati
   }
 
   globalThis.fetch = origFetch;
+}
+
+// ---------------------------------------------------------------------------
+// [pickGuestAnimal]
+// ---------------------------------------------------------------------------
+// rand() の呼び出し順序（type別）:
+//   call 1: ゲスト確率（< 0.10 でゲスト発生）
+//   call 2: タイプ選択（floor * 8 → 0-7）
+//   call 3+: バリアント選択（タイプ依存）
+//   type 0 dog:           call 3 = variant(floor*6)
+//   type 1 rabbit:        call 3 = breed(floor*3), call 4 = color(floor*3)
+//   type 2 panda:         追加呼び出しなし
+//   type 3 penguin:       call 3 = variant(floor*2)
+//   type 4 pig:           call 3 = variant(floor*2)
+//   type 5 chicken:       call 3 = chick判定(<1/3), adult時: call 4 = variant(floor*2)
+//   type 6 companion cat: call 3 = 毛柄(<0.6 similar/<0.9 contrast/else random), call 4 = personality(floor*3)
+//   type 7 kitten:        追加呼び出しなし
+// ---------------------------------------------------------------------------
+console.log("\n[pickGuestAnimal]");
+{
+  // ── 確率テスト ──
+  assert("rand >= 0.10 → null（ゲストなし）", pickGuestAnimal("orange tabby cat", () => 0.10) === null);
+  assert("rand >= 0.10 → null（境界値）",     pickGuestAnimal("orange tabby cat", () => 0.99) === null);
+
+  // ── 構造テスト（dog type 0, golden retriever） ──
+  {
+    const rands = [0.05, 0.0, 0.0];
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("rand < 0.10 → オブジェクトを返す",           g !== null);
+    assert("appearance フィールドが文字列",               typeof g?.appearance === "string");
+    assert("personality フィールドが文字列",              typeof g?.personality === "string");
+    assert("guardianModifier フィールドが存在する",        "guardianModifier" in (g ?? {}));
+    assert("dog[0]: golden retriever を含む",            g?.appearance.includes("golden retriever"));
+    assert("dog: guardianModifier は null",              g?.guardianModifier === null);
+  }
+
+  // ── Dog バリアント（index 4 = brindle French Bulldog） ──
+  {
+    const rands = [0.05, 0.0, 4 / 6 + 0.01];
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("dog[4]: brindle French Bulldog", g?.appearance.includes("brindle French Bulldog"));
+  }
+
+  // ── Rabbit: 品種×毛色の独立抽選 ──
+  const RABBIT_BREEDS = ["Netherland Dwarf", "Holland Lop", "Mini Rex"];
+  const RABBIT_COLORS = ["chestnut", "cream", "mixed"];
+  for (let b = 0; b < 3; b++) {
+    for (let c = 0; c < 3; c++) {
+      const rands = [0.05, 1 / 8 + 0.01, b / 3 + 0.001, c / 3 + 0.001];
+      let i = 0;
+      const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+      assert(`rabbit: 品種 ${RABBIT_BREEDS[b]} が含まれる`, g?.appearance.includes(RABBIT_BREEDS[b]));
+      assert(`rabbit: 毛色 ${RABBIT_COLORS[c]} が含まれる`, g?.appearance.includes(RABBIT_COLORS[c]));
+    }
+  }
+  // Rabbit の guardianModifier は null
+  {
+    const rands = [0.05, 1 / 8 + 0.01, 0.0, 0.0];
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("rabbit: guardianModifier は null", g?.guardianModifier === null);
+  }
+
+  // ── Panda（単一バリアント） ──
+  {
+    const rands = [0.05, 2 / 8 + 0.01];
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("panda: giant panda cub を含む", g?.appearance.includes("giant panda cub"));
+    assert("panda: guardianModifier は null",  g?.guardianModifier === null);
+  }
+
+  // ── Penguin（2バリアント） ──
+  {
+    const rands = [0.05, 3 / 8 + 0.01, 0.0];
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("penguin[0]: emperor penguin chick", g?.appearance.includes("emperor penguin chick"));
+  }
+  {
+    const rands = [0.05, 3 / 8 + 0.01, 0.6];
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("penguin[1]: little blue penguin", g?.appearance.includes("little blue penguin"));
+  }
+
+  // ── Pig（2バリアント） ──
+  {
+    const rands = [0.05, 4 / 8 + 0.01, 0.0];
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("pig[0]: pink miniature pig", g?.appearance.includes("pink miniature pig"));
+  }
+
+  // ── Chicken: ひよこと成鳥で personality が異なる ──
+  let chickenAdult, chickenChick;
+  {
+    const rands = [0.05, 5 / 8 + 0.01, 0.5, 0.0]; // adult (rand >= 1/3), Silkie
+    let i = 0;
+    chickenAdult = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("chicken adult: Silkie を含む",          chickenAdult?.appearance.includes("Silkie"));
+    assert("chicken adult: pecking を含む personality", chickenAdult?.personality.includes("pecking"));
+  }
+  {
+    const rands = [0.05, 5 / 8 + 0.01, 0.1]; // chick (rand < 1/3)
+    let i = 0;
+    chickenChick = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("chicken chick: tiny fluffy yellow baby chick",  chickenChick?.appearance.includes("tiny fluffy yellow baby chick"));
+    assert("chicken chick: toddling を含む personality",    chickenChick?.personality.includes("toddling"));
+    assert("chicken: 成鳥とひよこで personality が異なる",  chickenAdult?.personality !== chickenChick?.personality);
+  }
+
+  // ── Companion cat（No.7）: コート選択 ──
+  {
+    const rands = [0.05, 6 / 8 + 0.01, 0.3, 0.0]; // similar coat, personality[0]
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("companion cat similar: matching coat を含む", g?.appearance.includes("matching coat"));
+    assert("companion cat: guardianModifier は null",    g?.guardianModifier === null);
+  }
+  {
+    const rands = [0.05, 6 / 8 + 0.01, 0.7, 0.0]; // contrast coat
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("companion cat contrast: contrasting を含む", g?.appearance.includes("contrasting"));
+  }
+  {
+    const rands = [0.05, 6 / 8 + 0.01, 0.95, 0.0]; // random coat
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("companion cat random: distinct coat を含む", g?.appearance.includes("distinct coat"));
+  }
+
+  // ── Kitten（No.8）: guardianModifier が設定される ──
+  {
+    const rands = [0.05, 7 / 8 + 0.01]; // kitten
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("kitten: appearance に kitten が含まれる",   g?.appearance.includes("kitten"));
+    assert("kitten: guardianModifier が null でない",   g?.guardianModifier !== null);
+    assert("kitten: personality に curious eyes を含む", g?.personality.includes("curious eyes"));
+  }
+  // mainPersona が null の場合は fluffy kitten
+  {
+    const rands = [0.05, 7 / 8 + 0.01];
+    let i = 0;
+    const g = pickGuestAnimal(null, () => rands[i++] ?? 0.5);
+    assert("kitten (mainPersona=null): fluffy kitten を含む", g?.appearance.includes("fluffy kitten"));
+  }
+
+  // ── 全タイプで appearance / personality が ASCII のみ ──
+  const ASCII_RE = /^[\x20-\x7E]+$/;
+  const typeRands = [
+    [0.05, 0.0, 0.0],              // dog
+    [0.05, 1 / 8 + 0.01, 0.0, 0.0], // rabbit
+    [0.05, 2 / 8 + 0.01],          // panda
+    [0.05, 3 / 8 + 0.01, 0.0],     // penguin
+    [0.05, 4 / 8 + 0.01, 0.0],     // pig
+    [0.05, 5 / 8 + 0.01, 0.1],     // chicken chick
+    [0.05, 5 / 8 + 0.01, 0.5, 0.0], // chicken adult
+    [0.05, 6 / 8 + 0.01, 0.3, 0.0], // companion cat
+    [0.05, 7 / 8 + 0.01],          // kitten
+  ];
+  for (const rands of typeRands) {
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    const app = g?.appearance ?? "";
+    const per = g?.personality ?? "";
+    assert(`ASCII check appearance: "${app.slice(0, 40)}"`, ASCII_RE.test(app));
+    assert(`ASCII check personality: "${per.slice(0, 40)}"`, per === null || ASCII_RE.test(per));
+  }
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);

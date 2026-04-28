@@ -471,6 +471,7 @@ const CAT_PERSONALITIES = [
   { weight: 30, desc: "crouching in playful pounce position, alert bright eyes, paw reaching for theme item" },
   { weight: 25, desc: "leaning forward with wide curious eyes, carefully investigating the theme item" },
   { weight:  7, desc: "grooming itself serenely, self-contained and peaceful" },
+  { weight:  7, desc: "curled up softly, head gently drooping in a cozy drowsy nap" },
   { weight:  3, desc: "sitting with back slightly turned, dignified aloof expression, secretly glancing back" },
   // Omakase: AIにポーズ・表情を自由に決めさせる (weight 10)
   { weight: 10, desc: null },
@@ -557,7 +558,130 @@ export function pickEatingAction(foodItem) {
   return fn(foodItem);
 }
 
-function buildPollinationsPrompt(theme, description, persona, personality, visualHint = null, emotion = null, eatingAction = null) {
+// ---------------------------------------------------------------------------
+// ゲストキャラクター（10%確率で登場・メイン猫の感情を共有）
+// ---------------------------------------------------------------------------
+const GUEST_ANIMAL_PROBABILITY = 0.10;
+const GUEST_TYPE_COUNT = 8; // 将来タイプを追加する場合はこの値とswitchを更新
+
+// No.1 犬
+const DOG_VARIANTS = [
+  "golden retriever",
+  "red shiba inu",
+  "black-and-tan shiba inu",
+  "cream shiba inu",
+  "brindle French Bulldog",
+  "pied French Bulldog",
+];
+const DOG_PERSONALITY = "friendly and energetic, approaching the cat with enthusiasm";
+
+// No.2 ウサギ（品種×毛色を独立抽選）
+const RABBIT_BREEDS = ["Netherland Dwarf rabbit", "Holland Lop rabbit", "Mini Rex rabbit"];
+const RABBIT_COLORS = ["chestnut", "cream", "mixed"];
+const RABBIT_PERSONALITY = "sitting neatly with ears alert, nose twitching with curiosity";
+
+// No.3 パンダ
+const PANDA_VARIANT = "giant panda cub";
+const PANDA_PERSONALITY = "sitting peacefully nearby, watching the cat with calm gentle eyes, relaxed and unhurried";
+
+// No.4 ペンギン
+const PENGUIN_VARIANTS = ["emperor penguin chick", "little blue penguin"];
+const PENGUIN_PERSONALITY = "waddling cheerfully with flippers out, sociable and bright-eyed";
+
+// No.5 豚
+const PIG_VARIANTS = ["pink miniature pig", "black and white spotted miniature pig"];
+const PIG_PERSONALITY = "trotting over with snout twitching, cheerful and friendly";
+
+// No.6 鶏（1/3の確率でひよこ、2/3で成鳥）
+const CHICKEN_CHICK_PROBABILITY = 1 / 3;
+const CHICKEN_ADULT_VARIANTS = ["fluffy white Silkie chicken", "colorful bantam rooster"];
+const CHICKEN_ADULT_PERSONALITY = "pecking nearby and tilting head sideways with sharp curious eyes";
+const CHICKEN_CHICK_VARIANT = "tiny fluffy yellow baby chick";
+const CHICKEN_CHICK_PERSONALITY = "toddling unsteadily with tiny wings flapping, wide-eyed and curious";
+
+// No.7 伴侶猫（独立選択の性格・毛柄は主人公との関係で決定）
+const COMPANION_CAT_COAT_WEIGHTS = { similar: 60, contrast: 30, random: 10 }; // 合計100
+const COMPANION_CAT_APPEARANCES = {
+  similar:  "a companion cat with a matching coat to the main cat, sitting together as close friends",
+  contrast: "a companion cat with contrasting markings, sharing the scene as a friendly pair",
+  random:   "another cat with a distinct coat, joining the scene as a companion",
+};
+const COMPANION_CAT_PERSONALITIES = [
+  "sitting calmly, sharing the scene with gentle companionship",
+  "watching curiously with bright eyes, attentive and present",
+  "relaxed and at ease, a quiet friendly presence",
+];
+
+// No.8 子猫（主人公の性格に保護者修飾を追加）
+const KITTEN_PERSONALITY = "leaning forward with wide curious eyes, captivated by everything";
+const KITTEN_GUARDIAN_MODIFIER = "calmly watching over the kitten nearby";
+
+/**
+ * ゲスト動物を選択する。
+ * GUEST_ANIMAL_PROBABILITY（10%）の確率でゲストを返し、それ以外は null を返す。
+ * rand はテスト用のランダム関数差し替え口（デフォルト Math.random）。
+ * @param {string|null} mainPersona - メイン猫のペルソナ文字列（No.7/8の毛柄選択に使用）
+ * @param {() => number} rand
+ * @returns {{ appearance: string, personality: string, guardianModifier: string|null }|null}
+ */
+export function pickGuestAnimal(mainPersona, rand = Math.random) {
+  if (rand() >= GUEST_ANIMAL_PROBABILITY) return null;
+
+  const typeIndex = Math.floor(rand() * GUEST_TYPE_COUNT);
+  switch (typeIndex) {
+    case 0: { // 犬
+      const v = DOG_VARIANTS[Math.floor(rand() * DOG_VARIANTS.length)];
+      return { appearance: v, personality: DOG_PERSONALITY, guardianModifier: null };
+    }
+    case 1: { // ウサギ（品種×毛色を独立抽選）
+      const breed = RABBIT_BREEDS[Math.floor(rand() * RABBIT_BREEDS.length)];
+      const color = RABBIT_COLORS[Math.floor(rand() * RABBIT_COLORS.length)];
+      return { appearance: `${color} ${breed}`, personality: RABBIT_PERSONALITY, guardianModifier: null };
+    }
+    case 2: { // パンダ
+      return { appearance: PANDA_VARIANT, personality: PANDA_PERSONALITY, guardianModifier: null };
+    }
+    case 3: { // ペンギン
+      const v = PENGUIN_VARIANTS[Math.floor(rand() * PENGUIN_VARIANTS.length)];
+      return { appearance: v, personality: PENGUIN_PERSONALITY, guardianModifier: null };
+    }
+    case 4: { // 豚
+      const v = PIG_VARIANTS[Math.floor(rand() * PIG_VARIANTS.length)];
+      return { appearance: v, personality: PIG_PERSONALITY, guardianModifier: null };
+    }
+    case 5: { // 鶏（ひよこ or 成鳥）
+      if (rand() < CHICKEN_CHICK_PROBABILITY) {
+        return { appearance: CHICKEN_CHICK_VARIANT, personality: CHICKEN_CHICK_PERSONALITY, guardianModifier: null };
+      }
+      const v = CHICKEN_ADULT_VARIANTS[Math.floor(rand() * CHICKEN_ADULT_VARIANTS.length)];
+      return { appearance: v, personality: CHICKEN_ADULT_PERSONALITY, guardianModifier: null };
+    }
+    case 6: { // 伴侶猫（毛柄はメイン猫との関係で決定）
+      const coatRand = rand();
+      let coatType;
+      if (coatRand < COMPANION_CAT_COAT_WEIGHTS.similar / 100) {
+        coatType = "similar";
+      } else if (coatRand < (COMPANION_CAT_COAT_WEIGHTS.similar + COMPANION_CAT_COAT_WEIGHTS.contrast) / 100) {
+        coatType = "contrast";
+      } else {
+        coatType = "random";
+      }
+      const appearance  = COMPANION_CAT_APPEARANCES[coatType];
+      const personality = COMPANION_CAT_PERSONALITIES[Math.floor(rand() * COMPANION_CAT_PERSONALITIES.length)];
+      return { appearance, personality, guardianModifier: null };
+    }
+    case 7: { // 子猫（メイン猫に保護者修飾を付与）
+      const appearance = mainPersona
+        ? "a tiny kitten with a matching coat to the main cat"
+        : "a tiny fluffy kitten";
+      return { appearance, personality: KITTEN_PERSONALITY, guardianModifier: KITTEN_GUARDIAN_MODIFIER };
+    }
+    default:
+      return null;
+  }
+}
+
+function buildPollinationsPrompt(theme, description, persona, personality, visualHint = null, emotion = null, eatingAction = null, guest = null) {
   // Pollinations API のプロンプトは ASCII のみ使用
   // 日本語等の非ASCII文字はURLパス内でサーバー側エラー(500)の原因になるためフィルタリング
   const toAscii = (s) => (s ?? "").replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
@@ -567,12 +691,13 @@ function buildPollinationsPrompt(theme, description, persona, personality, visua
   const subject    = themeAscii || descAscii || visualHint?.split(",")[0]?.trim() || "anniversary";
   // テーマ関連要素より先に「kawaii watercolor cat」を置き、サービスの根幹（水彩画風の可愛い猫）を先頭で宣言する
   // 「kawaii watercolor cat」にcatが含まれるため persona が null のときの "cat" フォールバックは不要
-  const parts = ["kawaii watercolor cat", subject, visualHint, persona, personality, emotion, eatingAction, "pastel colors, white background"];
+  const guestPart  = guest ? `with ${guest.appearance}` : null;
+  const parts = ["kawaii watercolor cat", subject, visualHint, persona, personality, emotion, eatingAction, guestPart, "pastel colors, white background"];
   return parts.filter(Boolean).join(", ");
 }
 
-function buildPollinationsUrl(theme, description, persona, personality, model = "flux", visualHint = null, emotion = null, eatingAction = null) {
-  const prompt = buildPollinationsPrompt(theme, description, persona, personality, visualHint, emotion, eatingAction);
+function buildPollinationsUrl(theme, description, persona, personality, model = "flux", visualHint = null, emotion = null, eatingAction = null, guest = null) {
+  const prompt = buildPollinationsPrompt(theme, description, persona, personality, visualHint, emotion, eatingAction, guest);
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
@@ -592,12 +717,18 @@ export async function handleGenerate(body, apiKey) {
   const emotion      = pickEmotion();
   const visualHint   = body.visualHint ?? null;
   const eatingAction = pickEatingAction(body.foodItem ?? null);
+  const guest        = pickGuestAnimal(persona);
+  // No.8 子猫の場合はメイン猫の性格に保護者修飾を追加
+  const effectivePersonality = (personality && guest?.guardianModifier)
+    ? `${personality}, ${guest.guardianModifier}`
+    : personality;
   const prompt =
     `Create a cute kawaii watercolor style cat character illustration. ` +
-    (persona      ? `Cat appearance: ${persona}. `                    : "") +
-    (personality  ? `Cat personality and pose: ${personality}. `      : "") +
-    (emotion      ? `Cat facial expression and emotion: ${emotion}. ` : "") +
-    (eatingAction ? `Cat action: ${eatingAction}. `                   : "") +
+    (persona              ? `Cat appearance: ${persona}. `                           : "") +
+    (effectivePersonality ? `Cat personality and pose: ${effectivePersonality}. `    : "") +
+    (emotion              ? `Cat facial expression and emotion: ${emotion}. `        : "") +
+    (eatingAction         ? `Cat action: ${eatingAction}. `                          : "") +
+    (guest                ? `Guest animal in the scene: ${guest.appearance}. Guest demeanor: ${guest.personality}. ` : "") +
     `Theme: ${theme}. ` +
     (description  ? `Context: ${description}. `              : "") +
     (visualHint   ? `Setting and surrounding atmosphere; the cat may naturally interact with theme-related items (approaching, touching, or holding them as fits the scene): ${visualHint}. ` : "") +
@@ -668,7 +799,7 @@ export async function handleGenerate(body, apiKey) {
     const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
     return Promise.any(
       MODELS.map(async (model) => {
-        const url = buildPollinationsUrl(theme, description, persona, personality, model, visualHint, emotion, eatingAction);
+        const url = buildPollinationsUrl(theme, description, persona, effectivePersonality, model, visualHint, emotion, eatingAction, guest);
         console.log(`[pollinations] trying model=${model}`);
         const imgRes = await fetch(url, { signal: AbortSignal.timeout(POLLINATIONS_TIMEOUT_MS) });
         if (!imgRes.ok) throw new Error(`status=${imgRes.status}`);
@@ -681,11 +812,11 @@ export async function handleGenerate(body, apiKey) {
     );
   }
 
-  const pollinationsPrompt = buildPollinationsPrompt(theme, description, persona, personality, visualHint, emotion, eatingAction);
+  const pollinationsPrompt = buildPollinationsPrompt(theme, description, persona, effectivePersonality, visualHint, emotion, eatingAction, guest);
 
   // 2フェーズ方式の実行（ロジックは _twoPhaseRace に切り出し済み）
   const result = await _twoPhaseRace(tryGemini, tryPollinations);
-  return { ...result, persona, personality, emotion, eatingAction, prompt, pollinationsPrompt };
+  return { ...result, persona, personality: effectivePersonality, emotion, eatingAction, guest, prompt, pollinationsPrompt };
 }
 
 // ---------------------------------------------------------------------------
