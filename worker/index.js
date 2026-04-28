@@ -309,7 +309,7 @@ export async function handleResearch(body, apiKey) {
     `今日は${date}です。この日の日本の記念日・季節の行事・季節の花を` +
     `Google検索で調べ、最も特徴的なものを1つ選んでください（速報ニュース・災害・事故・訃報は除く）。` +
     `回答は以下のJSONのみ（マークダウン・説明文は不要）:\n` +
-    `{"theme":"記念日名","description":"50文字以内の説明（日付・曜日は含めない）","visualHint":"このテーマをかわいい猫のイラストで表現するとき背景・小物・雰囲気として使える英語キーワードを5〜8語","foodItem":"その記念日の主な行為・目的が食べることである場合のみ食材・料理名をASCII英語で1〜3語。農業・収穫・行事の象徴として食材が登場するだけの場合はnull。そうでなければnull","kanjiChar":"このテーマを象徴する漢字一字（常用漢字・旧字体不可）。具体的な漢字が思い浮かばない場合はnull","sourceUrl":"参照した実際のURL"}`;
+    `{"theme":"記念日名","description":"50文字以内の説明（日付・曜日は含めない）","visualHint":"このテーマをかわいい猫のイラストで表現するとき使えるASCII英語キーワード5〜8語。テーマの象徴となる動物・物・人物を先頭1〜2語に必ず含め、続いて背景・小物・雰囲気を続ける（例: 象の日→large friendly elephant, Kyoto imperial garden, pine trees, stone lanterns）","foodItem":"その記念日の主な行為・目的が食べることである場合のみ食材・料理名をASCII英語で1〜3語。農業・収穫・行事の象徴として食材が登場するだけの場合はnull。そうでなければnull","kanjiChar":"このテーマを象徴する漢字一字（常用漢字・旧字体不可）。具体的な漢字が思い浮かばない場合はnull","sourceUrl":"参照した実際のURL"}`;
 
   const res = await fetchWithRetry(
     `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
