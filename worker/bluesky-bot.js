@@ -78,6 +78,37 @@ export function buildPostText(theme, description, pageUrl = SITE_URL) {
 }
 
 /**
+ * Mastodon 投稿テキストを生成する（日英二言語）。
+ * themeEn が空の場合は日本語のみヘッダーにフォールバック。
+ * descriptionEn が空の場合はその行を省略。
+ * @param {string} theme
+ * @param {string} description
+ * @param {string} [themeEn]
+ * @param {string} [descriptionEn]
+ * @param {string} [pageUrl]
+ */
+export function buildMastodonText(theme, description, themeEn = "", descriptionEn = "", pageUrl = SITE_URL) {
+  const safeThemeEn = (themeEn ?? "").replace(/[^\x20-\x7E]/g, "").trim();
+  const safeDescEn  = (descriptionEn ?? "").replace(/[^\x20-\x7E]/g, "").trim();
+
+  const header = safeThemeEn
+    ? (theme.endsWith("の日")
+        ? `今日は「${theme}」！🐱 / Today is "${safeThemeEn}"!`
+        : `今日は「${theme}」の日！🐱 / Today is "${safeThemeEn}"!`)
+    : (theme.endsWith("の日")
+        ? `今日は「${theme}」！🐱`
+        : `今日は「${theme}」の日！🐱`);
+
+  const jpDesc  = description ? `\n${description}` : "";
+  const enDesc  = safeDescEn  ? `\n${safeDescEn}`  : "";
+  const cta     = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${pageUrl}`;
+  const themeTag = buildThemeTag(theme);
+  const allTags  = themeTag ? `${HASHTAGS} ${themeTag}` : HASHTAGS;
+  const tags     = `\n\n${allTags}`;
+  return header + jpDesc + enDesc + cta + tags;
+}
+
+/**
  * テキスト中のハッシュタグを AT Protocol の facets 形式（UTF-8 バイト位置）に変換する。
  * JavaScript 文字列は UTF-16 のため、バイト位置計算に TextEncoder を使う。
  * @param {string} text
@@ -465,8 +496,13 @@ export async function runBot(env, handleResearch, handleGenerate) {
     const imageBytes = base64ToBytes(shrunk.imageData);
     const mimeType   = shrunk.mimeType;
 
-    const themeTag = buildThemeTag(research.theme);
-    const text     = buildPostText(research.theme, research.description ?? "", pageUrl);
+    const themeTag    = buildThemeTag(research.theme);
+    const text        = buildPostText(research.theme, research.description ?? "", pageUrl);
+    const mastoText   = buildMastodonText(
+      research.theme, research.description ?? "",
+      research.themeEn ?? "", research.descriptionEn ?? "",
+      pageUrl
+    );
     const desc     = research.description ?? "";
     const altText  = desc
       ? `にゃんバーサリー - 「${research.theme}」の日！${desc}（AIが生成した水彩画風の猫イラスト）`
@@ -475,7 +511,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
     // ── 5. Bluesky + Mastodon 並列投稿 ───────────────────────────────────
     console.log(`${prefix} Bluesky + Mastodon 投稿 開始`);
     const [bskyResult, mastoResult] = await Promise.allSettled([
-      // Bluesky
+      // Bluesky（日本語のみ）
       (async () => {
         const { accessJwt, did } = await createBlueskySession(
           env.BLUESKY_IDENTIFIER, env.BLUESKY_APP_PASSWORD
@@ -483,14 +519,14 @@ export async function runBot(env, handleResearch, handleGenerate) {
         const blobRef = await uploadBlob(accessJwt, imageBytes, mimeType);
         return createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl, themeTag);
       })(),
-      // Mastodon（シークレット未設定時はスキップ）
+      // Mastodon（日英二言語・シークレット未設定時はスキップ）
       (env.MASTODON_INSTANCE_URL && env.MASTODON_ACCESS_TOKEN)
         ? (async () => {
             const mediaId = await uploadMediaToMastodon(
               env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, imageBytes, mimeType, altText
             );
             return postStatusToMastodon(
-              env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, text, mediaId
+              env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, mastoText, mediaId
             );
           })()
         : Promise.resolve(null),
@@ -544,7 +580,8 @@ export async function runBot(env, handleResearch, handleGenerate) {
         `🖼 ソース: ${generated.source}`,
         generated.prompt            ? `\n📋 Geminiプロンプト${generated.source === "gemini" ? "（採用）" : ""}:\n${generated.prompt}` : null,
         generated.pollinationsPrompt ? `\n📋 Pollinationsプロンプト${generated.source === "pollinations" ? "（採用）" : ""}:\n${generated.pollinationsPrompt}` : null,
-        `\n📣 投稿テキスト（X・Instagram等に転載用）:\n${text}`,
+        `\n📣 Bluesky投稿テキスト（X・Instagram等に転載用）:\n${text}`,
+        `\n📣 Mastodon投稿テキスト（二言語・転載用）:\n${mastoText}`,
       ].filter(Boolean).join("\n");
       await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, bskyOk ? "✅" : "❌");
     } catch (_) { /* 通知失敗は無視 */ }

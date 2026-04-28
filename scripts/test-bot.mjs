@@ -13,7 +13,7 @@ import { updateMetaInR2 } from "../worker/r2-storage.js";
 import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptionForTest } from "../worker/suzuri.js";
 
 import {
-  buildPostText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
+  buildPostText, buildMastodonText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
@@ -2122,6 +2122,52 @@ console.log("\n[pickGuestAnimal]");
       ratioC >= 0.25 && ratioC <= 0.42
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// buildMastodonText
+// ---------------------------------------------------------------------------
+console.log("\n[buildMastodonText]");
+{
+  // 正常系: 日英両方あり
+  const text = buildMastodonText("ねこの日", "猫を愛でる記念日です", "Cat Day", "A day to celebrate cats");
+  assert("themeEn が含まれる", text.includes("Cat Day"));
+  assert("descriptionEn が含まれる", text.includes("A day to celebrate cats"));
+  assert("日本語テーマが含まれる", text.includes("ねこの日"));
+  assert("日本語説明が含まれる", text.includes("猫を愛でる記念日です"));
+  assert("サイトURLが含まれる", text.includes("hiroshikuze.github.io/anniversary-cat-worker/"));
+  assert("ハッシュタグ #cat が含まれる", text.includes("#cat"));
+  assert("ハッシュタグ #猫 が含まれる", text.includes("#猫"));
+  assert("日英ヘッダーの区切りが含まれる", text.includes("/ Today is"));
+}
+
+{
+  // themeEn が空の場合は日本語のみヘッダーにフォールバック
+  const text = buildMastodonText("ねこの日", "猫を愛でる記念日です", "", "");
+  assert("themeEn 空: 日本語テーマが含まれる", text.includes("ねこの日"));
+  assert("themeEn 空: 英語区切りが含まれない", !text.includes("/ Today is"));
+}
+
+{
+  // descriptionEn が空の場合は英語説明行を省略
+  const text = buildMastodonText("ねこの日", "猫を愛でる記念日です", "Cat Day", "");
+  assert("descriptionEn 空: themeEn は含まれる", text.includes("Cat Day"));
+  assert("descriptionEn 空: 英語説明は省略される", !text.includes("A day"));
+}
+
+{
+  // 500文字以内に収まること（Mastodon一般的な上限）
+  const text = buildMastodonText(
+    "世界パンダの日", "パンダを愛でる世界的な記念日。パンダの保護を考える日です。",
+    "World Panda Day", "A global day to celebrate giant pandas and raise awareness of their conservation."
+  );
+  assert(`500文字以内 (実測: ${text.length})`, text.length <= 500);
+}
+
+{
+  // テーマタグが生成される
+  const text = buildMastodonText("ねこの日", "猫の記念日", "Cat Day", "A cat day");
+  assert("テーマタグ #ねこの日 が含まれる", text.includes("#ねこの日"));
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
