@@ -34,6 +34,9 @@ const BLUESKY_API            = "https://bsky.social/xrpc";
 const SITE_URL               = "https://hiroshikuze.github.io/anniversary-cat-worker/";
 export const BLUESKY_MAX_IMAGE_BYTES = 976_000; // Bluesky上限 1,000,000 bytes に余裕を持たせた値
 
+const MASTODON_UPLOAD_TIMEOUT_MS = 30_000;
+const MASTODON_POST_TIMEOUT_MS   = 30_000;
+
 const HASHTAG_LIST = ["#AIart", "#cat", "#kitten", "#ほのぼの", "#猫", "#にゃんバーサリー"];
 const HASHTAGS     = HASHTAG_LIST.join(" ");
 
@@ -303,6 +306,55 @@ async function createPost(accessJwt, did, text, blobRef, mimeType, altText, page
 }
 
 // ---------------------------------------------------------------------------
+// Mastodon 投稿
+// ---------------------------------------------------------------------------
+
+/** Mastodon に画像をアップロードして media_id を返す。 */
+async function uploadMediaToMastodon(instanceUrl, accessToken, imageBytes, mimeType, altText) {
+  const form = new FormData();
+  form.append("file", new Blob([imageBytes], { type: mimeType }), "image.jpg");
+  if (altText) form.append("description", altText.slice(0, 1500));
+
+  const res = await fetch(`${instanceUrl}/api/v2/media`, {
+    method:  "POST",
+    headers: { "Authorization": `Bearer ${accessToken}` },
+    body:    form,
+    signal:  AbortSignal.timeout(MASTODON_UPLOAD_TIMEOUT_MS),
+  });
+  const resText = await res.text();
+  let data = {};
+  try { data = JSON.parse(resText); } catch { /**/ }
+  if (!res.ok) {
+    throw new Error(`Mastodon画像アップロード失敗: status=${res.status} ${data.error ?? ""}`);
+  }
+  return data.id;
+}
+
+/** Mastodon にステータスを投稿する。 */
+async function postStatusToMastodon(instanceUrl, accessToken, text, mediaId) {
+  const params = new URLSearchParams({ status: text });
+  if (mediaId) params.append("media_ids[]", mediaId);
+
+  const res = await fetch(`${instanceUrl}/api/v1/statuses`, {
+    method:  "POST",
+    headers: {
+      "Authorization":   `Bearer ${accessToken}`,
+      "Content-Type":    "application/x-www-form-urlencoded",
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    body:   params.toString(),
+    signal: AbortSignal.timeout(MASTODON_POST_TIMEOUT_MS),
+  });
+  const resText = await res.text();
+  let data = {};
+  try { data = JSON.parse(resText); } catch { /**/ }
+  if (!res.ok) {
+    throw new Error(`Mastodon投稿失敗: status=${res.status} ${data.error ?? ""}`);
+  }
+  return data;
+}
+
+// ---------------------------------------------------------------------------
 // Discord 通知
 // ---------------------------------------------------------------------------
 
@@ -405,20 +457,13 @@ export async function runBot(env, handleResearch, handleGenerate) {
       }
     }
 
-    // ── 5. Bluesky に投稿 ──────────────────────────────────────────────────
-    console.log(`${prefix} Bluesky 投稿 開始`);
-    const { accessJwt, did } = await createBlueskySession(
-      env.BLUESKY_IDENTIFIER,
-      env.BLUESKY_APP_PASSWORD
-    );
-
+    // ── 5. 共有データ準備 ─────────────────────────────────────────────────
     const shrunk     = await shrinkImageIfNeeded(
       generated.imageData, generated.mimeType || "image/png",
       research.theme, research.description ?? ""
     );
     const imageBytes = base64ToBytes(shrunk.imageData);
     const mimeType   = shrunk.mimeType;
-    const blobRef    = await uploadBlob(accessJwt, imageBytes, mimeType);
 
     const themeTag = buildThemeTag(research.theme);
     const text     = buildPostText(research.theme, research.description ?? "", pageUrl);
@@ -426,12 +471,57 @@ export async function runBot(env, handleResearch, handleGenerate) {
     const altText  = desc
       ? `にゃんバーサリー - 「${research.theme}」の日！${desc}（AIが生成した水彩画風の猫イラスト）`
       : `にゃんバーサリー - 「${research.theme}」をテーマにAIが生成した水彩画風の猫イラスト`;
-    const postResult = await createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl, themeTag);
 
-    console.log(`${prefix} Bluesky 投稿 完了 uri=${postResult.uri ?? "(不明)"} identifier=${env.BLUESKY_IDENTIFIER}`);
+    // ── 5. Bluesky + Mastodon 並列投稿 ───────────────────────────────────
+    console.log(`${prefix} Bluesky + Mastodon 投稿 開始`);
+    const [bskyResult, mastoResult] = await Promise.allSettled([
+      // Bluesky
+      (async () => {
+        const { accessJwt, did } = await createBlueskySession(
+          env.BLUESKY_IDENTIFIER, env.BLUESKY_APP_PASSWORD
+        );
+        const blobRef = await uploadBlob(accessJwt, imageBytes, mimeType);
+        return createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl, themeTag);
+      })(),
+      // Mastodon（シークレット未設定時はスキップ）
+      (env.MASTODON_INSTANCE_URL && env.MASTODON_ACCESS_TOKEN)
+        ? (async () => {
+            const mediaId = await uploadMediaToMastodon(
+              env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, imageBytes, mimeType, altText
+            );
+            return postStatusToMastodon(
+              env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, text, mediaId
+            );
+          })()
+        : Promise.resolve(null),
+    ]);
 
-    // ── 6. 生成内容を Discord に通知（プロンプト確認用） ────────────────────
+    const bskyOk      = bskyResult.status === "fulfilled";
+    const mastoSkipped = mastoResult.status === "fulfilled" && mastoResult.value === null;
+    const mastoOk      = mastoResult.status === "fulfilled" && mastoResult.value !== null;
+
+    if (bskyOk) {
+      console.log(`${prefix} Bluesky 投稿 完了 uri=${bskyResult.value?.uri ?? "(不明)"} identifier=${env.BLUESKY_IDENTIFIER}`);
+    } else {
+      console.error(`${prefix} Bluesky 投稿 失敗: ${bskyResult.reason?.message}`);
+    }
+    if (mastoOk) {
+      console.log(`${prefix} Mastodon 投稿 完了 id=${mastoResult.value?.id ?? "(不明)"}`);
+    } else if (!mastoSkipped) {
+      console.warn(`${prefix} Mastodon 投稿 失敗: ${mastoResult.reason?.message}`);
+    }
+
+    // ── 6. Discord通知（成否によらず常に送信） ──────────────────────────
     try {
+      const bskyLine  = bskyOk
+        ? `✅ Bluesky投稿完了 ${dateStr}`
+        : `❌ Bluesky投稿失敗: ${bskyResult.reason?.message}`;
+      const mastoLine = mastoSkipped
+        ? null
+        : mastoOk
+          ? "✅ Mastodon投稿完了"
+          : `❌ Mastodon投稿失敗: ${mastoResult.reason?.message}`;
+
       const _k = research.kanjiChar;
       const kanjiLine = `🈁 裏面漢字: ${
         _k && /[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]/.test(_k)
@@ -439,7 +529,8 @@ export async function runBot(env, handleResearch, handleGenerate) {
           : _k ? `「${_k}」無効→🐾` : "なし→🐾"
       }`;
       const lines = [
-        `✅ Bluesky投稿完了 ${dateStr}`,
+        bskyLine,
+        mastoLine,
         `📅 テーマ: ${research.theme}`,
         research.description ? `📝 説明: ${research.description}` : null,
         research.visualHint  ? `🎨 視覚ヒント: ${research.visualHint}` : null,
@@ -453,9 +544,9 @@ export async function runBot(env, handleResearch, handleGenerate) {
         `🖼 ソース: ${generated.source}`,
         generated.prompt            ? `\n📋 Geminiプロンプト${generated.source === "gemini" ? "（採用）" : ""}:\n${generated.prompt}` : null,
         generated.pollinationsPrompt ? `\n📋 Pollinationsプロンプト${generated.source === "pollinations" ? "（採用）" : ""}:\n${generated.pollinationsPrompt}` : null,
-        `\n📣 投稿テキスト（Mastodon・X・Instagram等に転載用）:\n${text}`,
+        `\n📣 投稿テキスト（X・Instagram等に転載用）:\n${text}`,
       ].filter(Boolean).join("\n");
-      await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, "✅");
+      await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, bskyOk ? "✅" : "❌");
     } catch (_) { /* 通知失敗は無視 */ }
 
   } catch (err) {

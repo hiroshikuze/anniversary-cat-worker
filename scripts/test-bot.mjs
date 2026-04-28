@@ -304,6 +304,137 @@ console.log("\n[runBot: research 失敗時]");
 }
 
 // ---------------------------------------------------------------------------
+// runBot - Mastodon 同時投稿
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: Mastodon投稿]");
+{
+  const MASTO_INSTANCE = "https://mstdn-test.example";
+
+  const mockResearch = async () => ({
+    theme: "テスト記念日", description: "テスト説明文", sourceUrl: "https://example.com",
+  });
+  const mockGenerate = async () => ({
+    imageData: btoa("fake-image-data"), mimeType: "image/png", source: "gemini",
+  });
+
+  function makeJsonResponse(body, status = 200) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      text: async () => JSON.stringify(body),
+    };
+  }
+
+  // URL-based fetch router
+  function makeBskyMastoFetch({ mastoFail = false, mastoDisabled = false } = {}) {
+    const calledUrls = [];
+    const mockFetch = async (url) => {
+      calledUrls.push(String(url));
+      if (url.includes("createSession"))    return makeJsonResponse({ accessJwt: "mock-jwt", did: "mock-did" });
+      if (url.includes("uploadBlob"))       return makeJsonResponse({ blob: { $type: "blob", ref: { $link: "r" }, mimeType: "image/png", size: 1 } });
+      if (url.includes("createRecord"))     return makeJsonResponse({ uri: "at://mock", cid: "cid" });
+      if (!mastoDisabled) {
+        if (url.includes("/api/v2/media"))  return mastoFail
+          ? makeJsonResponse({ error: "Server Error" }, 500)
+          : makeJsonResponse({ id: "media123" });
+        if (url.includes("/api/v1/statuses")) return makeJsonResponse({ id: "status456", url: `${MASTO_INSTANCE}/@user/456` });
+      }
+      // Discord webhook
+      return makeJsonResponse({}, 204);
+    };
+    return { mockFetch, calledUrls };
+  }
+
+  // ── Mastodon設定済み: /api/v2/media と /api/v1/statuses が呼ばれる ──
+  {
+    const { mockFetch, calledUrls } = makeBskyMastoFetch();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch;
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: MASTO_INSTANCE, MASTODON_ACCESS_TOKEN: "masto-token",
+      },
+      mockResearch, mockGenerate
+    );
+    globalThis.fetch = origFetch;
+    const mastoMedia   = calledUrls.some(u => u.includes("/api/v2/media"));
+    const mastoStatus  = calledUrls.some(u => u.includes("/api/v1/statuses"));
+    assert("Mastodon設定済み: /api/v2/media が呼ばれる",   mastoMedia);
+    assert("Mastodon設定済み: /api/v1/statuses が呼ばれる", mastoStatus);
+  }
+
+  // ── Mastodon未設定: Mastodon APIが呼ばれない ──
+  {
+    const { mockFetch, calledUrls } = makeBskyMastoFetch({ mastoDisabled: true });
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch;
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        // MASTODON_INSTANCE_URL と MASTODON_ACCESS_TOKEN を意図的に省略
+      },
+      mockResearch, mockGenerate
+    );
+    globalThis.fetch = origFetch;
+    const mastoApiCalled = calledUrls.some(u => u.includes("/api/v2/media") || u.includes("/api/v1/statuses"));
+    assert("Mastodon未設定: Mastodon APIが呼ばれない", !mastoApiCalled);
+  }
+
+  // ── Mastodon失敗でもDiscord通知が送られる ──
+  {
+    let discordCalled = false;
+    const { mockFetch } = makeBskyMastoFetch({ mastoFail: true });
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("discord")) { discordCalled = true; return makeJsonResponse({}, 204); }
+      return mockFetch(url, opts);
+    };
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: MASTO_INSTANCE, MASTODON_ACCESS_TOKEN: "masto-token",
+      },
+      mockResearch, mockGenerate
+    );
+    globalThis.fetch = origFetch;
+    assert("Mastodon失敗でもDiscord通知が送られる", discordCalled);
+  }
+
+  // ── BlueskyとMastodonが並列実行される（allSettledの確認）──
+  {
+    const startTimes = {};
+    const { mockFetch } = makeBskyMastoFetch();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("createSession") && !startTimes.bsky) startTimes.bsky = Date.now();
+      if (u.includes("/api/v2/media") && !startTimes.masto) startTimes.masto = Date.now();
+      return mockFetch(url, opts);
+    };
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: MASTO_INSTANCE, MASTODON_ACCESS_TOKEN: "masto-token",
+      },
+      mockResearch, mockGenerate
+    );
+    globalThis.fetch = origFetch;
+    // 両方のタイムスタンプが記録されていれば並列実行されている
+    assert("BlueskyとMastodonが両方実行された", startTimes.bsky !== undefined && startTimes.masto !== undefined);
+    // 並列なので先後差は数ms以内（モックなのでほぼ同時）
+    if (startTimes.bsky && startTimes.masto) {
+      const diff = Math.abs(startTimes.bsky - startTimes.masto);
+      assert(`開始時刻の差が 50ms 以内: ${diff}ms`, diff < 50);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // notifyDiscord - DISCORD_WEBHOOK_URL が空でもクラッシュしない
 // ---------------------------------------------------------------------------
 console.log("\n[notifyDiscord]");
