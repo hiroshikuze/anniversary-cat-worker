@@ -33,7 +33,7 @@ anniversary-cat-worker/
 
 | メソッド | パス | 説明 |
 | --- | --- | --- |
-| POST | `/research` | Gemini + Google Searchで記念日テキスト取得 |
+| POST | `/research` | Gemini + Google Searchで記念日テキスト取得（`themeEn`/`descriptionEn`含む） |
 | POST | `/generate` | Gemini画像生成（Pollinationsフォールバックあり） |
 | GET | `/proxy-image?url=...` | Pollinations.ai画像のCORSプロキシ |
 | GET | `/image/:id` | R2保存画像+メタデータの取得（`bot/YYYY-MM-DD`または`user/{uuid}`） |
