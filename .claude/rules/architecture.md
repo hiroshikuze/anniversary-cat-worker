@@ -1116,14 +1116,14 @@ GET /rss.xml
    - 組み合わせ方: 品種と毛色を**独立抽選**（最大9通り）。全組み合わせが実在する毛色のため問題なし
    - プロンプト例: `"chestnut Netherland Dwarf rabbit"` / `"cream Holland Lop rabbit"` / `"mixed Mini Rex rabbit"` など
 
-7. **その他動物ゲストの初案**（確認中・2026-04-27）
+7. **その他動物ゲストの確定事項**（2026-04-28）
 
-   | 種別 | バリアント案 | 性格案 |
+   | 種別 | バリアント（確定） | 性格案 |
    | --- | --- | --- |
-   | パンダ | `"giant panda cub"` 1種 | `"sitting round and roly-poly, holding bamboo with both paws"` |
-   | ペンギン | `"little blue penguin"` / `"emperor penguin chick"` | `"waddling cheerfully with flippers out, sociable and bright-eyed"` |
-   | 豚 | `"pink miniature pig"` 1種 | `"trotting over with snout twitching, cheerful and friendly"` |
-   | 鶏 | `"fluffy white Silkie chicken"` / `"colorful bantam rooster"` | `"pecking nearby and tilting head sideways with sharp curious eyes"` |
+   | パンダ | `"giant panda cub"` 1種（固定） | `"sitting round and roly-poly, holding bamboo with both paws"` |
+   | ペンギン | `"emperor penguin chick"` / `"little blue penguin"` 2種 | `"waddling cheerfully with flippers out, sociable and bright-eyed"` |
+   | 豚 | `"pink miniature pig"` / `"black and white spotted miniature pig"` 2種 | `"trotting over with snout twitching, cheerful and friendly"` |
+   | 鶏 | 検討中 → ユーザー確認中 | `"pecking nearby and tilting head sideways with sharp curious eyes"`（案） |
 
 #### 事前リサーチプール方式（実装済み・2026-04）
 
