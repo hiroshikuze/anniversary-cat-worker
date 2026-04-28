@@ -17,7 +17,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -1885,6 +1885,111 @@ console.log("\n[pickGuestAnimal]");
     const per = g?.personality ?? "";
     assert(`ASCII check appearance: "${app.slice(0, 40)}"`, ASCII_RE.test(app));
     assert(`ASCII check personality: "${per.slice(0, 40)}"`, per === null || ASCII_RE.test(per));
+  }
+}
+
+// =============================================================================
+// [pickFromPool]
+// =============================================================================
+{
+  console.log("\n[pickFromPool]");
+
+  const mkNormal   = (theme) => ({ theme, sourceUrlKind: "grounding",               isSeasonalFallback: false });
+  const mkFallback = (theme) => ({ theme, sourceUrlKind: "seasonal-flower-fallback", isSeasonalFallback: true  });
+
+  // ── SEASONAL_FLOWER_SELECT_PROBABILITY は 0 より大きく 1 未満 ──
+  assert(
+    "SEASONAL_FLOWER_SELECT_PROBABILITY is 0 < p < 1",
+    SEASONAL_FLOWER_SELECT_PROBABILITY > 0 && SEASONAL_FLOWER_SELECT_PROBABILITY < 1
+  );
+
+  // ── 通常エントリのみ → 常に通常から選択 ──
+  {
+    const pool = { entries: [mkNormal("記念日A"), mkNormal("記念日B")] };
+    let seenFallback = false;
+    for (let i = 0; i < 100; i++) {
+      const r = pickFromPool(pool);
+      if (r.isSeasonalFallback) seenFallback = true;
+    }
+    assert("通常エントリのみ: fallbackが一度も選ばれない", !seenFallback);
+  }
+
+  // ── fallbackエントリのみ → 常にfallbackから選択 ──
+  {
+    const pool = { entries: [mkFallback("藤の季節")] };
+    const r = pickFromPool(pool);
+    assert("fallbackのみ: fallbackが返る", r?.isSeasonalFallback === true);
+  }
+
+  // ── 空プール → null を返す ──
+  {
+    const r = pickFromPool({ entries: [] });
+    assert("空プール → null", r === null);
+  }
+
+  // ── entries フィールドなし → null を返す ──
+  {
+    const r = pickFromPool({});
+    assert("entriesなし → null", r === null);
+  }
+
+  // ── 通常+fallback混在: rand < SEASONAL_FLOWER_SELECT_PROBABILITY → fallback ──
+  {
+    const pool = { entries: [mkNormal("記念日A"), mkFallback("藤の季節")] };
+    // rand() の1回目が確率判定、2回目がインデックス選択
+    let i = 0;
+    const rands = [SEASONAL_FLOWER_SELECT_PROBABILITY - 0.001, 0.0]; // → fallback
+    const r = pickFromPool(pool, () => rands[i++] ?? 0.5);
+    assert("混在+rand < probability → fallback", r?.isSeasonalFallback === true);
+  }
+
+  // ── 通常+fallback混在: rand >= SEASONAL_FLOWER_SELECT_PROBABILITY → 通常 ──
+  {
+    const pool = { entries: [mkNormal("記念日A"), mkFallback("藤の季節")] };
+    let i = 0;
+    const rands = [SEASONAL_FLOWER_SELECT_PROBABILITY + 0.001, 0.0]; // → normal
+    const r = pickFromPool(pool, () => rands[i++] ?? 0.5);
+    assert("混在+rand >= probability → normal", r?.isSeasonalFallback === false);
+  }
+
+  // ── 確率テスト: 10,000回試行で fallback 選択率が 5%〜15% の間に収まる ──
+  {
+    const pool = {
+      entries: [mkNormal("記念日A"), mkNormal("記念日B"), mkFallback("藤の季節")],
+    };
+    let fallbackCount = 0;
+    const N = 10000;
+    for (let i = 0; i < N; i++) {
+      if (pickFromPool(pool)?.isSeasonalFallback) fallbackCount++;
+    }
+    const rate = fallbackCount / N;
+    assert(
+      `確率テスト: fallback選択率 ${(rate * 100).toFixed(1)}% が 5%〜15% の範囲内`,
+      rate >= 0.05 && rate <= 0.15
+    );
+  }
+
+  // ── 通常が複数ある場合、通常エントリの選択に偏りがないか（簡易確認）──
+  {
+    const pool = {
+      entries: [mkNormal("A"), mkNormal("B"), mkNormal("C"), mkFallback("藤の季節")],
+    };
+    const counts = { A: 0, B: 0, C: 0 };
+    const N = 9000;
+    for (let i = 0; i < N; i++) {
+      const r = pickFromPool(pool);
+      if (!r.isSeasonalFallback && counts[r.theme] !== undefined) counts[r.theme]++;
+    }
+    const total = counts.A + counts.B + counts.C;
+    const ratioA = counts.A / total;
+    const ratioB = counts.B / total;
+    const ratioC = counts.C / total;
+    assert(
+      `通常エントリ均等分布: A=${(ratioA * 100).toFixed(0)}% B=${(ratioB * 100).toFixed(0)}% C=${(ratioC * 100).toFixed(0)}%（各25〜42%）`,
+      ratioA >= 0.25 && ratioA <= 0.42 &&
+      ratioB >= 0.25 && ratioB <= 0.42 &&
+      ratioC >= 0.25 && ratioC <= 0.42
+    );
   }
 }
 

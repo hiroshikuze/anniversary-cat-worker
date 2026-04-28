@@ -15,6 +15,7 @@
 
 import { saveToR2 } from "./r2-storage.js";
 import { createSuzuriProducts } from "./suzuri.js";
+import { pickFromPool } from "./index.js";
 
 // Photonは動的importで遅延ロード（Node.jsテスト環境での.wasmロード失敗を回避）
 let _photonReady = false;
@@ -355,11 +356,10 @@ export async function runBot(env, handleResearch, handleGenerate) {
     if (env.IMAGE_BUCKET) {
       const poolObj = await env.IMAGE_BUCKET.get(`research-pool/${jstDateISO}.json`);
       if (poolObj) {
-        const pool    = await poolObj.json();
-        const entries = pool.entries ?? [];
-        if (entries.length > 0) {
-          research = entries[Math.floor(Math.random() * entries.length)];
-          console.log(`${prefix} research プール取得 theme="${research.theme}"`);
+        const pool = await poolObj.json();
+        research = pickFromPool(pool);
+        if (research) {
+          console.log(`${prefix} research プール取得 theme="${research.theme}" fallback=${!!research.isSeasonalFallback}`);
         }
       }
     }

@@ -1166,6 +1166,7 @@ GET /rss.xml
 | 記念日の使い回し | **OK（poolは枯渇しない）** | poolはキューでなくサンプリング母集団。複数ユーザーが同テーマを選んでも問題なし |
 | ユーザーの「もう一度」体験 | **同日プール内でランダム選択** | テーマが変わる回数は候補数が上限（許容済み） |
 | 最低件数閾値 | **3件未満でSEASONAL_FLOWERS補充** | 日本に花のない月はないため常に最低1件保証 |
+| 季節の花選択確率 | **`SEASONAL_FLOWER_SELECT_PROBABILITY = 0.10`（10%）** | 非fallbackエントリが存在する場合のみ適用。fallbackのみの場合は100% |
 | プールのR2キー | **`research-pool/YYYY-MM-DD`** | 既存の`bot/`・`user/`と分離。保持期間1〜2日で十分 |
 | Discord通知 | **pool生成完了後に件数・filter結果を通知** | 毎日の品質モニタリング |
 | コスト | 固定で1日10回のGemini呼び出し（リアルタイムと比べて変動なし） | バッチ実測で試算済み |
@@ -1269,6 +1270,33 @@ function getSeasonalFlower(dateStr) {
 **既知の制限事項:**
 - **ソフト重複**: 「花桃」と「花桃の季節」のような意味的重複はtheme文字列の完全一致では除去できない。exact-match deduplication のみ実装。実運用上の影響は軽微として受容
 
+##### pickFromPool（季節の花選択確率制御）
+
+プールから1件を選ぶ関数。非fallbackエントリが存在する場合は季節の花（`isSeasonalFallback: true`）が選ばれる確率を `SEASONAL_FLOWER_SELECT_PROBABILITY`（10%）に抑える。
+
+```js
+export const SEASONAL_FLOWER_SELECT_PROBABILITY = 0.10;
+
+export function pickFromPool(pool, rand = Math.random) {
+  const entries  = pool.entries ?? [];
+  const normal   = entries.filter(e => !e.isSeasonalFallback);
+  const fallback = entries.filter(e => e.isSeasonalFallback);
+
+  // 非fallbackなし → 全エントリからランダム
+  if (normal.length === 0) {
+    return entries[Math.floor(rand() * entries.length)] ?? null;
+  }
+
+  // 非fallbackあり → 10%確率でfallbackから選択、90%で通常から選択
+  if (fallback.length > 0 && rand() < SEASONAL_FLOWER_SELECT_PROBABILITY) {
+    return fallback[Math.floor(rand() * fallback.length)];
+  }
+  return normal[Math.floor(rand() * normal.length)];
+}
+```
+
+補充エントリには `isSeasonalFallback: true` フラグを付与する（`generateResearchPool()` の補充ブロック）。
+
 ##### 処理フロー（確定版・実装済み）
 
 ```text
@@ -1276,25 +1304,28 @@ function getSeasonalFlower(dateStr) {
   → generateResearchPool()
   → handleResearch() × 10件を並列実行（当日のJST日付で）
   → フィルタリング: google-search-fallback除外 → theme重複除去
-  → 3件未満の場合: SEASONAL_FLOWERS[当日区間]から補充
+  → 3件未満の場合: SEASONAL_FLOWERS[当日区間]から補充（isSeasonalFallback: true を付与）
   → R2に research-pool/YYYY-MM-DD.json として保存
   → Discord通知（件数・除外数・補充有無）
 
 当日 ユーザー操作:
-  POST /research → R2プールから1件ランダム取得（Gemini呼び出しなし）
+  POST /research → pickFromPool(pool) で1件選択（季節の花10%確率）
   （プール未存在またはエントリなし: 現行リアルタイムGeminiリサーチにフォールバック）
 
 当日 19:00 Bot（月〜金）:
-  → R2プールから1件ランダム取得 → handleGenerate() → Bluesky投稿
+  → pickFromPool(pool) で1件選択（季節の花10%確率）→ handleGenerate() → Bluesky投稿
   （プール未存在: 現行フローにフォールバック）
 ```
 
 **実装箇所:**
-- `generateResearchPool(env)`: `worker/index.js` L207〜
+- `generateResearchPool(env)`: `worker/index.js` L207〜（補充エントリに`isSeasonalFallback: true`追加）
+- `SEASONAL_FLOWER_SELECT_PROBABILITY`: `worker/index.js`（export済み・定数）
+- `pickFromPool(pool, rand)`: `worker/index.js`（export済み・`test-bot.mjs`でテスト）
 - `filterAndDedupePool(entries)`: `worker/index.js`（export済み・`test-bot.mjs`でテスト）
 - `getSeasonalFlower(dateStr)`: `worker/index.js`（export済み・`test-bot.mjs`でテスト）
 - `scheduled()`のcron分岐: `event.cron === "0 15 * * *"` → `generateResearchPool(env)` を `ctx.waitUntil()`
-- `/research`エンドポイント: R2プール優先 → フォールバックの2段構え
+- `/research`エンドポイント: R2プール優先 → `pickFromPool()` → フォールバックの2段構え
+- `runBot()`: R2プール優先 → `pickFromPool()` → フォールバックの2段構え
 - R2キー: `research-pool/YYYY-MM-DD.json`（`bot/`・`user/`と分離）
 
 ---

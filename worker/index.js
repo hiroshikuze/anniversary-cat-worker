@@ -202,6 +202,32 @@ export function filterAndDedupePool(entries) {
   });
 }
 
+/** 季節の花（isSeasonalFallback: true）エントリが選ばれる確率 */
+export const SEASONAL_FLOWER_SELECT_PROBABILITY = 0.10;
+
+/**
+ * プールから1件を確率制御付きでランダム選択する。
+ * 通常エントリが存在する場合、季節の花は SEASONAL_FLOWER_SELECT_PROBABILITY（10%）の確率でのみ選ばれる。
+ * 季節の花のみの場合は通常通りランダム選択する。
+ *
+ * @param {{ entries?: object[] }} pool - R2から取得したプールオブジェクト
+ * @param {() => number} [rand=Math.random] - テスト用乱数関数
+ * @returns {object|null}
+ */
+export function pickFromPool(pool, rand = Math.random) {
+  const entries  = pool.entries ?? [];
+  const normal   = entries.filter(e => !e.isSeasonalFallback);
+  const fallback = entries.filter(e => e.isSeasonalFallback);
+
+  if (normal.length === 0) {
+    return entries[Math.floor(rand() * entries.length)] ?? null;
+  }
+  if (fallback.length > 0 && rand() < SEASONAL_FLOWER_SELECT_PROBABILITY) {
+    return fallback[Math.floor(rand() * fallback.length)];
+  }
+  return normal[Math.floor(rand() * normal.length)];
+}
+
 /**
  * 当日分のリサーチプールを生成してR2に保存し、Discord通知を送る。
  * Cron `0 15 * * *`（毎日0:00 JST）から呼ばれる。
@@ -244,13 +270,14 @@ async function generateResearchPool(env) {
   if (entries.length < 3) {
     const flowerName = getSeasonalFlower(todayJst);
     entries = [...entries, {
-      theme:        `${flowerName}の季節`,
-      description:  `今の季節を彩る${flowerName}`,
-      visualHint:   `${flowerName} flowers, Japanese garden, soft petals, gentle breeze`,
-      foodItem:     null,
-      kanjiChar:    null,
-      sourceUrl:    "",
-      sourceUrlKind: "seasonal-flower-fallback",
+      theme:              `${flowerName}の季節`,
+      description:        `今の季節を彩る${flowerName}`,
+      visualHint:         `${flowerName} flowers, Japanese garden, soft petals, gentle breeze`,
+      foodItem:           null,
+      kanjiChar:          null,
+      sourceUrl:          "",
+      sourceUrlKind:      "seasonal-flower-fallback",
+      isSeasonalFallback: true,
     }];
     supplemented = true;
     console.log(`[pool] 季節の花補充: ${flowerName}`);
@@ -1178,11 +1205,10 @@ ${itemsXml}
           const todayJst = toJSTDateStringWorker(new Date());
           const poolObj  = await env.IMAGE_BUCKET.get(`research-pool/${todayJst}.json`);
           if (poolObj) {
-            const pool    = await poolObj.json();
-            const entries = pool.entries ?? [];
-            if (entries.length > 0) {
-              result = entries[Math.floor(Math.random() * entries.length)];
-              console.log(`[research] pool hit date=${todayJst} theme="${result.theme}"`);
+            const pool = await poolObj.json();
+            result = pickFromPool(pool);
+            if (result) {
+              console.log(`[research] pool hit date=${todayJst} theme="${result.theme}" fallback=${!!result.isSeasonalFallback}`);
             }
           }
         }
