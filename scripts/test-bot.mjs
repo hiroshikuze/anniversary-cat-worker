@@ -17,7 +17,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -301,6 +301,137 @@ console.log("\n[runBot: research 失敗時]");
   );
 
   assert("handleResearch 失敗時は handleGenerate を呼ばない", !generateCalled);
+}
+
+// ---------------------------------------------------------------------------
+// runBot - Mastodon 同時投稿
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: Mastodon投稿]");
+{
+  const MASTO_INSTANCE = "https://mstdn-test.example";
+
+  const mockResearch = async () => ({
+    theme: "テスト記念日", description: "テスト説明文", sourceUrl: "https://example.com",
+  });
+  const mockGenerate = async () => ({
+    imageData: btoa("fake-image-data"), mimeType: "image/png", source: "gemini",
+  });
+
+  function makeJsonResponse(body, status = 200) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      text: async () => JSON.stringify(body),
+    };
+  }
+
+  // URL-based fetch router
+  function makeBskyMastoFetch({ mastoFail = false, mastoDisabled = false } = {}) {
+    const calledUrls = [];
+    const mockFetch = async (url) => {
+      calledUrls.push(String(url));
+      if (url.includes("createSession"))    return makeJsonResponse({ accessJwt: "mock-jwt", did: "mock-did" });
+      if (url.includes("uploadBlob"))       return makeJsonResponse({ blob: { $type: "blob", ref: { $link: "r" }, mimeType: "image/png", size: 1 } });
+      if (url.includes("createRecord"))     return makeJsonResponse({ uri: "at://mock", cid: "cid" });
+      if (!mastoDisabled) {
+        if (url.includes("/api/v2/media"))  return mastoFail
+          ? makeJsonResponse({ error: "Server Error" }, 500)
+          : makeJsonResponse({ id: "media123" });
+        if (url.includes("/api/v1/statuses")) return makeJsonResponse({ id: "status456", url: `${MASTO_INSTANCE}/@user/456` });
+      }
+      // Discord webhook
+      return makeJsonResponse({}, 204);
+    };
+    return { mockFetch, calledUrls };
+  }
+
+  // ── Mastodon設定済み: /api/v2/media と /api/v1/statuses が呼ばれる ──
+  {
+    const { mockFetch, calledUrls } = makeBskyMastoFetch();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch;
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: MASTO_INSTANCE, MASTODON_ACCESS_TOKEN: "masto-token",
+      },
+      mockResearch, mockGenerate
+    );
+    globalThis.fetch = origFetch;
+    const mastoMedia   = calledUrls.some(u => u.includes("/api/v2/media"));
+    const mastoStatus  = calledUrls.some(u => u.includes("/api/v1/statuses"));
+    assert("Mastodon設定済み: /api/v2/media が呼ばれる",   mastoMedia);
+    assert("Mastodon設定済み: /api/v1/statuses が呼ばれる", mastoStatus);
+  }
+
+  // ── Mastodon未設定: Mastodon APIが呼ばれない ──
+  {
+    const { mockFetch, calledUrls } = makeBskyMastoFetch({ mastoDisabled: true });
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch;
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        // MASTODON_INSTANCE_URL と MASTODON_ACCESS_TOKEN を意図的に省略
+      },
+      mockResearch, mockGenerate
+    );
+    globalThis.fetch = origFetch;
+    const mastoApiCalled = calledUrls.some(u => u.includes("/api/v2/media") || u.includes("/api/v1/statuses"));
+    assert("Mastodon未設定: Mastodon APIが呼ばれない", !mastoApiCalled);
+  }
+
+  // ── Mastodon失敗でもDiscord通知が送られる ──
+  {
+    let discordCalled = false;
+    const { mockFetch } = makeBskyMastoFetch({ mastoFail: true });
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("discord")) { discordCalled = true; return makeJsonResponse({}, 204); }
+      return mockFetch(url, opts);
+    };
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: MASTO_INSTANCE, MASTODON_ACCESS_TOKEN: "masto-token",
+      },
+      mockResearch, mockGenerate
+    );
+    globalThis.fetch = origFetch;
+    assert("Mastodon失敗でもDiscord通知が送られる", discordCalled);
+  }
+
+  // ── BlueskyとMastodonが並列実行される（allSettledの確認）──
+  {
+    const startTimes = {};
+    const { mockFetch } = makeBskyMastoFetch();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("createSession") && !startTimes.bsky) startTimes.bsky = Date.now();
+      if (u.includes("/api/v2/media") && !startTimes.masto) startTimes.masto = Date.now();
+      return mockFetch(url, opts);
+    };
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: MASTO_INSTANCE, MASTODON_ACCESS_TOKEN: "masto-token",
+      },
+      mockResearch, mockGenerate
+    );
+    globalThis.fetch = origFetch;
+    // 両方のタイムスタンプが記録されていれば並列実行されている
+    assert("BlueskyとMastodonが両方実行された", startTimes.bsky !== undefined && startTimes.masto !== undefined);
+    // 並列なので先後差は数ms以内（モックなのでほぼ同時）
+    if (startTimes.bsky && startTimes.masto) {
+      const diff = Math.abs(startTimes.bsky - startTimes.masto);
+      assert(`開始時刻の差が 50ms 以内: ${diff}ms`, diff < 50);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1003,10 +1134,10 @@ console.log("\n[pickPersonality]");
 }
 
 {
-  // 1000回試行して全5タイプ＋null が出現すること
+  // 1000回試行して全6タイプ＋null が出現すること（うとうとを追加したため6種+おまかせ）
   const seen = new Set();
   for (let i = 0; i < 1000; i++) seen.add(pickPersonality());
-  assert("1000回試行で全5タイプ＋おまかせ(null)が出現する", seen.size === 6);
+  assert("1000回試行で全6タイプ＋おまかせ(null)が出現する", seen.size === 7);
   assert("1000回試行でおまかせ(null)が出現する", seen.has(null));
 }
 
@@ -1745,6 +1876,284 @@ console.log("\n[【回帰】handleGenerate: 502平文レスポンス（Pollinati
   }
 
   globalThis.fetch = origFetch;
+}
+
+// ---------------------------------------------------------------------------
+// [pickGuestAnimal]
+// ---------------------------------------------------------------------------
+// rand() の呼び出し順序（type別）:
+//   call 1: ゲスト確率（< 0.10 でゲスト発生）
+//   call 2: タイプ選択（floor * 8 → 0-7）
+//   call 3+: バリアント選択（タイプ依存）
+//   type 0 dog:           call 3 = variant(floor*6)
+//   type 1 rabbit:        call 3 = breed(floor*3), call 4 = color(floor*3)
+//   type 2 panda:         追加呼び出しなし
+//   type 3 penguin:       call 3 = variant(floor*2)
+//   type 4 pig:           call 3 = variant(floor*2)
+//   type 5 chicken:       call 3 = chick判定(<1/3), adult時: call 4 = variant(floor*2)
+//   type 6 companion cat: call 3 = 毛柄(<0.6 similar/<0.9 contrast/else random), call 4 = personality(floor*3)
+//   type 7 kitten:        追加呼び出しなし
+// ---------------------------------------------------------------------------
+console.log("\n[pickGuestAnimal]");
+{
+  // ── 確率テスト ──
+  assert("rand >= 0.10 → null（ゲストなし）", pickGuestAnimal("orange tabby cat", () => 0.10) === null);
+  assert("rand >= 0.10 → null（境界値）",     pickGuestAnimal("orange tabby cat", () => 0.99) === null);
+
+  // ── 構造テスト（dog type 0, golden retriever） ──
+  {
+    const rands = [0.05, 0.0, 0.0];
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("rand < 0.10 → オブジェクトを返す",           g !== null);
+    assert("appearance フィールドが文字列",               typeof g?.appearance === "string");
+    assert("personality フィールドが文字列",              typeof g?.personality === "string");
+    assert("guardianModifier フィールドが存在する",        "guardianModifier" in (g ?? {}));
+    assert("dog[0]: golden retriever を含む",            g?.appearance.includes("golden retriever"));
+    assert("dog: guardianModifier は null",              g?.guardianModifier === null);
+  }
+
+  // ── Dog バリアント（index 4 = brindle French Bulldog） ──
+  {
+    const rands = [0.05, 0.0, 4 / 6 + 0.01];
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("dog[4]: brindle French Bulldog", g?.appearance.includes("brindle French Bulldog"));
+  }
+
+  // ── Rabbit: 品種×毛色の独立抽選 ──
+  const RABBIT_BREEDS = ["Netherland Dwarf", "Holland Lop", "Mini Rex"];
+  const RABBIT_COLORS = ["chestnut", "cream", "mixed"];
+  for (let b = 0; b < 3; b++) {
+    for (let c = 0; c < 3; c++) {
+      const rands = [0.05, 1 / 8 + 0.01, b / 3 + 0.001, c / 3 + 0.001];
+      let i = 0;
+      const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+      assert(`rabbit: 品種 ${RABBIT_BREEDS[b]} が含まれる`, g?.appearance.includes(RABBIT_BREEDS[b]));
+      assert(`rabbit: 毛色 ${RABBIT_COLORS[c]} が含まれる`, g?.appearance.includes(RABBIT_COLORS[c]));
+    }
+  }
+  // Rabbit の guardianModifier は null
+  {
+    const rands = [0.05, 1 / 8 + 0.01, 0.0, 0.0];
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("rabbit: guardianModifier は null", g?.guardianModifier === null);
+  }
+
+  // ── Panda（単一バリアント） ──
+  {
+    const rands = [0.05, 2 / 8 + 0.01];
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("panda: giant panda cub を含む", g?.appearance.includes("giant panda cub"));
+    assert("panda: guardianModifier は null",  g?.guardianModifier === null);
+  }
+
+  // ── Penguin（2バリアント） ──
+  {
+    const rands = [0.05, 3 / 8 + 0.01, 0.0];
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("penguin[0]: emperor penguin chick", g?.appearance.includes("emperor penguin chick"));
+  }
+  {
+    const rands = [0.05, 3 / 8 + 0.01, 0.6];
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("penguin[1]: little blue penguin", g?.appearance.includes("little blue penguin"));
+  }
+
+  // ── Pig（2バリアント） ──
+  {
+    const rands = [0.05, 4 / 8 + 0.01, 0.0];
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("pig[0]: pink miniature pig", g?.appearance.includes("pink miniature pig"));
+  }
+
+  // ── Chicken: ひよこと成鳥で personality が異なる ──
+  let chickenAdult, chickenChick;
+  {
+    const rands = [0.05, 5 / 8 + 0.01, 0.5, 0.0]; // adult (rand >= 1/3), Silkie
+    let i = 0;
+    chickenAdult = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("chicken adult: Silkie を含む",          chickenAdult?.appearance.includes("Silkie"));
+    assert("chicken adult: pecking を含む personality", chickenAdult?.personality.includes("pecking"));
+  }
+  {
+    const rands = [0.05, 5 / 8 + 0.01, 0.1]; // chick (rand < 1/3)
+    let i = 0;
+    chickenChick = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("chicken chick: tiny fluffy yellow baby chick",  chickenChick?.appearance.includes("tiny fluffy yellow baby chick"));
+    assert("chicken chick: toddling を含む personality",    chickenChick?.personality.includes("toddling"));
+    assert("chicken: 成鳥とひよこで personality が異なる",  chickenAdult?.personality !== chickenChick?.personality);
+  }
+
+  // ── Companion cat（No.7）: コート選択 ──
+  {
+    const rands = [0.05, 6 / 8 + 0.01, 0.3, 0.0]; // similar coat, personality[0]
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("companion cat similar: matching coat を含む", g?.appearance.includes("matching coat"));
+    assert("companion cat: guardianModifier は null",    g?.guardianModifier === null);
+  }
+  {
+    const rands = [0.05, 6 / 8 + 0.01, 0.7, 0.0]; // contrast coat
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("companion cat contrast: contrasting を含む", g?.appearance.includes("contrasting"));
+  }
+  {
+    const rands = [0.05, 6 / 8 + 0.01, 0.95, 0.0]; // random coat
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("companion cat random: distinct coat を含む", g?.appearance.includes("distinct coat"));
+  }
+
+  // ── Kitten（No.8）: guardianModifier が設定される ──
+  {
+    const rands = [0.05, 7 / 8 + 0.01]; // kitten
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    assert("kitten: appearance に kitten が含まれる",   g?.appearance.includes("kitten"));
+    assert("kitten: guardianModifier が null でない",   g?.guardianModifier !== null);
+    assert("kitten: personality に curious eyes を含む", g?.personality.includes("curious eyes"));
+  }
+  // mainPersona が null の場合は fluffy kitten
+  {
+    const rands = [0.05, 7 / 8 + 0.01];
+    let i = 0;
+    const g = pickGuestAnimal(null, () => rands[i++] ?? 0.5);
+    assert("kitten (mainPersona=null): fluffy kitten を含む", g?.appearance.includes("fluffy kitten"));
+  }
+
+  // ── 全タイプで appearance / personality が ASCII のみ ──
+  const ASCII_RE = /^[\x20-\x7E]+$/;
+  const typeRands = [
+    [0.05, 0.0, 0.0],              // dog
+    [0.05, 1 / 8 + 0.01, 0.0, 0.0], // rabbit
+    [0.05, 2 / 8 + 0.01],          // panda
+    [0.05, 3 / 8 + 0.01, 0.0],     // penguin
+    [0.05, 4 / 8 + 0.01, 0.0],     // pig
+    [0.05, 5 / 8 + 0.01, 0.1],     // chicken chick
+    [0.05, 5 / 8 + 0.01, 0.5, 0.0], // chicken adult
+    [0.05, 6 / 8 + 0.01, 0.3, 0.0], // companion cat
+    [0.05, 7 / 8 + 0.01],          // kitten
+  ];
+  for (const rands of typeRands) {
+    let i = 0;
+    const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+    const app = g?.appearance ?? "";
+    const per = g?.personality ?? "";
+    assert(`ASCII check appearance: "${app.slice(0, 40)}"`, ASCII_RE.test(app));
+    assert(`ASCII check personality: "${per.slice(0, 40)}"`, per === null || ASCII_RE.test(per));
+  }
+}
+
+// =============================================================================
+// [pickFromPool]
+// =============================================================================
+{
+  console.log("\n[pickFromPool]");
+
+  const mkNormal   = (theme) => ({ theme, sourceUrlKind: "grounding",               isSeasonalFallback: false });
+  const mkFallback = (theme) => ({ theme, sourceUrlKind: "seasonal-flower-fallback", isSeasonalFallback: true  });
+
+  // ── SEASONAL_FLOWER_SELECT_PROBABILITY は 0 より大きく 1 未満 ──
+  assert(
+    "SEASONAL_FLOWER_SELECT_PROBABILITY is 0 < p < 1",
+    SEASONAL_FLOWER_SELECT_PROBABILITY > 0 && SEASONAL_FLOWER_SELECT_PROBABILITY < 1
+  );
+
+  // ── 通常エントリのみ → 常に通常から選択 ──
+  {
+    const pool = { entries: [mkNormal("記念日A"), mkNormal("記念日B")] };
+    let seenFallback = false;
+    for (let i = 0; i < 100; i++) {
+      const r = pickFromPool(pool);
+      if (r.isSeasonalFallback) seenFallback = true;
+    }
+    assert("通常エントリのみ: fallbackが一度も選ばれない", !seenFallback);
+  }
+
+  // ── fallbackエントリのみ → 常にfallbackから選択 ──
+  {
+    const pool = { entries: [mkFallback("藤の季節")] };
+    const r = pickFromPool(pool);
+    assert("fallbackのみ: fallbackが返る", r?.isSeasonalFallback === true);
+  }
+
+  // ── 空プール → null を返す ──
+  {
+    const r = pickFromPool({ entries: [] });
+    assert("空プール → null", r === null);
+  }
+
+  // ── entries フィールドなし → null を返す ──
+  {
+    const r = pickFromPool({});
+    assert("entriesなし → null", r === null);
+  }
+
+  // ── 通常+fallback混在: rand < SEASONAL_FLOWER_SELECT_PROBABILITY → fallback ──
+  {
+    const pool = { entries: [mkNormal("記念日A"), mkFallback("藤の季節")] };
+    // rand() の1回目が確率判定、2回目がインデックス選択
+    let i = 0;
+    const rands = [SEASONAL_FLOWER_SELECT_PROBABILITY - 0.001, 0.0]; // → fallback
+    const r = pickFromPool(pool, () => rands[i++] ?? 0.5);
+    assert("混在+rand < probability → fallback", r?.isSeasonalFallback === true);
+  }
+
+  // ── 通常+fallback混在: rand >= SEASONAL_FLOWER_SELECT_PROBABILITY → 通常 ──
+  {
+    const pool = { entries: [mkNormal("記念日A"), mkFallback("藤の季節")] };
+    let i = 0;
+    const rands = [SEASONAL_FLOWER_SELECT_PROBABILITY + 0.001, 0.0]; // → normal
+    const r = pickFromPool(pool, () => rands[i++] ?? 0.5);
+    assert("混在+rand >= probability → normal", r?.isSeasonalFallback === false);
+  }
+
+  // ── 確率テスト: 10,000回試行で fallback 選択率が 5%〜15% の間に収まる ──
+  {
+    const pool = {
+      entries: [mkNormal("記念日A"), mkNormal("記念日B"), mkFallback("藤の季節")],
+    };
+    let fallbackCount = 0;
+    const N = 10000;
+    for (let i = 0; i < N; i++) {
+      if (pickFromPool(pool)?.isSeasonalFallback) fallbackCount++;
+    }
+    const rate = fallbackCount / N;
+    assert(
+      `確率テスト: fallback選択率 ${(rate * 100).toFixed(1)}% が 5%〜15% の範囲内`,
+      rate >= 0.05 && rate <= 0.15
+    );
+  }
+
+  // ── 通常が複数ある場合、通常エントリの選択に偏りがないか（簡易確認）──
+  {
+    const pool = {
+      entries: [mkNormal("A"), mkNormal("B"), mkNormal("C"), mkFallback("藤の季節")],
+    };
+    const counts = { A: 0, B: 0, C: 0 };
+    const N = 9000;
+    for (let i = 0; i < N; i++) {
+      const r = pickFromPool(pool);
+      if (!r.isSeasonalFallback && counts[r.theme] !== undefined) counts[r.theme]++;
+    }
+    const total = counts.A + counts.B + counts.C;
+    const ratioA = counts.A / total;
+    const ratioB = counts.B / total;
+    const ratioC = counts.C / total;
+    assert(
+      `通常エントリ均等分布: A=${(ratioA * 100).toFixed(0)}% B=${(ratioB * 100).toFixed(0)}% C=${(ratioC * 100).toFixed(0)}%（各25〜42%）`,
+      ratioA >= 0.25 && ratioA <= 0.42 &&
+      ratioB >= 0.25 && ratioB <= 0.42 &&
+      ratioC >= 0.25 && ratioC <= 0.42
+    );
+  }
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
