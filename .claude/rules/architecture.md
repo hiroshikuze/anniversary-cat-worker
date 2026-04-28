@@ -1118,12 +1118,22 @@ GET /rss.xml
 
 7. **その他動物ゲストの確定事項**（2026-04-28）
 
-   | 種別 | バリアント（確定） | 性格案 |
+   | 種別 | バリアント（確定） | 性格（固定） |
    | --- | --- | --- |
-   | パンダ | `"giant panda cub"` 1種（固定） | `"sitting round and roly-poly, holding bamboo with both paws"` |
+   | パンダ | `"giant panda cub"` 1種（固定） | `"sitting peacefully nearby, watching the cat with calm gentle eyes, relaxed and unhurried"` |
    | ペンギン | `"emperor penguin chick"` / `"little blue penguin"` 2種 | `"waddling cheerfully with flippers out, sociable and bright-eyed"` |
    | 豚 | `"pink miniature pig"` / `"black and white spotted miniature pig"` 2種 | `"trotting over with snout twitching, cheerful and friendly"` |
-   | 鶏 | 検討中 → ユーザー確認中 | `"pecking nearby and tilting head sideways with sharp curious eyes"`（案） |
+   | 鶏（成鳥） | `"fluffy white Silkie chicken"` / `"colorful bantam rooster"` 2種 | `"pecking nearby and tilting head sideways with sharp curious eyes"` |
+   | 鶏（ひよこ） | `"tiny fluffy yellow baby chick"` 1種 | `"toddling unsteadily with tiny wings flapping, wide-eyed and curious"` |
+
+   **犬ゲスト（確定・別掲）:**
+   - バリアント（6種ランダム）: `"golden retriever"` / `"red shiba inu"` / `"black-and-tan shiba inu"` / `"cream shiba inu"` / `"brindle French Bulldog"` / `"pied French Bulldog"`
+   - 性格（固定）: `"friendly and energetic, approaching the cat with enthusiasm"`
+
+   **ウサギゲスト（確定・別掲）:**
+   - 品種（3種・独立抽選）: `"Netherland Dwarf rabbit"` / `"Holland Lop rabbit"` / `"Mini Rex rabbit"`
+   - 毛色（3種・独立抽選）: `"chestnut"` / `"cream"` / `"mixed"`
+   - 性格（固定）: `"hopping close with nose twitching and big curious eyes"`
 
 #### 事前リサーチプール方式（実装済み・2026-04）
 
