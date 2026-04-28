@@ -287,7 +287,7 @@ const KNOWN_CANDIDATES = [
 
 - Botアカウント: `@nyanmusu.bsky.social`
 - 投稿スケジュール: 月〜金 19:00 JST（UTC 10:00）、Cron式: `0 10 * * 2-6`
-- ハッシュタグ: `#AIart #cat #kitten #ほのぼの #猫`（固定）＋テーマ由来の動的タグ1件（AT Protocol facets形式で付与）
+- ハッシュタグ: テーマ由来の動的タグ1件を先頭に置き、固定タグ`#AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー`を後続（Instagramで末尾タグを省略しやすくするため）
 - エラー時: リトライなし（`/generate`内部にPollinationsフォールバックあり）
 - Mastodon同時投稿: `Promise.allSettled`で並列実行。Mastodon失敗はBluesky投稿に影響しない。シークレット未設定時はスキップ
 
@@ -302,28 +302,35 @@ const KNOWN_CANDIDATES = [
 あなたも今日の #にゃんバーサリー を作ってみませんか？
 https://hiroshikuze.github.io/anniversary-cat-worker/
 
-#AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー #{theme正規化}
+#{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー
 ```
 
-300 grapheme以内に収まる設計（実測 ~210 grapheme）。
+300 grapheme以内に収まる設計（実測 ~210 grapheme）。テーマタグを先頭にすることでInstagram手動投稿時に末尾タグを省略しやすくしている。
 
-#### Mastodon（`buildMastodonText()`・日英二言語）
+#### Mastodon（`buildMastodonText()`・英語優先・日英二言語）
+
+英語を先に置くことで海外ユーザーへのリーチを優先する。`pageUrlEn` は `?lang=en` クエリ付きの英語ダイレクトURL（`${SITE_URL}?lang=en` または `${SITE_URL}?id=${r2Id}&lang=en`）。
 
 ```text
-今日は「{theme}」！🐱 / Today is "{themeEn}"!
-{description}
+Today is "{themeEn}"!
 {descriptionEn}
+
+Why don't you try making your own #Nyaniversary #にゃんバーサリー today?
+{pageUrlEn}
+
+今日は「{theme}」！🐱
+{description}
 
 あなたも今日の #にゃんバーサリー を作ってみませんか？
 {pageUrl}
 
-#AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー #{theme正規化}
+#{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #Nyaniversary #にゃんバーサリー
 ```
 
 - `themeEn`・`descriptionEn`は`handleResearch()`がGeminiから取得する英語フィールド
-- `themeEn`が空の場合はヘッダーを日本語のみ（`buildPostText()`と同形式）にフォールバック
-- `descriptionEn`が空の場合はその行を省略
-- Mastodon的には~320文字（500文字上限に余裕あり）
+- `themeEn`が空の場合は英語セクション全体を省略し、Blueskyと同一テキスト（`buildPostText()`）にフォールバック
+- `descriptionEn`が空の場合は英語説明行のみ省略
+- 想定文字数: ~420文字（Mastodon標準上限500文字以内）
 
 **「の日」重複防止ロジック（`buildPostText`）:**
 
@@ -407,7 +414,7 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 
 **タイムアウト**: アップロード・投稿ともに`AbortSignal.timeout(30_000)`（30秒）。
 
-**テキスト**: `buildMastodonText()`で生成した**日英二言語テキスト**を使用。Mastodonはハッシュタグを自動認識するためAT Protocol facetsは不要。
+**テキスト**: `buildMastodonText()`で生成した**英語優先・日英二言語テキスト**を使用（`pageUrlEn`含む）。Mastodonはハッシュタグを自動認識するためAT Protocol facetsは不要。`themeEn`未取得時は`buildPostText()`（日本語）にフォールバック。
 
 **シークレット設定**:
 ```bash

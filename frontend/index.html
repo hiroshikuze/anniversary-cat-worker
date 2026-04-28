@@ -419,7 +419,7 @@
       },
     };
 
-    let currentLang = "ja";
+    let currentLang = new URLSearchParams(window.location.search).get("lang") === "en" ? "en" : "ja";
 
     function t(key) {
       return translations[currentLang][key] ?? translations.ja[key] ?? key;
@@ -449,6 +449,15 @@
 
     function toggleLang() {
       currentLang = currentLang === "ja" ? "en" : "ja";
+      // ?lang パラメータを URL に反映（既存の ?id= は保持）
+      const params = new URLSearchParams(window.location.search);
+      if (currentLang === "en") {
+        params.set("lang", "en");
+      } else {
+        params.delete("lang");
+      }
+      const qs = params.toString();
+      history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
       applyLang();
       // 動的生成されたグッズボタンはdata-i18n外なので言語切り替え時に再描画
       if (lastProducts) showGoods(lastProducts);
@@ -534,7 +543,8 @@
     function resetToInitial() {
       isSharedView    = false;
       currentSharedId = null;
-      history.replaceState(null, "", window.location.pathname);
+      const langParam = currentLang === "en" ? "?lang=en" : "";
+      history.replaceState(null, "", window.location.pathname + langParam);
       updateDateDisplay();
       showGenerate("waiting");
     }
@@ -635,7 +645,7 @@
         btn.onclick = function () {
           isSharedView    = false;
           currentSharedId = null;
-          history.replaceState(null, "", window.location.pathname);
+          history.replaceState(null, "", window.location.pathname + (currentLang === "en" ? "?lang=en" : ""));
           startResearch();
         };
       } else {
@@ -1199,7 +1209,7 @@
       lastProducts    = null;
       isSharedView    = false;
       currentSharedId = null;
-      history.replaceState(null, "", window.location.pathname);
+      history.replaceState(null, "", window.location.pathname + (currentLang === "en" ? "?lang=en" : ""));
       document.getElementById("g-goods").classList.add("hidden");
       showGenerate("loading");
 
