@@ -34,8 +34,8 @@ const BLUESKY_API            = "https://bsky.social/xrpc";
 const SITE_URL               = "https://hiroshikuze.github.io/anniversary-cat-worker/";
 export const BLUESKY_MAX_IMAGE_BYTES = 976_000; // Bluesky上限 1,000,000 bytes に余裕を持たせた値
 
-const MASTODON_UPLOAD_TIMEOUT_MS = 30_000;
-const MASTODON_POST_TIMEOUT_MS   = 30_000;
+const MASTODON_UPLOAD_TIMEOUT_MS = 10_000;
+const MASTODON_POST_TIMEOUT_MS   = 10_000;
 
 const HASHTAG_LIST        = ["#AIart", "#cat", "#kitten", "#ほのぼの", "#猫", "#にゃんバーサリー"];
 const HASHTAGS            = HASHTAG_LIST.join(" ");
@@ -405,14 +405,18 @@ async function postStatusToMastodon(instanceUrl, accessToken, text, mediaId) {
 /** Discord Webhook にメッセージを送信する。emoji省略時は❌（エラー用） */
 export async function notifyDiscord(webhookUrl, message, emoji = "❌") {
   if (!webhookUrl) return;
+  const header  = `${emoji} にゃんバーサリーBot\n`;
+  const maxBody = 2000 - header.length;
+  const body    = message.length > maxBody ? message.slice(0, maxBody - 4) + "\n..." : message;
   try {
-    await fetch(webhookUrl, {
+    const res = await fetch(webhookUrl, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ content: `${emoji} にゃんバーサリーBot\n${message}` }),
+      body:    JSON.stringify({ content: header + body }),
+      signal:  AbortSignal.timeout(10_000),
     });
+    if (!res.ok) console.warn(`[bot] Discord 通知失敗: status=${res.status}`);
   } catch (e) {
-    // Discord 通知失敗はログのみ（二重エラーを避ける）
     console.error("[bot] Discord 通知失敗:", e.message);
   }
 }
