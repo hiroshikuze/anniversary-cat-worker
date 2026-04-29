@@ -155,7 +155,7 @@
 
 ### 2026-04 | sourceUrlKind の if ブロックが順次実行で上書きされ `vertexaisearch-skipped` が `google-search-fallback` に化ける
 
-- **状況**: プール方式を実装後、30日シミュレーションを実行すると fallback除外率90%・季節補充100%という異常な結果が出た
+- **状況**: プール方式を実装後、30日シミュレーションを実行するとfallback除外率90%・季節補充100%という異常な結果が出た
 - **原因**: `handleResearch()`のsourceUrlKind分類を独立した複数の`if`ブロックで書いたため、上のブロックが`sourceUrlKind = "vertexaisearch-skipped"`と設定した後、下の`if (!result.sourceUrl && queries.length > 0)`ブロックが`sourceUrlKind = "google-search-fallback"`に上書きしていた。`vertexaisearch-skipped`ケースは`result.sourceUrl`を設定していなかったため、次のブロックの条件を満たしてしまった
 - **症状**: groundingが存在する`vertexaisearch-skipped`エントリが全件`google-search-fallback`と判定され、フィルタリングで除外されていた。7日シミュレーションで74.3%が誤除外
 - **修正**: 独立した`if`ブロック群を`if-else if`チェーンに書き直し、最初にマッチしたケースで処理を終える。`vertexaisearch-skipped`ケースにもGoogle検索URLを`result.sourceUrl`に設定して後続ブロックが発火しないようにした
@@ -209,7 +209,7 @@
 
 ### 2026-04 | ユーザー承認前にコードを実装した
 
-- **状況**: 「説明の時のみ日本語にしてください」という指示を「フォーマット指示」として解釈し、日本語で説明した直後に実装まで進めた
+- **状況**:「説明の時のみ日本語にしてください」という指示を「フォーマット指示」として解釈し、日本語で説明した直後に実装まで進めた
 - **ミス**:指示の本意は「日本語で説明し、ユーザーがOKを出してから英語で実装する」という承認フロー要件だった。ユーザーから「まだ私は確認してません」と指摘を受け、`git revert HEAD --no-edit && git push`でロールバックした
 - **教訓**:「実装前に確認を取る」という指示が文中に含意されている場合、明示的な承認（「お願いします」「OKです」等）があるまで実装に着手しない。とくに「日本語で説明 → 承認 → 英語で実装」のような2ステップフローは見落としやすい
 
