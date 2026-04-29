@@ -34,8 +34,11 @@ const BLUESKY_API            = "https://bsky.social/xrpc";
 const SITE_URL               = "https://hiroshikuze.github.io/anniversary-cat-worker/";
 export const BLUESKY_MAX_IMAGE_BYTES = 976_000; // Bluesky上限 1,000,000 bytes に余裕を持たせた値
 
-const MASTODON_UPLOAD_TIMEOUT_MS = 30_000;
-const MASTODON_POST_TIMEOUT_MS   = 30_000;
+const BLUESKY_SESSION_TIMEOUT_MS = 10_000;
+const BLUESKY_UPLOAD_TIMEOUT_MS  = 10_000;
+const BLUESKY_POST_TIMEOUT_MS    = 10_000;
+const MASTODON_UPLOAD_TIMEOUT_MS = 10_000;
+const MASTODON_POST_TIMEOUT_MS   = 10_000;
 
 const HASHTAG_LIST        = ["#AIart", "#cat", "#kitten", "#ほのぼの", "#猫", "#にゃんバーサリー"];
 const HASHTAGS            = HASHTAG_LIST.join(" ");
@@ -186,6 +189,7 @@ async function createBlueskySession(identifier, password) {
     method:  "POST",
     headers: { "Content-Type": "application/json" },
     body:    JSON.stringify({ identifier, password }),
+    signal:  AbortSignal.timeout(BLUESKY_SESSION_TIMEOUT_MS),
   });
   const resText = await res.text();
   let data = {};
@@ -305,7 +309,8 @@ async function uploadBlob(accessJwt, imageBytes, mimeType) {
       "Authorization": `Bearer ${accessJwt}`,
       "Content-Type":  mimeType,
     },
-    body: imageBytes,
+    body:   imageBytes,
+    signal: AbortSignal.timeout(BLUESKY_UPLOAD_TIMEOUT_MS),
   });
   const resText = await res.text();
   let data = {};
@@ -338,7 +343,8 @@ async function createPost(accessJwt, did, text, blobRef, mimeType, altText, page
       "Authorization": `Bearer ${accessJwt}`,
       "Content-Type":  "application/json",
     },
-    body: JSON.stringify({ repo: did, collection: "app.bsky.feed.post", record }),
+    body:   JSON.stringify({ repo: did, collection: "app.bsky.feed.post", record }),
+    signal: AbortSignal.timeout(BLUESKY_POST_TIMEOUT_MS),
   });
   const resText = await res.text();
   let data = {};
@@ -405,14 +411,18 @@ async function postStatusToMastodon(instanceUrl, accessToken, text, mediaId) {
 /** Discord Webhook にメッセージを送信する。emoji省略時は❌（エラー用） */
 export async function notifyDiscord(webhookUrl, message, emoji = "❌") {
   if (!webhookUrl) return;
+  const header  = `${emoji} にゃんバーサリーBot\n`;
+  const maxBody = 2000 - header.length;
+  const body    = message.length > maxBody ? message.slice(0, maxBody - 4) + "\n..." : message;
   try {
-    await fetch(webhookUrl, {
+    const res = await fetch(webhookUrl, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ content: `${emoji} にゃんバーサリーBot\n${message}` }),
+      body:    JSON.stringify({ content: header + body }),
+      signal:  AbortSignal.timeout(10_000),
     });
+    if (!res.ok) console.warn(`[bot] Discord 通知失敗: status=${res.status}`);
   } catch (e) {
-    // Discord 通知失敗はログのみ（二重エラーを避ける）
     console.error("[bot] Discord 通知失敗:", e.message);
   }
 }
@@ -557,7 +567,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
     if (mastoOk) {
       console.log(`${prefix} Mastodon 投稿 完了 id=${mastoResult.value?.id ?? "(不明)"}`);
     } else if (!mastoSkipped) {
-      console.warn(`${prefix} Mastodon 投稿 失敗: ${mastoResult.reason?.message}`);
+      console.error(`${prefix} Mastodon 投稿 失敗: ${mastoResult.reason?.message}`);
     }
 
     // ── 6. Discord通知（成否によらず常に送信） ──────────────────────────
