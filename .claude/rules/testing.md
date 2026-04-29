@@ -44,6 +44,10 @@
 | `[bot] research 完了 theme="xxx"` | 記念日取得成功 |
 | `[bot] generate 完了 source=gemini` | 画像生成成功 |
 | `[bot] Bluesky 投稿 完了` | 投稿成功 |
+| `[bot] Mastodon 投稿 完了 id=xxx` | Mastodon投稿成功 |
+| `[bot] Mastodon 投稿 失敗: xxx` | Mastodon投稿失敗（error級。シークレット設定済みでも発生する） |
+| `[bot] Discord 通知失敗: status=400` | Discord 2000文字超過（`notifyDiscord()`の切り詰めロジックで本来は発生しない） |
+| `[bot] Discord 通知失敗: xxx` | Discord Webhookへの接続失敗またはタイムアウト |
 | `[bot] エラー: xxx` | どこかで失敗（メッセージで原因特定） |
 
 ## Botの手動テスト（本番発火）

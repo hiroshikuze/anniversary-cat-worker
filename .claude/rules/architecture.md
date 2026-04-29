@@ -4,27 +4,46 @@
 
 ```text
 anniversary-cat-worker/
-├── CLAUDE.md                    ← 判断品質ルール（最重要原則6つ含む）
+├── CLAUDE.md                         ← 判断品質ルール（最重要原則6つ含む）
+├── package.json
+├── wrangler.toml                     ← Cloudflareデプロイ設定（Cron Trigger含む）
+├── .github/workflows/
+│   ├── health-check.yml              ← push時: ユニットテスト + E2Eチェック
+│   ├── deploy-worker.yml             ← main push時: Cloudflare Workersデプロイ
+│   └── deploy-pages.yml              ← main push時: GitHub Pagesデプロイ
 ├── .claude/
-│   ├── revision_log.md          ← ミスパターン記録（毎セッション冒頭で読む）
-│   ├── settings.json            ← フォーマッタ等の自動発火処理
-│   └── rules/
-│       ├── coding.md            ← コーディング規約・Markdown執筆ルール
-│       ├── testing.md           ← テスト方針・診断手順
-│       ├── git-workflow.md      ← Gitワークフロー・デプロイ手順
-│       └── architecture.md     ← このファイル（設計・仕様・将来拡張）
+│   ├── revision_log.md               ← ミスパターン記録（毎セッション冒頭で読む）
+│   ├── bugs-history.md               ← バグ履歴 Bug#1〜（都度参照・自動ロードなし）
+│   ├── future-ideas.md               ← 将来拡張アイデア（都度参照・自動ロードなし）
+│   ├── settings.json                 ← PostToolUseフック（Markdownスペース検証）
+│   ├── archive/
+│   │   └── revision_log_2026-03.md   ← アーカイブ済みの旧revision_log
+│   └── rules/                        ← 以下は毎セッション自動ロード
+│       ├── coding.md                 ← コーディング規約・Markdown執筆ルール
+│       ├── testing.md                ← テスト方針・診断手順
+│       ├── git-workflow.md           ← Gitワークフロー・デプロイ手順
+│       ├── architecture.md           ← このファイル（設計・仕様）
+│       └── suzuri-api-reference.md   ← SUZURI APIリファレンス抜粋
 ├── worker/
-│   ├── index.js                 ← Cloudflare Worker本体（fetch + scheduledハンドラ）
-│   └── bluesky-bot.js           ← Bluesky Botロジック（index.jsからimport）
+│   ├── index.js                      ← Cloudflare Worker本体（fetch + scheduledハンドラ）
+│   ├── bluesky-bot.js                ← Bluesky/Mastodon Botロジック・Discord通知
+│   ├── fal.js                        ← fal.ai ESRGAN 2xアップスケーリング（Queue API）
+│   ├── suzuri.js                     ← SUZURI API連携（商品生成・削除）
+│   └── r2-storage.js                 ← Cloudflare R2ストレージ操作
 ├── frontend/
-│   └── index.html               ← フロントエンド（GitHub Pages）
-├── scripts/
-│   ├── health-check.js              ← E2E診断スクリプト（GitHub Actionsで自動実行）
-│   ├── test-bot.mjs                 ← bluesky-bot.jsのユニットテスト（外部API不要）
-│   ├── test-suzuri-api.mjs          ← SUZURI API動作確認スクリプト
-│   ├── test-fal-models.mjs          ← fal.aiモデル比較スクリプト（FAL_KEY必要）
-│   └── test-gemini-image-timing.mjs ← Gemini画像生成の所要時間計測（GEMINI_API_KEY必要）
-└── wrangler.toml                ← Cloudflareデプロイ設定（Cron Trigger含む）
+│   ├── index.html                    ← フロントエンド（PWA対応、JP/EN切り替え）
+│   ├── manifest.json
+│   ├── sw.js
+│   └── images/                       ← faviconアイコン類
+└── scripts/
+    ├── health-check.js               ← E2E診断（GitHub Actionsのみ実行）
+    ├── test-bot.mjs                  ← ユニットテスト（外部API不要）← npm test
+    ├── test-suzuri.mjs               ← worker/suzuri.jsユニットテスト（外部API不要）
+    ├── test-suzuri-api.mjs           ← SUZURI API動作確認（実商品が生成される）
+    ├── test-fal-models.mjs           ← fal.aiモデル比較（FAL_KEY必要）
+    ├── test-gemini-image-timing.mjs  ← Gemini画像生成の所要時間計測（GEMINI_API_KEY必要）
+    ├── test-gemini-research-batch.mjs ← バッチ vs シングル精度比較（GEMINI_API_KEY必要）
+    └── test-pool-30days.mjs          ← 事前リサーチプール方式シミュレーション（GEMINI_API_KEY必要）
 ```
 
 ---
@@ -357,9 +376,21 @@ Why don't you try making your own #Nyaniversary #にゃんバーサリー today?
 - descriptionが空の場合は従来形式: `にゃんバーサリー - 「{theme}」をテーマにAIが生成した水彩画風の猫イラスト`
 - テーマと記念日説明を含めることで、スクリーンリーダーユーザーへの情報提供と検索流入の両立を図る
 
+### Discord通知（`notifyDiscord()`）
+
+**制約・動作（2026-04）:**
+
+- Discord Webhook `content` フィールドは**2,000文字上限**（超過するとHTTP 400）
+- `notifyDiscord()`は先頭ヘッダー（`{emoji} にゃんバーサリーBot\n`）を確保したうえで本文を上限内に切り詰め、末尾に`\n...`を付加する
+- 送信後は`res.ok`を確認し、失敗時は`console.warn`でログを出力する
+- タイムアウト: `AbortSignal.timeout(10_000)`（10秒）
+- `webhookUrl`が未設定の場合は即座にreturnしてスキップ
+
+**Mastodon投稿テキスト（日英二言語）を追加した結果、通知が2,000文字を超えやすくなった（2026-04）。** 現在は切り詰めで対応しているが、将来的なメッセージ分割の検討については[将来拡張メモ](../future-ideas.md)参照。
+
 ### Discord成功通知フォーマット
 
-投稿完了後に`notifyDiscord()`で送信される通知（Discord上限2,000文字・通常~1,200文字）。
+投稿完了後に`notifyDiscord()`で送信される通知（Discord上限2,000文字・通常~1,200文字。超過時は切り詰め）。
 
 ```text
 ✅ にゃんバーサリーBot
@@ -413,7 +444,9 @@ Why don't you try making your own #Nyaniversary #にゃんバーサリー today?
 
 **投稿作成**: `application/x-www-form-urlencoded`。`status`フィールドにテキスト、`media_ids[]`フィールドにmediaId。重複投稿防止のため`Idempotency-Key: {uuid}`ヘッダーを付与。
 
-**タイムアウト**: アップロード・投稿ともに`AbortSignal.timeout(30_000)`（30秒）。
+**タイムアウト（Bluesky）**: 認証・画像アップロード・投稿作成それぞれ`AbortSignal.timeout(10_000)`（各10秒）。
+
+**タイムアウト（Mastodon）**: アップロード・投稿ともに`AbortSignal.timeout(10_000)`（各10秒）。Workerのwall-clock制限内で収めるため30秒から短縮（2026-04）。
 
 **テキスト**: `buildMastodonText()`で生成した**英語優先・日英二言語テキスト**を使用（`pageUrlEn`含む）。Mastodonはハッシュタグを自動認識するためAT Protocol facetsは不要。`themeEn`未取得時は`buildPostText()`（日本語）にフォールバック。
 
