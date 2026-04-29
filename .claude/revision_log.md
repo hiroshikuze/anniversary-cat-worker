@@ -20,20 +20,20 @@
 
 - **状況**: 2026-04-02（木）19:00 JSTにBotが投稿せず、Discordにもエラー通知なし
 - **原因**: Cloudflare Workersの公式仕様として「Cron Triggerはbest-effort（保証なし）」。Cronが発火しなかった場合は`runBot()`に到達しないためDiscord通知も出ない。Cloudflareステータスページに障害表示もなく、コードのバグでもない
-- **対処**: Cloudflareダッシュボード → コードを編集する → Scheduled → 送信 で手動発火。翌日以降は自動回復
+- **対処**: Cloudflareダッシュボード → コードを編集する → Scheduled → 送信で手動発火。翌日以降は自動回復
 - **教訓**: Cron未発火はコードバグと区別するため、まずCloudflareのトリガーイベント履歴（設定タブ）を確認する。エントリ自体が存在しない場合はインフラ側の問題
 
 ### 2026-04 | fal.ai AuraSRアップスケールがタイムアウトし続ける → ctx.waitUntil()で解決
 
 - **状況**: `POST /suzuri-create`でfal.ai AuraSRを同期呼び出しすると毎回タイムアウト。SUZURI登録は元画像で継続されUXが悪化
 - **原因1**: fal.aiのバランス残高不足（初期エラー: status=403 "Exhausted balance"）
-- **原因2**: Cloudflare WorkersのWall-clock時間制限（約30秒）により同期ハンドラ内では完了できない
+- **原因2**: Cloudflare WorkersのWall-clock時間制限（約30秒）により同期ハンドラー内では完了できない
 - **最終解決**: `ctx.waitUntil()`を使った非同期アーキテクチャに移行
   - t-shirt+stickerグループ: バックグラウンドで処理、即座に`{ queued: true }`を返す
   - can-badge+acrylic-keychainグループ: 従来通り同期処理
   - フロントエンドが`GET /meta/:id`を5秒ごとにポーリングしてSUZURI URL完成を待つ
 - **追加修正**: fal.ai CDN URL（`v3b.fal.media`）を直接SUZURIに渡すと0バイトエラー。R2にバイナリ保存→`GET /hires/:id`経由でSUZURIに渡す方式で解決（動作確認済み）
-- **教訓**: 同期Workerハンドラ内で外部API（画像処理系）を直列呼び出しする設計はWall-clock制限に引っかかる。`ctx.waitUntil()`はI/O待ちにCPU時間が計上されないため有効。外部CDN URLを第三者APIに直接渡すのも避ける
+- **教訓**: 同期Workerハンドラー内で外部API（画像処理系）を直列呼び出しする設計はWall-clock制限に引っかかる。`ctx.waitUntil()`はI/O待ちにCPU時間が計上されないため有効。外部CDN URLを第三者APIに直接渡すのも避ける
 
 ### 2026-04 | fal.ai Queue API移行（wall-clock超過でcatchも動かない問題の根本解決）
 
@@ -65,13 +65,13 @@
 ### 2026-04 | AuraSR 4x PNG がSUZURI 20MB上限を超過（422エラー）
 
 - **状況**: fal.ai AuraSR 4xアップスケール後のPNGをSUZURIに送ると`status=422 画像must be in between 0バイト and 20メガバイト`
-- **原因**: 1024px入力→4096px PNG は~24MBになりSUZURIの20MB上限を超過する
+- **原因**: 1024px入力→4096px PNGは~24MBになりSUZURIの20MB上限を超過する
 - **修正**: CDNから取得したbyteLengthが20MB超の場合はR2保存をスキップしてbase64フォールバックへ（`buf.byteLength <= 20_000_000`チェックを追加）
 - **場所**: `worker/index.js` `/suzuri-create`バックグラウンドタスクと`/resume-hires`の両方
 
 ### 2026-04 | fal.aiモデル実測比較（400px入力・scripts/test-fal-models.mjs）
 
-- **目的**: AuraSR 4xが20MB超過するため、代替モデル・パラメータを調査
+- **目的**: AuraSR 4xが20MB超過するため、代替モデル・パラメーターを調査
 - **実測結果**（入力: 400px JPEG → 出力推定1024px入力時を括弧内に記載）:
 
 | モデル | 出力解像度 | ファイルサイズ | 1024px入力推定 | 速度 |
@@ -98,7 +98,7 @@
   - ジョブFAILED: `fal.js`の`getFalResult()`内で検出 → `notifyFalDiscord()`
   - ポーリング3回未完了→base64フォールバック: `index.js`の`ctx.waitUntil()`内 → `notifyDiscord()`
   - 出力20MB超→base64フォールバック: `index.js`の`/suzuri-create`と`/resume-hires`両方 → `notifyDiscord()`
-- **制約**: 残高$0.5以下の「事前通知」はfal.aiのREST APIが非公開のため未実装。残高0（403）になって初めて通知が届く
+- **制約**: 残高$0.5以下の「事前通知」はfal.aiのREST APIが非公開のため未実装。残高0（403）になってはじめて通知が届く
 - **補完策**: fal.aiダッシュボード（`fal.ai/dashboard/billing`）でメール通知を設定しておくことを推奨
 
 ### 2026-04 | Bot投稿内容のDiscord通知・visualHint・Pollinations修正
@@ -123,7 +123,7 @@
 - **設定**: `~/.claude.json`のプロジェクト設定に`@cloudflare/mcp-server-cloudflare`を追加（`claude mcp add`コマンドで追加）
 - **結果**: 未完了。このWeb/サンドボックス環境ではブラウザOAuthが使えないため`wrangler login`がタイムアウト
 - **解決策（未実施）**: CloudflareダッシュボードでAPIトークンを作成し、`~/.claude.json`の`mcpServers.cloudflare.env.CLOUDFLARE_API_TOKEN`に設定すれば使える
-- **代替手段**: Cloudflareダッシュボード → Workers & Pages → `anniversary-cat-worker` → ログ で手動確認
+- **代替手段**: Cloudflareダッシュボード → Workers & Pages → `anniversary-cat-worker` → ログで手動確認
 
 ### 2026-04 | 実測データなしで実装→ロールバックの繰り返し（Gemini/Pollinations競合設計）
 
@@ -139,13 +139,13 @@
 
 ### 2026-04 | ドキュメント・テストより先にコードを変更した
 
-- **状況**: eating action 機能の実装で「ドキュメントを更新し、テスト可能なら追加した上でコーディング開始してください」と指示された
+- **状況**: eating action機能の実装で「ドキュメントを更新し、テスト可能なら追加した上でコーディング開始してください」と指示された
 - **ミス**: 指示を「要件リスト」として読み、コード変更 → テスト追加 → ドキュメント更新の順で実行した。指示に含まれる**実行順序**を無視した
-- **教訓**: 「ドキュメント → テスト → コード」の順序は特別指示がない限り常に守る
+- **教訓**:「ドキュメント → テスト → コード」の順序は特別指示がない限り常に守る
   - ドキュメントを先に書くと設計の矛盾が実装前に見つかる
   - テストを先に書くと「何を実装すべきか」の仕様が確定する
   - 実装後にテストを書くとテストが実装に合わせて甘くなるリスクがある
-- **防止策**: TodoWrite でタスクを並べる際、必ず「ドキュメント → テスト → コード」の順にする
+- **防止策**: TodoWriteでタスクを並べる際、必ず「ドキュメント → テスト → コード」の順にする
 
 ### 2026-04 | ギャラリーとloadSharedImageの同時実行によるSUZURI重複登録
 
@@ -156,10 +156,10 @@
 ### 2026-04 | sourceUrlKind の if ブロックが順次実行で上書きされ `vertexaisearch-skipped` が `google-search-fallback` に化ける
 
 - **状況**: プール方式を実装後、30日シミュレーションを実行すると fallback除外率90%・季節補充100%という異常な結果が出た
-- **原因**: `handleResearch()`の sourceUrlKind 分類を独立した複数の`if`ブロックで書いたため、上のブロックが`sourceUrlKind = "vertexaisearch-skipped"`と設定した後、下の`if (!result.sourceUrl && queries.length > 0)`ブロックが`sourceUrlKind = "google-search-fallback"`に上書きしていた。`vertexaisearch-skipped`ケースは`result.sourceUrl`を設定していなかったため、次のブロックの条件を満たしてしまった
+- **原因**: `handleResearch()`のsourceUrlKind分類を独立した複数の`if`ブロックで書いたため、上のブロックが`sourceUrlKind = "vertexaisearch-skipped"`と設定した後、下の`if (!result.sourceUrl && queries.length > 0)`ブロックが`sourceUrlKind = "google-search-fallback"`に上書きしていた。`vertexaisearch-skipped`ケースは`result.sourceUrl`を設定していなかったため、次のブロックの条件を満たしてしまった
 - **症状**: groundingが存在する`vertexaisearch-skipped`エントリが全件`google-search-fallback`と判定され、フィルタリングで除外されていた。7日シミュレーションで74.3%が誤除外
 - **修正**: 独立した`if`ブロック群を`if-else if`チェーンに書き直し、最初にマッチしたケースで処理を終える。`vertexaisearch-skipped`ケースにもGoogle検索URLを`result.sourceUrl`に設定して後続ブロックが発火しないようにした
-- **教訓**: sourceUrlKind のような「排他的分類」には必ず`if-else if`チェーンを使う。順次`if`ブロックは「後のブロックが前の結果を上書きする」バグを起こしやすい。シミュレーション（実測スクリプト）を先に実行したことで異常を即検出できた
+- **教訓**: sourceUrlKindのような「排他的分類」には必ず`if-else if`チェーンを使う。順次`if`ブロックは「後のブロックが前の結果を上書きする」バグを起こしやすい。シミュレーション（実測スクリプト）を先に実行したことで異常を即検出できた
 
 ---
 
@@ -167,28 +167,28 @@
 
 - **状況**: `scripts/test-gemini-research-batch.mjs`の出力に`2026年三陸沖地震`が含まれており、「架空イベントのハルシネーション」とユーザーに報告した
 - **実態**: 前日（2026-04-21）に実際に発生した地震の速報ニュースだった。Geminiが最新ニュースをgroundingして返した正常な動作
-- **真の問題**: ハルシネーションではなく「実在するがにゃんバーサリーに不向きな時事災害情報」。現行の`google-search-fallback`フィルタでは除外できない（正規URLでgroundingされるため）
+- **真の問題**: ハルシネーションではなく「実在するがにゃんバーサリーに不向きな時事災害情報」。現行の`google-search-fallback`フィルターでは除外できない（正規URLでgroundingされるため）
 - **対処**: `handleResearch()`プロンプトに「速報ニュース・災害・事故・訃報は除く」を明示追記することで根本対策。プール方式に限らず現行Botにも即時適用が必要
-- **教訓**: AIの出力が「おかしい」と感じたとき、ハルシネーションと即断する前に「最近の実際の出来事でないか」を確認する。特に時事的な名称（年号+地名+事象）は実在の可能性が高い
+- **教訓**: AIの出力が「おかしい」と感じたとき、ハルシネーションと即断する前に「最近の実際の出来事でないか」を確認する。とくに時事的な名称（年号+地名+事象）は実在の可能性が高い
 
 ### 2026-04 | 定義・exportした関数を実際の処理フローで呼び出し忘れ（normalizeKanjiChar）
 
 - **状況**: `normalizeKanjiChar()`をexportし、ドキュメントにも「Workerはnormalizeした後に返す」と記載していたが、`handleResearch()`の`return result`前に呼び出すコードを書いていなかった。Geminiが`kanjiChar: null`を返すとフロントへnullが渡り、Tシャツ背面印刷が生成されなかった
-- **ミス**: 「関数を定義してexportした」ことと「実際の処理フローで呼び出した」ことを混同した。ドキュメントに意図を書いたことで実装済みと錯覚した
+- **ミス**:「関数を定義してexportした」ことと「実際の処理フローで呼び出した」ことを混同した。ドキュメントに意図を書いたことで実装済みと錯覚した
 - **教訓**: exportしただけでは処理に組み込まれない。ドキュメントに「〜でバリデーション後に返す」と書いたら、その行が実際にコードに存在するか必ず確認する。テストで「`handleResearch()`がnullを返さない」ことを先に書いていれば実装忘れをすぐ検出できた
 
 ### 2026-04 | サブエージェントが一次ソース未確認のまま確定情報として報告
 
 - **状況**: Wikipedia MediaWiki APIの利用規約・レート制限・レスポンス内容を調査させたところ、サンドボックスからja.wikipedia.orgへのfetchが全件403でブロックされた。エージェントは「公式ドキュメントと複数の信頼できる情報源から」と述べながら、実態は学習データとサードパーティ実装の調査のみで一次ソースを確認できていなかった
 - **類似ミス**: 2026-03の「SUZURI API招待制」と同じパターン（未確認情報の断言）
-- **教訓**: サブエージェントに外部API調査を依頼した場合、「実際にURLをfetchできたか」「公式ドキュメントのURLを明示できているか」を結果レポートで確認する。「公式ドキュメントを参照した」という記述だけでは不十分。特にサンドボックス環境では外部fetchがブロックされることが多いため、実装前に自分で一次ソースを確認する
+- **教訓**: サブエージェントに外部API調査を依頼した場合、「実際にURLをfetchできたか」「公式ドキュメントのURLを明示できているか」を結果レポートで確認する。「公式ドキュメントを参照した」という記述だけでは不十分。とくにサンドボックス環境では外部fetchがブロックされることが多いため、実装前に自分で一次ソースを確認する
 - **対処**: architecture.mdの当該調査メモに「情報の一次ソース未確認」と明記した
 
 ### 2026-04 | 共有URLの日付バッジが常に「今日」を表示していた
 
 - **状況**: `?id=user/...` 形式の共有URLを翌日以降に開くと、日付バッジが生成日ではなく「今日」を表示し、記念日の内容と矛盾していた
 - **原因**: `updateDateDisplay()`が常に`new Date()`（現在時刻）を使っており、`loadSharedImage()`がR2から取得した`data.createdAt`を日付表示に反映していなかった
-- **修正**: `updateDateDisplay(date = null)`にオプション引数を追加。`loadSharedImage()`成功時に`updateDateDisplay(new Date(data.createdAt))`を呼ぶ。また`timeZone: "Asia/Tokyo"`を追加しユーザーのブラウザ環境に関わらず常にJSTで表示するよう修正（副次的なタイムゾーンバグも解消）
+- **修正**: `updateDateDisplay(date = null)`にオプション引数を追加。`loadSharedImage()`成功時に`updateDateDisplay(new Date(data.createdAt))`を呼ぶ。また`timeZone: "Asia/Tokyo"`を追加しユーザーのブラウザ環境にかかわらず常にJSTで表示するよう修正（副次的なタイムゾーンバグも解消）
 - **教訓**: R2から日時メタデータを取得する画面では、表示に使う日時も必ずそのメタデータから引く。「今日の日付を表示する」関数を共有ビューでもそのまま流用するのは危険
 
 ### 2026-04 | 共有URLのスピナー中も日付バッジを正しく表示すべき
@@ -210,8 +210,8 @@
 ### 2026-04 | ユーザー承認前にコードを実装した
 
 - **状況**: 「説明の時のみ日本語にしてください」という指示を「フォーマット指示」として解釈し、日本語で説明した直後に実装まで進めた
-- **ミス**: 指示の本意は「日本語で説明し、ユーザーがOKを出してから英語で実装する」という承認フロー要件だった。ユーザーから「まだ私は確認してません」と指摘を受け、`git revert HEAD --no-edit && git push`でロールバックした
-- **教訓**: 「実装前に確認を取る」という指示が文中に含意されている場合、明示的な承認（「お願いします」「OKです」等）があるまで実装に着手しない。特に「日本語で説明 → 承認 → 英語で実装」のような2ステップフローは見落としやすい
+- **ミス**:指示の本意は「日本語で説明し、ユーザーがOKを出してから英語で実装する」という承認フロー要件だった。ユーザーから「まだ私は確認してません」と指摘を受け、`git revert HEAD --no-edit && git push`でロールバックした
+- **教訓**:「実装前に確認を取る」という指示が文中に含意されている場合、明示的な承認（「お願いします」「OKです」等）があるまで実装に着手しない。とくに「日本語で説明 → 承認 → 英語で実装」のような2ステップフローは見落としやすい
 
 ---
 
@@ -228,7 +228,7 @@
   - テーマとの「ナラティブ」がある（テーマの横にいるだけでなく、テーマの中に猫がいる）
 - **試みた改善（A・B）と結果**:
   - A（mid-action指示追加）・B（visualHintを場面描写に変更）をGeminiで実際に試した
-  - ユーザー評価: 「生成結果にそう大した差がないように思えた」→ どちらも不採用
+  - ユーザー評価:「生成結果にそう大した差がないように思えた」→ どちらも不採用
 - **根本原因**: プロンプトレベルの調整では埋まらない差。`handleResearch()`が「テーマ名・説明・物リスト」を返す限り、Geminiは「テーマの横にいる猫」を生成しやすい。真のレバレッジは`handleResearch()`の段階で**猫が体験するシナリオ（"cat experiencing the theme"）**を生成させることにある
 - **実装済み変更**: visualHintの指示文を「Setting and surrounding atmosphere; the cat may naturally interact with theme-related items (approaching, touching, or holding them as fits the scene):」に変更（Bug#15の反省を踏まえつつ自然な関わりを許可）。これはパン泥棒の日など「持つことが自然なテーマ」への対応として有効
 - **今後の課題**: `handleResearch()`にシナリオフィールド（"scene concept"）を追加し、Geminiが「猫が体験する場面」を生成する方向性。設計変更が大きいため別セッションで検討

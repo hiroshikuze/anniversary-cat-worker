@@ -57,7 +57,7 @@
 - **修正**: `/generate`からSUZURI登録を分離し、フロントCanvas合成（`applyWatermark()`）でウォーターマーク付与後に`POST /suzuri-create`で登録
 - **ウォーターマーク仕様**: margin 12px・`© nyanmusu`・半透明黒背景（rgba(0,0,0,0.35)）・白テキスト・JPEG quality 0.92で出力
 - **位置**: `position`引数で制御。`'bottom-right'`（右下）または`'bottom-center'`（中央下）。商品グループごとに使い分ける
-- **場所**: `frontend/index.html` `applyWatermark(imageData, mimeType, position)` / `_calcWatermarkLayout(imgW, imgH, textW, position)` / `worker/index.js` `/suzuri-create`ハンドラ
+- **場所**: `frontend/index.html` `applyWatermark(imageData, mimeType, position)` / `_calcWatermarkLayout(imgW, imgH, textW, position)` / `worker/index.js` `/suzuri-create`ハンドラー
 
 ### 10. fal.ai AuraSRのCDN画像をbase64変換してWorkers CPU時間超過（2026-04）
 
@@ -70,11 +70,11 @@
 - **原因**: fal.aiが返すCDN URL（`v3b.fal.media`）をSUZURIの`texture`フィールドに直接渡すと、SUZURIのサーバーがfetchした際に0バイトが返りstatus=422エラーになる。CDN URLへのアクセス制限・一時URL等が原因と推測
 - **修正**: fal.ai CDN URL → Worker内でfetch → R2にバイナリ保存（I/Oのみ・CPU不要）→ `GET /hires/:id`エンドポイント経由のWorker自身のURLをSUZURIに渡す。Worker URLはSUZURIから安定してアクセスできる
 - **教訓**: 外部CDN URLを第三者APIの`texture`等に直接渡す設計は、アクセス制限・TTL・リダイレクト等で失敗するリスクがある。自分で管理するURL（R2経由）に変換してから渡す
-- **場所**: `worker/index.js` `/suzuri-create`ハンドラ / `GET /hires/:id`エンドポイント
+- **場所**: `worker/index.js` `/suzuri-create`ハンドラー / `GET /hires/:id`エンドポイント
 
 ### 12. AuraSR 4xがSUZURI 20MB上限を常に超過し実質アップスケールなしに（2026-04）
 
-- **原因**: AuraSR 4xは1024px入力→4096px PNG≈24MBとなりSUZURIの20MB上限を超過。`upscaling_factor: 2`パラメータは**完全に無視**され、常に4x出力になる
+- **原因**: AuraSR 4xは1024px入力→4096px PNG≈24MBとなりSUZURIの20MB上限を超過。`upscaling_factor: 2`パラメーターは**完全に無視**され、常に4x出力になる
 - **修正**: `fal-ai/aura-sr` → `fal-ai/esrgan`に切り替え（`worker/fal.js` `FAL_QUEUE_BASE`）。ESRGANは2x（2048px/≈6MB）でSUZURI上限内に収まる
 - **モデル比較実測**（400px JPEG入力で計測）:
 
@@ -111,7 +111,7 @@
 
 ### 15. Geminiプロンプトの「holding or surrounded」制約がvisualHintと競合（2026-04）
 
-- **原因**: `visualHint`（例: `lotus flower, baby Buddha statue, sweet tea ceremony`）が場面・小道具を既に指定しているにもかかわらず、「The cat is holding or surrounded by items related to the theme.」という空間的制約が残っていた
+- **原因**: `visualHint`（例: `lotus flower, baby Buddha statue, sweet tea ceremony`）が場面・小道具をすでに指定しているにもかかわらず、「The cat is holding or surrounded by items related to the theme.」という空間的制約が残っていた
 - **問題**: Geminiが「猫がお釈迦様の像を抱えている」等の不自然な構図に引き寄せられ、visualHintが意図する雰囲気・背景としての使い方ができなかった
 - **修正**: 該当文を削除。visualHintによる場面指示に一本化し、Geminiの構図判断を尊重する
 - **場所**: `worker/index.js` `handleGenerate()` `prompt`定数
@@ -122,12 +122,12 @@
 - **修正**: ボットでのSUZURI登録を廃止。初回訪問者のブラウザで`createSuzuriFromImage()`（手動生成と同じフロー）を実行する設計に変更
 - **重複防止**: `/suzuri-create`冒頭にR2メタチェックを追加。対象スラッグが全件登録済みなら既存データを返してスキップ（複数ユーザー同時訪問でも二重登録しない）
 - **誰も訪問しない場合**: productsが未作成のままR2が14日で期限切れになる（許容設計）
-- **場所**: `worker/bluesky-bot.js` `runBot()` / `worker/index.js` `/suzuri-create`ハンドラ / `frontend/index.html` `createSuzuriFromImage()` `loadSharedImage()`
+- **場所**: `worker/bluesky-bot.js` `runBot()` / `worker/index.js` `/suzuri-create`ハンドラー / `frontend/index.html` `createSuzuriFromImage()` `loadSharedImage()`
 
 ### 17. ギャラリーとloadSharedImageの同時実行によるSUZURI重複登録（2026-04）
 
 - **原因**: `?id=bot/YYYY-MM-DD` を開いたとき、`loadGallery()` のバックグラウンド登録（`registerGalleryItemInBackground()`）と `loadSharedImage()` が同じidに対してほぼ同時に `createSuzuriFromImage()` を呼び出していた。Worker側の重複防止チェック（R2メタ参照）はTOCTOUギャップがあり、両リクエストがR2の `products:[]` を読んだ後に両方とも登録に進んでしまった
-- **修正**: `loadGallery()` でURLの `?id` パラメータと一致するidはバックグラウンド登録をスキップ。`loadSharedImage()` に一本化することで競合を排除
+- **修正**: `loadGallery()` でURLの `?id` パラメーターと一致するidはバックグラウンド登録をスキップ。`loadSharedImage()` に一本化することで競合を排除
 - **場所**: `frontend/index.html` `loadGallery()`（`id !== currentPageId` 条件を追加）
 - **テスト**: `scripts/test-bot.mjs` `[shouldRegisterGalleryItem]` セクションで4ケースをカバー
 
