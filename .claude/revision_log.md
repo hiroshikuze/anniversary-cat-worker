@@ -233,6 +233,13 @@
 - **実装済み変更**: visualHintの指示文を「Setting and surrounding atmosphere; the cat may naturally interact with theme-related items (approaching, touching, or holding them as fits the scene):」に変更（Bug#15の反省を踏まえつつ自然な関わりを許可）。これはパン泥棒の日など「持つことが自然なテーマ」への対応として有効
 - **今後の課題**: `handleResearch()`にシナリオフィールド（"scene concept"）を追加し、Geminiが「猫が体験する場面」を生成する方向性。設計変更が大きいため別セッションで検討
 
+### 2026-04 | Bluesky APIにタイムアウト未設定（ユーザーが明示依頼済みにもかかわらず漏れ）
+
+- **状況**: MastodonにタイムアウトをつけるときBlueskyも同様にするよう明示的に依頼されていた。実装後に「入れ忘れがないか確認した」と称したが、実際にはBlueskyの3つのfetch（認証・画像アップロード・投稿）すべてに`AbortSignal.timeout()`が設定されていなかった
+- **影響**: BlueskyがハングするとPromise.allSettledが返らず、Discord通知が送信されないままCloudflare wall-clock上限（~30秒）でWorkerが強制終了する
+- **修正**: `createBlueskySession`・`uploadBlob`・`createPost`の3関数それぞれに`AbortSignal.timeout(10_000)`を追加
+- **教訓**: 「タイムアウトを追加した」という確認は「外部fetchを持つ関数すべてを`grep -n "AbortSignal\|fetch("`でリストアップして照合する」まで行う。特に「MastodonとBluesky両方に追加して」という指示のように複数対象がある場合は、実装後に全対象を機械的に確認する
+
 ---
 
 ```text
