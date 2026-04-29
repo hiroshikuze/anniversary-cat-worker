@@ -12,7 +12,21 @@
  *   MASTODON_INSTANCE_URL=https://mstdn.jp MASTODON_ACCESS_TOKEN=xxx SKIP_IMAGE=1 node scripts/test-mastodon.mjs
  */
 
-const INSTANCE_URL  = process.env.MASTODON_INSTANCE_URL;
+// Node.js 18未満ではglobal fetchが未定義のためundiciでpolyfill
+if (typeof globalThis.fetch === "undefined") {
+  try {
+    const { fetch, FormData, Blob } = await import("undici");
+    globalThis.fetch     = fetch;
+    globalThis.FormData  = FormData;
+    globalThis.Blob      = Blob;
+  } catch {
+    console.error("エラー: Node.js 18以上が必要です。");
+    console.error("または: npm install undici を実行してから再試行してください。");
+    process.exit(1);
+  }
+}
+
+const INSTANCE_URL  = process.env.MASTODON_INSTANCE_URL?.replace(/\/$/, ""); // 末尾スラッシュを除去
 const ACCESS_TOKEN  = process.env.MASTODON_ACCESS_TOKEN;
 const SKIP_IMAGE    = process.env.SKIP_IMAGE === "1";
 
