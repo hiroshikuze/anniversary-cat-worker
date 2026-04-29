@@ -397,7 +397,11 @@ async function postStatusToMastodon(instanceUrl, accessToken, text, mediaId) {
   });
   const resText = await res.text();
   let data = {};
-  try { data = JSON.parse(resText); } catch { /**/ }
+  try {
+    data = JSON.parse(resText);
+  } catch (e) {
+    data = { error: `レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
+  }
   if (!res.ok) {
     throw new Error(`Mastodon投稿失敗: status=${res.status} ${data.error ?? ""}`);
   }
