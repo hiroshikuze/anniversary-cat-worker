@@ -34,6 +34,9 @@ const BLUESKY_API            = "https://bsky.social/xrpc";
 const SITE_URL               = "https://hiroshikuze.github.io/anniversary-cat-worker/";
 export const BLUESKY_MAX_IMAGE_BYTES = 976_000; // Bluesky上限 1,000,000 bytes に余裕を持たせた値
 
+const BLUESKY_SESSION_TIMEOUT_MS = 10_000;
+const BLUESKY_UPLOAD_TIMEOUT_MS  = 10_000;
+const BLUESKY_POST_TIMEOUT_MS    = 10_000;
 const MASTODON_UPLOAD_TIMEOUT_MS = 10_000;
 const MASTODON_POST_TIMEOUT_MS   = 10_000;
 
@@ -186,6 +189,7 @@ async function createBlueskySession(identifier, password) {
     method:  "POST",
     headers: { "Content-Type": "application/json" },
     body:    JSON.stringify({ identifier, password }),
+    signal:  AbortSignal.timeout(BLUESKY_SESSION_TIMEOUT_MS),
   });
   const resText = await res.text();
   let data = {};
@@ -305,7 +309,8 @@ async function uploadBlob(accessJwt, imageBytes, mimeType) {
       "Authorization": `Bearer ${accessJwt}`,
       "Content-Type":  mimeType,
     },
-    body: imageBytes,
+    body:   imageBytes,
+    signal: AbortSignal.timeout(BLUESKY_UPLOAD_TIMEOUT_MS),
   });
   const resText = await res.text();
   let data = {};
@@ -338,7 +343,8 @@ async function createPost(accessJwt, did, text, blobRef, mimeType, altText, page
       "Authorization": `Bearer ${accessJwt}`,
       "Content-Type":  "application/json",
     },
-    body: JSON.stringify({ repo: did, collection: "app.bsky.feed.post", record }),
+    body:   JSON.stringify({ repo: did, collection: "app.bsky.feed.post", record }),
+    signal: AbortSignal.timeout(BLUESKY_POST_TIMEOUT_MS),
   });
   const resText = await res.text();
   let data = {};
