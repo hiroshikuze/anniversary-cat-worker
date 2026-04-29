@@ -17,7 +17,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
 } from "../worker/bluesky-bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -2220,6 +2220,56 @@ console.log("\n[buildMastodonText]");
   // pageUrlEn（?lang=en URL）が含まれること
   const text = buildMastodonText("ねこの日", "猫の記念日", "Cat Day", "A cat day");
   assert("lang=en パラメータ付きURLが含まれる", text.includes("lang=en"));
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+console.log("\n[_buildPollinationsPrompt: visualHint重複防止]");
+{
+  const persona = "orange tabby cat";
+  const personality = "curious wide-eyed pose";
+
+  // 通常ケース: themeAsciiあり → visualHintは丸ごと含む（重複なし）
+  {
+    const prompt = _buildPollinationsPrompt(
+      "Cat Day", "Cats around the world", persona, personality,
+      "cat paw prints, yarn ball, cozy room", null, null, null
+    );
+    assert("themeAsciiあり: プロンプトにthemeが含まれる", prompt.includes("Cat Day"));
+    assert("themeAsciiあり: visualHintが1回だけ含まれる",
+      (prompt.match(/cat paw prints/g) ?? []).length === 1);
+  }
+
+  // 日本語テーマ: themeAsciiが空 → visualHintの先頭がsubjectになる（残りも含む・重複なし）
+  {
+    const visualHint = "wisteria flowers, Japanese garden, soft petals, gentle breeze";
+    const prompt = _buildPollinationsPrompt(
+      "藤の季節", "今の季節を彩る藤", persona, personality,
+      visualHint, null, null, null
+    );
+    assert("日本語テーマ: 先頭トークン(wisteria flowers)が含まれる", prompt.includes("wisteria flowers"));
+    assert("日本語テーマ: wisteria flowersが2回重複しない",
+      (prompt.match(/wisteria flowers/g) ?? []).length === 1);
+    assert("日本語テーマ: 残りのvisualHint(Japanese garden)も含まれる", prompt.includes("Japanese garden"));
+  }
+
+  // visualHintがカンマなし1トークンのみ: 重複なし・残りはnull相当で省略
+  {
+    const prompt = _buildPollinationsPrompt(
+      "春の日", "春の陽気", persona, personality,
+      "cherry blossoms", null, null, null
+    );
+    assert("visualHint単一トークン: cherry blossomsが1回のみ", (prompt.match(/cherry blossoms/g) ?? []).length === 1);
+  }
+
+  // visualHintがnull: subject="anniversary"でクラッシュしない
+  {
+    const prompt = _buildPollinationsPrompt(
+      "春の日", "春の陽気", persona, personality,
+      null, null, null, null
+    );
+    assert("visualHint=null: クラッシュしない", typeof prompt === "string");
+    assert("visualHint=null: kawaii watercolor catを含む", prompt.includes("kawaii watercolor cat"));
+  }
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
