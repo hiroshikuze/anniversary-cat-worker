@@ -4,27 +4,46 @@
 
 ```text
 anniversary-cat-worker/
-├── CLAUDE.md                    ← 判断品質ルール（最重要原則6つ含む）
+├── CLAUDE.md                         ← 判断品質ルール（最重要原則6つ含む）
+├── package.json
+├── wrangler.toml                     ← Cloudflareデプロイ設定（Cron Trigger含む）
+├── .github/workflows/
+│   ├── health-check.yml              ← push時: ユニットテスト + E2Eチェック
+│   ├── deploy-worker.yml             ← main push時: Cloudflare Workersデプロイ
+│   └── deploy-pages.yml              ← main push時: GitHub Pagesデプロイ
 ├── .claude/
-│   ├── revision_log.md          ← ミスパターン記録（毎セッション冒頭で読む）
-│   ├── settings.json            ← フォーマッタ等の自動発火処理
-│   └── rules/
-│       ├── coding.md            ← コーディング規約・Markdown執筆ルール
-│       ├── testing.md           ← テスト方針・診断手順
-│       ├── git-workflow.md      ← Gitワークフロー・デプロイ手順
-│       └── architecture.md     ← このファイル（設計・仕様・将来拡張）
+│   ├── revision_log.md               ← ミスパターン記録（毎セッション冒頭で読む）
+│   ├── bugs-history.md               ← バグ履歴 Bug#1〜（都度参照・自動ロードなし）
+│   ├── future-ideas.md               ← 将来拡張アイデア（都度参照・自動ロードなし）
+│   ├── settings.json                 ← PostToolUseフック（Markdownスペース検証）
+│   ├── archive/
+│   │   └── revision_log_2026-03.md   ← アーカイブ済みの旧revision_log
+│   └── rules/                        ← 以下は毎セッション自動ロード
+│       ├── coding.md                 ← コーディング規約・Markdown執筆ルール
+│       ├── testing.md                ← テスト方針・診断手順
+│       ├── git-workflow.md           ← Gitワークフロー・デプロイ手順
+│       ├── architecture.md           ← このファイル（設計・仕様）
+│       └── suzuri-api-reference.md   ← SUZURI APIリファレンス抜粋
 ├── worker/
-│   ├── index.js                 ← Cloudflare Worker本体（fetch + scheduledハンドラ）
-│   └── bluesky-bot.js           ← Bluesky Botロジック（index.jsからimport）
+│   ├── index.js                      ← Cloudflare Worker本体（fetch + scheduledハンドラ）
+│   ├── bluesky-bot.js                ← Bluesky/Mastodon Botロジック・Discord通知
+│   ├── fal.js                        ← fal.ai ESRGAN 2xアップスケーリング（Queue API）
+│   ├── suzuri.js                     ← SUZURI API連携（商品生成・削除）
+│   └── r2-storage.js                 ← Cloudflare R2ストレージ操作
 ├── frontend/
-│   └── index.html               ← フロントエンド（GitHub Pages）
-├── scripts/
-│   ├── health-check.js              ← E2E診断スクリプト（GitHub Actionsで自動実行）
-│   ├── test-bot.mjs                 ← bluesky-bot.jsのユニットテスト（外部API不要）
-│   ├── test-suzuri-api.mjs          ← SUZURI API動作確認スクリプト
-│   ├── test-fal-models.mjs          ← fal.aiモデル比較スクリプト（FAL_KEY必要）
-│   └── test-gemini-image-timing.mjs ← Gemini画像生成の所要時間計測（GEMINI_API_KEY必要）
-└── wrangler.toml                ← Cloudflareデプロイ設定（Cron Trigger含む）
+│   ├── index.html                    ← フロントエンド（PWA対応、JP/EN切り替え）
+│   ├── manifest.json
+│   ├── sw.js
+│   └── images/                       ← faviconアイコン類
+└── scripts/
+    ├── health-check.js               ← E2E診断（GitHub Actionsのみ実行）
+    ├── test-bot.mjs                  ← ユニットテスト（外部API不要）← npm test
+    ├── test-suzuri.mjs               ← worker/suzuri.jsユニットテスト（外部API不要）
+    ├── test-suzuri-api.mjs           ← SUZURI API動作確認（実商品が生成される）
+    ├── test-fal-models.mjs           ← fal.aiモデル比較（FAL_KEY必要）
+    ├── test-gemini-image-timing.mjs  ← Gemini画像生成の所要時間計測（GEMINI_API_KEY必要）
+    ├── test-gemini-research-batch.mjs ← バッチ vs シングル精度比較（GEMINI_API_KEY必要）
+    └── test-pool-30days.mjs          ← 事前リサーチプール方式シミュレーション（GEMINI_API_KEY必要）
 ```
 
 ---
