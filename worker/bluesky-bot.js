@@ -561,7 +561,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
     if (mastoOk) {
       console.log(`${prefix} Mastodon 投稿 完了 id=${mastoResult.value?.id ?? "(不明)"}`);
     } else if (!mastoSkipped) {
-      console.warn(`${prefix} Mastodon 投稿 失敗: ${mastoResult.reason?.message}`);
+      console.error(`${prefix} Mastodon 投稿 失敗: ${mastoResult.reason?.message}`);
     }
 
     // ── 6. Discord通知（成否によらず常に送信） ──────────────────────────
