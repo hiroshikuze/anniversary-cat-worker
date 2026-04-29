@@ -356,9 +356,21 @@ Why don't you try making your own #Nyaniversary #にゃんバーサリー today?
 - descriptionが空の場合は従来形式: `にゃんバーサリー - 「{theme}」をテーマにAIが生成した水彩画風の猫イラスト`
 - テーマと記念日説明を含めることで、スクリーンリーダーユーザーへの情報提供と検索流入の両立を図る
 
+### Discord通知（`notifyDiscord()`）
+
+**制約・動作（2026-04）:**
+
+- Discord Webhook `content` フィールドは**2,000文字上限**（超過するとHTTP 400）
+- `notifyDiscord()`は先頭ヘッダー（`{emoji} にゃんバーサリーBot\n`）を確保したうえで本文を上限内に切り詰め、末尾に`\n...`を付加する
+- 送信後は`res.ok`を確認し、失敗時は`console.warn`でログを出力する
+- タイムアウト: `AbortSignal.timeout(10_000)`（10秒）
+- `webhookUrl`が未設定の場合は即座にreturnしてスキップ
+
+**Mastodon投稿テキスト（日英二言語）を追加した結果、通知が2,000文字を超えやすくなった（2026-04）。** 現在は切り詰めで対応しているが、将来的なメッセージ分割の検討については[将来拡張メモ](../future-ideas.md)参照。
+
 ### Discord成功通知フォーマット
 
-投稿完了後に`notifyDiscord()`で送信される通知（Discord上限2,000文字・通常~1,200文字）。
+投稿完了後に`notifyDiscord()`で送信される通知（Discord上限2,000文字・通常~1,200文字。超過時は切り詰め）。
 
 ```text
 ✅ にゃんバーサリーBot
@@ -412,7 +424,7 @@ Why don't you try making your own #Nyaniversary #にゃんバーサリー today?
 
 **投稿作成**: `application/x-www-form-urlencoded`。`status`フィールドにテキスト、`media_ids[]`フィールドにmediaId。重複投稿防止のため`Idempotency-Key: {uuid}`ヘッダーを付与。
 
-**タイムアウト**: アップロード・投稿ともに`AbortSignal.timeout(30_000)`（30秒）。
+**タイムアウト**: アップロード・投稿ともに`AbortSignal.timeout(10_000)`（10秒）。Workerのwall-clock制限内で収めるため30秒から短縮（2026-04）。
 
 **テキスト**: `buildMastodonText()`で生成した**英語優先・日英二言語テキスト**を使用（`pageUrlEn`含む）。Mastodonはハッシュタグを自動認識するためAT Protocol facetsは不要。`themeEn`未取得時は`buildPostText()`（日本語）にフォールバック。
 
