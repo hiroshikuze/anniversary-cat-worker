@@ -193,9 +193,13 @@ async function createBlueskySession(identifier, password) {
   });
   const resText = await res.text();
   let data = {};
-  try { data = JSON.parse(resText); } catch { /**/ }
+  try {
+    data = JSON.parse(resText);
+  } catch (e) {
+    data = { error: `Bluesky認証：レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
+  }
   if (!res.ok) {
-    throw new Error(`Bluesky 認証失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
+    throw new Error(`Bluesky認証失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
   }
   return { accessJwt: data.accessJwt, did: data.did };
 }
@@ -314,9 +318,13 @@ async function uploadBlob(accessJwt, imageBytes, mimeType) {
   });
   const resText = await res.text();
   let data = {};
-  try { data = JSON.parse(resText); } catch { /**/ }
+  try {
+    data = JSON.parse(resText);
+  } catch (e) {
+    data = { error: `Bluesky画像アップロード：レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
+  }
   if (!res.ok) {
-    throw new Error(`画像アップロード失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
+    throw new Error(`Bluesky画像アップロード失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
   }
   return data.blob;
 }
@@ -348,9 +356,13 @@ async function createPost(accessJwt, did, text, blobRef, mimeType, altText, page
   });
   const resText = await res.text();
   let data = {};
-  try { data = JSON.parse(resText); } catch { /**/ }
+  try {
+    data = JSON.parse(resText);
+  } catch (e) {
+    data = { error: `Bluesky投稿：レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
+  }
   if (!res.ok) {
-    throw new Error(`投稿作成失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
+    throw new Error(`Bluesky投稿作成失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
   }
   return data;
 }
@@ -373,7 +385,11 @@ async function uploadMediaToMastodon(instanceUrl, accessToken, imageBytes, mimeT
   });
   const resText = await res.text();
   let data = {};
-  try { data = JSON.parse(resText); } catch { /**/ }
+  try {
+    data = JSON.parse(resText);
+  } catch (e) {
+    data = { error: `Mastodon画像アップロード：レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
+  }
   if (!res.ok) {
     throw new Error(`Mastodon画像アップロード失敗: status=${res.status} ${data.error ?? ""}`);
   }
@@ -400,7 +416,7 @@ async function postStatusToMastodon(instanceUrl, accessToken, text, mediaId) {
   try {
     data = JSON.parse(resText);
   } catch (e) {
-    data = { error: `レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
+    data = { error: `Mastodon投稿：レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
   }
   if (!res.ok) {
     throw new Error(`Mastodon投稿失敗: status=${res.status} ${data.error ?? ""}`);
