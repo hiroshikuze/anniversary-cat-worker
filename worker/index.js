@@ -9,7 +9,7 @@
  *   ALLOWED_ORIGIN  ... GitHub Pages の URL（例: https://hiroshikuze.github.io）
  */
 
-import { runBot, notifyDiscord } from "./bluesky-bot.js";
+import { runBot, notifyDiscord } from "./bot.js";
 import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2 } from "./r2-storage.js";
 import { createSuzuriProducts, deleteSuzuriMaterial } from "./suzuri.js";
 import { submitFalJob, getFalResult } from "./fal.js";

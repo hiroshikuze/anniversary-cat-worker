@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * test-bot.mjs - bluesky-bot.js ユニットテスト
+ * test-bot.mjs - bot.js / index.js ユニットテスト
  *
  * 外部API（Bluesky・Gemini・Discord）への接続は不要。
  * GitHub Actionsおよびローカルで実行可能:
@@ -15,7 +15,7 @@ import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptio
 import {
   buildPostText, buildMastodonText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
-} from "../worker/bluesky-bot.js";
+} from "../worker/bot.js";
 
 import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
