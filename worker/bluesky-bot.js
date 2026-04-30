@@ -624,9 +624,12 @@ export async function runBot(env, handleResearch, handleGenerate) {
         generated.prompt            ? `\n📋 Geminiプロンプト${generated.source === "gemini" ? "（採用）" : ""}:\n${generated.prompt}` : null,
         generated.pollinationsPrompt ? `\n📋 Pollinationsプロンプト${generated.source === "pollinations" ? "（採用）" : ""}:\n${generated.pollinationsPrompt}` : null,
         `\n📣 Bluesky投稿テキスト（X・Instagram等に転載用）:\n${text}`,
-        `\n📣 Mastodon投稿テキスト（二言語・転載用）:\n${mastoText}`,
       ].filter(Boolean).join("\n");
       await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, bskyOk ? "✅" : "❌");
+      // Mastodonテキストが日英二言語の場合のみ2通目を送信（フォールバック時はBlueskyと同一のため省略）
+      if (mastoText !== text) {
+        await notifyDiscord(env.DISCORD_WEBHOOK_URL, `📣 Mastodon投稿テキスト（二言語・転載用）:\n${mastoText}`, "📣");
+      }
     } catch (_) { /* 通知失敗は無視 */ }
 
   } catch (err) {
