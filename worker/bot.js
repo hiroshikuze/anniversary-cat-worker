@@ -193,9 +193,13 @@ async function createBlueskySession(identifier, password) {
   });
   const resText = await res.text();
   let data = {};
-  try { data = JSON.parse(resText); } catch { /**/ }
+  try {
+    data = JSON.parse(resText);
+  } catch (e) {
+    data = { error: `Bluesky認証：レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
+  }
   if (!res.ok) {
-    throw new Error(`Bluesky 認証失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
+    throw new Error(`Bluesky認証失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
   }
   return { accessJwt: data.accessJwt, did: data.did };
 }
@@ -314,9 +318,13 @@ async function uploadBlob(accessJwt, imageBytes, mimeType) {
   });
   const resText = await res.text();
   let data = {};
-  try { data = JSON.parse(resText); } catch { /**/ }
+  try {
+    data = JSON.parse(resText);
+  } catch (e) {
+    data = { error: `Bluesky画像アップロード：レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
+  }
   if (!res.ok) {
-    throw new Error(`画像アップロード失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
+    throw new Error(`Bluesky画像アップロード失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
   }
   return data.blob;
 }
@@ -348,9 +356,13 @@ async function createPost(accessJwt, did, text, blobRef, mimeType, altText, page
   });
   const resText = await res.text();
   let data = {};
-  try { data = JSON.parse(resText); } catch { /**/ }
+  try {
+    data = JSON.parse(resText);
+  } catch (e) {
+    data = { error: `Bluesky投稿：レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
+  }
   if (!res.ok) {
-    throw new Error(`投稿作成失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
+    throw new Error(`Bluesky投稿作成失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
   }
   return data;
 }
@@ -373,7 +385,11 @@ async function uploadMediaToMastodon(instanceUrl, accessToken, imageBytes, mimeT
   });
   const resText = await res.text();
   let data = {};
-  try { data = JSON.parse(resText); } catch { /**/ }
+  try {
+    data = JSON.parse(resText);
+  } catch (e) {
+    data = { error: `Mastodon画像アップロード：レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
+  }
   if (!res.ok) {
     throw new Error(`Mastodon画像アップロード失敗: status=${res.status} ${data.error ?? ""}`);
   }
@@ -400,7 +416,7 @@ async function postStatusToMastodon(instanceUrl, accessToken, text, mediaId) {
   try {
     data = JSON.parse(resText);
   } catch (e) {
-    data = { error: `レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
+    data = { error: `Mastodon投稿：レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
   }
   if (!res.ok) {
     throw new Error(`Mastodon投稿失敗: status=${res.status} ${data.error ?? ""}`);
@@ -482,7 +498,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
     // ── 2. 画像生成 ────────────────────────────────────────────────────────
     console.log(`${prefix} generate 開始`);
     const generated = await handleGenerate(
-      { theme: research.theme, description: research.description, visualHint: research.visualHint ?? null, foodItem: research.foodItem ?? null },
+      { theme: research.theme, description: research.description, visualHint: research.visualHint ?? null, foodItem: research.foodItem ?? null, themeEn: research.themeEn ?? "", descriptionEn: research.descriptionEn ?? "" },
       apiKey
     );
     console.log(`${prefix} generate 完了 source=${generated.source}`);
@@ -495,12 +511,14 @@ export async function runBot(env, handleResearch, handleGenerate) {
     if (env.IMAGE_BUCKET) {
       try {
         const meta = {
-          theme:       research.theme,
-          description: research.description ?? "",
-          sourceUrl:   research.sourceUrl   ?? "",
-          kanjiChar:   research.kanjiChar   ?? null,
-          products:    [],
-          createdAt:   new Date().toISOString(),
+          theme:         research.theme,
+          description:   research.description  ?? "",
+          themeEn:       research.themeEn      ?? "",
+          descriptionEn: research.descriptionEn ?? "",
+          sourceUrl:     research.sourceUrl    ?? "",
+          kanjiChar:     research.kanjiChar    ?? null,
+          products:      [],
+          createdAt:     new Date().toISOString(),
         };
         await saveToR2(
           env.IMAGE_BUCKET,
@@ -549,6 +567,10 @@ export async function runBot(env, handleResearch, handleGenerate) {
       // Mastodon（日英二言語・シークレット未設定時はスキップ）
       (env.MASTODON_INSTANCE_URL && env.MASTODON_ACCESS_TOKEN)
         ? (async () => {
+            if (!env.MASTODON_INSTANCE_URL.startsWith("https://")) {
+              console.error(`${prefix} Mastodon 設定エラー: MASTODON_INSTANCE_URL が https:// で始まっていません`);
+              return null;
+            }
             const mediaId = await uploadMediaToMastodon(
               env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, imageBytes, mimeType, altText
             );
@@ -571,7 +593,9 @@ export async function runBot(env, handleResearch, handleGenerate) {
     if (mastoOk) {
       console.log(`${prefix} Mastodon 投稿 完了 id=${mastoResult.value?.id ?? "(不明)"}`);
     } else if (!mastoSkipped) {
-      console.error(`${prefix} Mastodon 投稿 失敗: ${mastoResult.reason?.message}`);
+      const mastoErrMsg = mastoResult.reason?.message ?? "";
+      const isAuthError = /status=40[13]/.test(mastoErrMsg);
+      console.error(`${prefix} Mastodon 投稿 失敗: ${isAuthError ? "設定エラー（認証失敗）: " : ""}${mastoErrMsg}`);
     }
 
     // ── 6. Discord通知（成否によらず常に送信） ──────────────────────────
@@ -608,9 +632,17 @@ export async function runBot(env, handleResearch, handleGenerate) {
         generated.prompt            ? `\n📋 Geminiプロンプト${generated.source === "gemini" ? "（採用）" : ""}:\n${generated.prompt}` : null,
         generated.pollinationsPrompt ? `\n📋 Pollinationsプロンプト${generated.source === "pollinations" ? "（採用）" : ""}:\n${generated.pollinationsPrompt}` : null,
         `\n📣 Bluesky投稿テキスト（X・Instagram等に転載用）:\n${text}`,
-        `\n📣 Mastodon投稿テキスト（二言語・転載用）:\n${mastoText}`,
       ].filter(Boolean).join("\n");
       await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, bskyOk ? "✅" : "❌");
+      // Mastodonテキストが日英二言語の場合のみ2通目を送信（フォールバック時はBlueskyと同一のため省略）
+      if (mastoText !== text) {
+        const msg2 = [
+          bskyLine,
+          mastoLine,
+          `\n📣 Mastodon投稿テキスト（二言語・転載用）:\n${mastoText}`,
+        ].filter(Boolean).join("\n");
+        await notifyDiscord(env.DISCORD_WEBHOOK_URL, msg2, "📣");
+      }
     } catch (_) { /* 通知失敗は無視 */ }
 
   } catch (err) {

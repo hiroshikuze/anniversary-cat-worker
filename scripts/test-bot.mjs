@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * test-bot.mjs - bluesky-bot.js ユニットテスト
+ * test-bot.mjs - bot.js / index.js ユニットテスト
  *
  * 外部API（Bluesky・Gemini・Discord）への接続は不要。
  * GitHub Actionsおよびローカルで実行可能:
@@ -15,7 +15,7 @@ import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptio
 import {
   buildPostText, buildMastodonText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
-} from "../worker/bluesky-bot.js";
+} from "../worker/bot.js";
 
 import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
@@ -2270,6 +2270,79 @@ console.log("\n[_buildPollinationsPrompt: visualHint重複防止]");
     assert("visualHint=null: クラッシュしない", typeof prompt === "string");
     assert("visualHint=null: kawaii watercolor catを含む", prompt.includes("kawaii watercolor cat"));
   }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// _buildPollinationsPrompt: themeEn/descriptionEn対応・visualHint先頭
+// ────────────────────────────────────────────────────────────────────────────
+console.log("\n[_buildPollinationsPrompt: themeEn/visualHint先頭]");
+{
+  const persona     = "orange tabby cat";
+  const personality = "curious wide-eyed pose";
+
+  // themeEnあり: visualHintがthemeEnより前に来る（items 10 & 12）
+  {
+    const prompt = _buildPollinationsPrompt(
+      "藤の季節", "藤が咲く季節", persona, personality,
+      "wisteria flowers, Japanese garden, stone lanterns", null, null, null,
+      "Wisteria Season", "Beautiful wisteria blooms in spring"
+    );
+    const vhIdx     = prompt.indexOf("wisteria flowers");
+    const themeIdx  = prompt.indexOf("Wisteria Season");
+    assert("themeEnあり: visualHintがthemeEnより前に来る", vhIdx !== -1 && themeIdx !== -1 && vhIdx < themeIdx);
+    assert("themeEnあり: themeEnがプロンプトに含まれる", prompt.includes("Wisteria Season"));
+    assert("themeEnあり: visualHintが重複しない", (prompt.match(/wisteria flowers/g) ?? []).length === 1);
+  }
+
+  // themeEn + descriptionEnあり: descriptionEnの抜粋が含まれる
+  {
+    const prompt = _buildPollinationsPrompt(
+      "図書館記念日", "図書館の日", persona, personality,
+      "library books, warm reading nook, wooden shelves", null, null, null,
+      "Library Day", "A day to celebrate public libraries"
+    );
+    assert("descriptionEnあり: Library Dayが含まれる", prompt.includes("Library Day"));
+    assert("descriptionEnあり: descriptionEnの抜粋が含まれる", prompt.includes("A day to celebrate"));
+    assert("descriptionEnあり: library booksが重複しない", (prompt.match(/library books/g) ?? []).length === 1);
+  }
+
+  // themeEnなし・日本語テーマ: 安全網（visualHint先頭トークン→subject）が機能する
+  {
+    const visualHint = "wisteria flowers, Japanese garden, stone lanterns";
+    const prompt = _buildPollinationsPrompt(
+      "藤の季節", "藤が咲く", persona, personality,
+      visualHint, null, null, null,
+      "", ""
+    );
+    assert("themeEnなし・日本語テーマ: wisteria flowersが重複しない",
+      (prompt.match(/wisteria flowers/g) ?? []).length === 1);
+    assert("themeEnなし・日本語テーマ: Japanese gardenが含まれる", prompt.includes("Japanese garden"));
+  }
+
+  // themeEnあり・visualHintなし: クラッシュしない
+  {
+    const prompt = _buildPollinationsPrompt(
+      "ねこの日", "猫を愛でる日", persona, personality,
+      null, null, null, null,
+      "Cat Day", "A day to celebrate cats"
+    );
+    assert("themeEnあり・visualHintなし: Cat Dayが含まれる", prompt.includes("Cat Day"));
+    assert("themeEnあり・visualHintなし: kawaii watercolor catを含む", prompt.includes("kawaii watercolor cat"));
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// buildMastodonText: pageUrlに?id=が含まれる場合の&lang=en付加
+// ────────────────────────────────────────────────────────────────────────────
+console.log("\n[buildMastodonText: pageUrl with ?id= → &lang=en]");
+{
+  const pageUrl = "https://hiroshikuze.github.io/anniversary-cat-worker/?id=bot/2026-04-30";
+  const text = buildMastodonText(
+    "図書館記念日", "図書館の日", "Library Day", "A day to celebrate public libraries",
+    pageUrl
+  );
+  assert("?id=付きpageUrl: &lang=en が付加される", text.includes("?id=bot/2026-04-30&lang=en"));
+  assert("?id=付きpageUrl: 日本語CTAにも元URLが含まれる", text.includes("?id=bot/2026-04-30"));
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
