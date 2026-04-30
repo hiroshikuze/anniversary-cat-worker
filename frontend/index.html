@@ -464,6 +464,14 @@
       // 共有ビュー中のresultボタンも再描画
       if (isSharedView && !document.getElementById("g-result").classList.contains("hidden")) {
         updateResultButtons();
+        // themeEn/descriptionEn が取得済みなら言語に応じて表示を切り替え
+        if (researchData) {
+          const dTheme = (currentLang === "en" && researchData.themeEn) ? researchData.themeEn : researchData.theme;
+          const dDesc  = (currentLang === "en" && researchData.descriptionEn) ? researchData.descriptionEn : researchData.description;
+          document.getElementById("g-result-label").textContent = dTheme ?? "";
+          const dEl = document.getElementById("g-result-description");
+          if (dEl) dEl.textContent = dDesc ?? "";
+        }
       }
     }
 
@@ -996,7 +1004,7 @@
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
 
-        researchData = { theme: data.theme, description: data.description, sourceUrl: data.sourceUrl };
+        researchData = { theme: data.theme, description: data.description, sourceUrl: data.sourceUrl, themeEn: data.themeEn ?? "", descriptionEn: data.descriptionEn ?? "" };
 
         const displayUrl = `data:${data.mimeType};base64,${data.imageData}`;
         const imgEl = document.getElementById("g-image");
@@ -1009,9 +1017,11 @@
 
         if (data.createdAt) updateDateDisplay(new Date(data.createdAt));
 
-        document.getElementById("g-result-label").textContent = data.theme ?? "";
+        const displayTheme = (currentLang === "en" && data.themeEn) ? data.themeEn : data.theme;
+        const displayDesc  = (currentLang === "en" && data.descriptionEn) ? data.descriptionEn : data.description;
+        document.getElementById("g-result-label").textContent = displayTheme ?? "";
         const descEl = document.getElementById("g-result-description");
-        descEl.textContent = data.description ?? "";
+        descEl.textContent = displayDesc ?? "";
         if (data.sourceUrl) {
           descEl.href = data.sourceUrl;
           descEl.classList.add("underline");
@@ -1019,6 +1029,8 @@
           descEl.removeAttribute("href");
           descEl.classList.remove("underline");
         }
+
+        window.umami?.track({ url: `/?id=${id}`, title: `${data.theme} - にゃんバーサリー` });
 
         document.getElementById("g-goods").classList.add("hidden");
         if (allSuzuriProductsRegistered(data.products)) {

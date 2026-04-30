@@ -708,28 +708,28 @@ export function pickGuestAnimal(mainPersona, rand = Math.random) {
   }
 }
 
-export function _buildPollinationsPrompt(theme, description, persona, personality, visualHint = null, emotion = null, eatingAction = null, guest = null) {
+export function _buildPollinationsPrompt(theme, description, persona, personality, visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "") {
   // Pollinations API のプロンプトは ASCII のみ使用
   // 日本語等の非ASCII文字はURLパス内でサーバー側エラー(500)の原因になるためフィルタリング
   const toAscii = (s) => (s ?? "").replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
-  const themeAscii = toAscii(theme);
-  const descAscii  = toAscii(description).slice(0, 30);
-  // theme・descriptionが日本語のみで空になった場合、visualHintをsubjectとして使う
+  const themeAscii = toAscii(themeEn || theme);
+  const descAscii  = toAscii(descriptionEn || description).slice(0, 30);
+  // theme・descriptionが日本語のみで空になった場合、visualHintをsubjectとして使う（安全網）
   // その場合はvisualHintの先頭トークンをsubjectに充当し、残りをvhForPartsとして別途追加する（重複防止）
   const usedVhAsSubject = !themeAscii && !descAscii && !!visualHint;
   const subject    = themeAscii || descAscii || visualHint?.split(",")[0]?.trim() || "anniversary";
   const vhForParts = usedVhAsSubject
     ? (visualHint.includes(",") ? visualHint.slice(visualHint.indexOf(",") + 1).trim() : null)
     : visualHint;
-  // テーマ関連要素より先に「kawaii watercolor cat」を置き、サービスの根幹（水彩画風の可愛い猫）を先頭で宣言する
+  // visualHintをsubjectより前に置くことでFluxモデルが前半トークンを重視する特性を活用
   // 「kawaii watercolor cat」にcatが含まれるため persona が null のときの "cat" フォールバックは不要
   const guestPart  = guest ? `with ${guest.appearance}` : null;
-  const parts = ["kawaii watercolor cat", subject, vhForParts, persona, personality, emotion, eatingAction, guestPart, "pastel colors, white background"];
+  const parts = ["kawaii watercolor cat", vhForParts, subject, descAscii || null, persona, personality, emotion, eatingAction, guestPart, "pastel colors, white background"];
   return parts.filter(Boolean).join(", ");
 }
 
-function buildPollinationsUrl(theme, description, persona, personality, model = "flux", visualHint = null, emotion = null, eatingAction = null, guest = null) {
-  const prompt = _buildPollinationsPrompt(theme, description, persona, personality, visualHint, emotion, eatingAction, guest);
+function buildPollinationsUrl(theme, description, persona, personality, model = "flux", visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "") {
+  const prompt = _buildPollinationsPrompt(theme, description, persona, personality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn);
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
@@ -744,6 +744,8 @@ export async function handleGenerate(body, apiKey) {
   const { theme, description } = body;
   if (!theme) throw new Error("theme フィールドが必要です");
 
+  const themeEn       = body.themeEn ?? "";
+  const descriptionEn = body.descriptionEn ?? "";
   const persona      = pickPersona();
   const personality  = pickPersonality();
   const emotion      = pickEmotion();
@@ -754,6 +756,9 @@ export async function handleGenerate(body, apiKey) {
   const effectivePersonality = (personality && guest?.guardianModifier)
     ? `${personality}, ${guest.guardianModifier}`
     : personality;
+  // themeEn/descriptionEn が取得できている場合は英語版を使用（Gemini画像生成精度向上）
+  const promptTheme = themeEn || theme;
+  const promptContext = descriptionEn || description;
   const prompt =
     `Create a cute kawaii watercolor style cat character illustration. ` +
     (persona              ? `Cat appearance: ${persona}. `                           : "") +
@@ -761,8 +766,8 @@ export async function handleGenerate(body, apiKey) {
     (emotion              ? `Cat facial expression and emotion: ${emotion}. `        : "") +
     (eatingAction         ? `Cat action: ${eatingAction}. `                          : "") +
     (guest                ? `Guest animal in the scene: ${guest.appearance}. Guest demeanor: ${guest.personality}. ` : "") +
-    `Theme: ${theme}. ` +
-    (description  ? `Context: ${description}. `              : "") +
+    `Theme: ${promptTheme}. ` +
+    (promptContext ? `Context: ${promptContext}. `              : "") +
     (visualHint   ? `Setting and surrounding atmosphere; the cat may naturally interact with theme-related items (approaching, touching, or holding them as fits the scene): ${visualHint}. ` : "") +
     `Style: soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ` +
     `white background, Japanese illustration style. ` +
@@ -831,7 +836,7 @@ export async function handleGenerate(body, apiKey) {
     const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
     return Promise.any(
       MODELS.map(async (model) => {
-        const url = buildPollinationsUrl(theme, description, persona, effectivePersonality, model, visualHint, emotion, eatingAction, guest);
+        const url = buildPollinationsUrl(theme, description, persona, effectivePersonality, model, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn);
         console.log(`[pollinations] trying model=${model}`);
         const imgRes = await fetch(url, { signal: AbortSignal.timeout(POLLINATIONS_TIMEOUT_MS) });
         if (!imgRes.ok) throw new Error(`status=${imgRes.status}`);
@@ -844,7 +849,7 @@ export async function handleGenerate(body, apiKey) {
     );
   }
 
-  const pollinationsPrompt = _buildPollinationsPrompt(theme, description, persona, effectivePersonality, visualHint, emotion, eatingAction, guest);
+  const pollinationsPrompt = _buildPollinationsPrompt(theme, description, persona, effectivePersonality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn);
 
   // 2フェーズ方式の実行（ロジックは _twoPhaseRace に切り出し済み）
   const result = await _twoPhaseRace(tryGemini, tryPollinations);
