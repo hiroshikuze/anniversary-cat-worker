@@ -969,7 +969,10 @@
           ? rightRes.value?.products ?? []
           : RIGHT_SLUGS.map(slug => ({ slug, sampleUrl: null, available: false, queued: rightQueued }));
         const allProducts = [...rightProducts, ...centerProducts];
-        if (allProducts.length > 0) showGoods(allProducts);
+        // ギャラリーのバックグラウンド登録（別idのsuzuri完了）が表示中ページを上書きしないよう制限
+        if (allProducts.length > 0 && (r2Id === null || r2Id === currentSharedId)) {
+          showGoods(allProducts);
+        }
         if (rightQueued && r2Id) {
           startPollingSuzuri(r2Id, RIGHT_SLUGS);
         }
