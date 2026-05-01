@@ -568,8 +568,8 @@ export async function runBot(env, handleResearch, handleGenerate) {
       (env.MASTODON_INSTANCE_URL && env.MASTODON_ACCESS_TOKEN)
         ? (async () => {
             if (!env.MASTODON_INSTANCE_URL.startsWith("https://")) {
-              console.error(`${prefix} Mastodon 設定エラー: MASTODON_INSTANCE_URL が https:// で始まっていません`);
-              return null;
+              // return nullではなくthrowしてDiscordのmastoLineにエラーを出す
+              throw new Error(`設定エラー: MASTODON_INSTANCE_URL が https:// で始まっていません`);
             }
             const mediaId = await uploadMediaToMastodon(
               env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, imageBytes, mimeType, altText
@@ -634,15 +634,14 @@ export async function runBot(env, handleResearch, handleGenerate) {
         `\n📣 Bluesky投稿テキスト（X・Instagram等に転載用）:\n${text}`,
       ].filter(Boolean).join("\n");
       await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, bskyOk ? "✅" : "❌");
-      // Mastodonテキストが日英二言語の場合のみ2通目を送信（フォールバック時はBlueskyと同一のため省略）
+      // 2通目: themeEn有無にかかわらず常に送信（成否確認とMastodonテキスト転載用）
+      const msg2Lines = [bskyLine, mastoLine].filter(Boolean);
       if (mastoText !== text) {
-        const msg2 = [
-          bskyLine,
-          mastoLine,
-          `\n📣 Mastodon投稿テキスト（二言語・転載用）:\n${mastoText}`,
-        ].filter(Boolean).join("\n");
-        await notifyDiscord(env.DISCORD_WEBHOOK_URL, msg2, "📣");
+        msg2Lines.push(`\n📣 Mastodon投稿テキスト（二言語・転載用）:\n${mastoText}`);
+      } else {
+        msg2Lines.push("⚠️ themeEn未取得のためMastodon投稿テキストはBlueskyと同一（日本語のみ）");
       }
+      await notifyDiscord(env.DISCORD_WEBHOOK_URL, msg2Lines.join("\n"), "📣");
     } catch (_) { /* 通知失敗は無視 */ }
 
   } catch (err) {
