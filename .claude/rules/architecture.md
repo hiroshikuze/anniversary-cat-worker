@@ -342,7 +342,7 @@ Setting and surrounding atmosphere; the cat may naturally interact with theme-re
 - ハッシュタグ: テーマ由来の動的タグ1件を先頭に置き、固定タグ`#AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー`を後続（Instagramで末尾タグを省略しやすくするため）
 - エラー時: リトライなし（`/generate`内部にPollinationsフォールバックあり）
 - Mastodon同時投稿: `Promise.allSettled`で並列実行。Mastodon失敗はBluesky投稿に影響しない。シークレット未設定時はスキップ
-- **Mastodon設定エラー検出**: `MASTODON_INSTANCE_URL`が`https://`で始まらない場合は設定エラーとしてpostをスキップしログ出力。投稿後にstatus=401/403が返った場合も「設定エラー（認証失敗）」として`console.error`に分類して出力する（一時的なネットワーク失敗と区別できる）
+- **Mastodon設定エラー検出**: `MASTODON_INSTANCE_URL`が`https://`で始まらない場合は`throw new Error(...)`でPromise.allSettledに拒否を返し、Discordの`mastoLine`に`❌ Mastodon投稿失敗: 設定エラー`として表示する（旧: `return null`でスキップしていたが、Discordに何も出ず原因不明になるため変更）。投稿後にstatus=401/403が返った場合も「設定エラー（認証失敗）」として`console.error`に分類して出力する
 
 ### 投稿テキスト形式
 
@@ -425,7 +425,9 @@ Why don't you try making your own #Nyaniversary #にゃんバーサリー today?
 Mastodon投稿テキスト（日英二言語）を追加した結果、通知が2,000文字を超えるようになった。`runBot()`内で`notifyDiscord()`を2回`await`順次呼び出しすることで全文を送信する。
 
 - **1通目** (`✅`/`❌`): 投稿成否〜Bluesky投稿テキストまで（~1,400文字）
-- **2通目** (`📣`): 先頭に成否ステータス（bskyLine/mastoLine）を再掲 + Mastodon投稿テキスト（~500文字）。`themeEn`が空でMastodonテキストがBlueskyテキストと同一の場合は送信しない（重複回避）
+- **2通目** (`📣`): 先頭に成否ステータス（bskyLine/mastoLine）を再掲 + Mastodon投稿テキストまたは注記。`themeEn`の有無にかかわらず**常に送信**する（成否確認のため）
+  - `themeEn`あり（日英二言語）: `📣 Mastodon投稿テキスト（二言語・転載用）:\n{mastoText}`
+  - `themeEn`なし（日本語のみ）: `⚠️ themeEn未取得のためMastodon投稿テキストはBlueskyと同一（日本語のみ）`
 - 2通目に成否を再掲することで、1通目が文字数で省略されても結果を確認できる
 - 2通目が失敗しても1通目は送信済みのため情報損失はBluesky部分に限られない
 
@@ -462,14 +464,24 @@ Mastodon投稿テキスト（日英二言語）を追加した結果、通知が
 {buildMastodonText()の出力全文}  ← 日英二言語・ハッシュタグ・URL含む
 ```
 
-**2通目フォーマット:**
+**2通目フォーマット（themeEnあり）:**
 
 ```text
 📣 にゃんバーサリーBot
 ✅ Bluesky投稿完了 {dateStr}      ← 1通目と同じ成否ステータスを再掲
-✅ Mastodon投稿完了               ← 同上
+✅ Mastodon投稿完了               ← 同上（失敗/未設定時はそれぞれ表示）
+
 📣 Mastodon投稿テキスト（二言語・転載用）:
 {buildMastodonText()の出力全文}
+```
+
+**2通目フォーマット（themeEn未取得）:**
+
+```text
+📣 にゃんバーサリーBot
+✅ Bluesky投稿完了 {dateStr}
+✅ Mastodon投稿完了
+⚠️ themeEn未取得のためMastodon投稿テキストはBlueskyと同一（日本語のみ）
 ```
 
 **設計意図**: 📣セクションをそのままコピーして他SNSに貼り付けられる。Bluesky（日本語）・Mastodon（日英）それぞれの転載用テキストを並記。どちらのAIが採用されたかは「（採用）」表示で確認できる。採用されなかった方のプロンプトも記載されるため、手動で再実行して比較検証が可能。

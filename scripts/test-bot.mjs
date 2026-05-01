@@ -437,6 +437,87 @@ console.log("\n[runBot: Mastodon投稿]");
       assert(`開始時刻の差が 50ms 以内: ${diff}ms`, diff < 50);
     }
   }
+
+  // ── Discord 2通目: themeEnあり → 常に送信・Mastodonテキスト含む ──
+  {
+    const discordBodies = [];
+    const { mockFetch } = makeBskyMastoFetch();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("discord")) {
+        discordBodies.push(JSON.parse(opts?.body ?? "{}").content ?? "");
+        return makeJsonResponse({}, 204);
+      }
+      return mockFetch(url, opts);
+    };
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: MASTO_INSTANCE, MASTODON_ACCESS_TOKEN: "masto-token",
+      },
+      async () => ({ theme: "テスト記念日", description: "説明", themeEn: "Test Day", descriptionEn: "Description" }),
+      mockGenerate
+    );
+    globalThis.fetch = origFetch;
+    assert("themeEnあり: Discord通知が2回送られる", discordBodies.length >= 2);
+    assert("themeEnあり: 2通目にMastodonテキストが含まれる", discordBodies[1]?.includes("Mastodon投稿テキスト"));
+    assert("themeEnあり: 2通目に英語CTAが含まれる", discordBodies[1]?.includes("lang=en"));
+  }
+
+  // ── Discord 2通目: themeEn未取得 → 常に送信・注記が入る ──
+  {
+    const discordBodies = [];
+    const { mockFetch } = makeBskyMastoFetch();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("discord")) {
+        discordBodies.push(JSON.parse(opts?.body ?? "{}").content ?? "");
+        return makeJsonResponse({}, 204);
+      }
+      return mockFetch(url, opts);
+    };
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: MASTO_INSTANCE, MASTODON_ACCESS_TOKEN: "masto-token",
+      },
+      mockResearch,  // themeEn なし
+      mockGenerate
+    );
+    globalThis.fetch = origFetch;
+    assert("themeEn未取得: Discord通知が2回送られる", discordBodies.length >= 2);
+    assert("themeEn未取得: 2通目に⚠️注記が含まれる", discordBodies[1]?.includes("⚠️"));
+    assert("themeEn未取得: 2通目にBlueskyとの同一説明が含まれる", discordBodies[1]?.includes("Blueskyと同一"));
+  }
+
+  // ── Mastodon URLが https:// なし → Discord mastoLine に ❌ が出る ──
+  {
+    const discordBodies = [];
+    const { mockFetch } = makeBskyMastoFetch();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("discord")) {
+        discordBodies.push(JSON.parse(opts?.body ?? "{}").content ?? "");
+        return makeJsonResponse({}, 204);
+      }
+      return mockFetch(url, opts);
+    };
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: "mstdn-test.example",  // https:// なし
+        MASTODON_ACCESS_TOKEN: "masto-token",
+      },
+      mockResearch, mockGenerate
+    );
+    globalThis.fetch = origFetch;
+    const allBody = discordBodies.join("\n");
+    assert("https://なしURL: Mastodon APIが呼ばれない", !discordBodies[0]?.includes("✅ Mastodon投稿完了"));
+    assert("https://なしURL: Discord通知に❌Mastodonエラーが含まれる", allBody.includes("❌") && allBody.includes("Mastodon"));
+  }
 }
 
 // ---------------------------------------------------------------------------
