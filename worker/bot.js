@@ -452,6 +452,26 @@ export async function notifyDiscord(webhookUrl, message, emoji = "❌") {
 // ---------------------------------------------------------------------------
 
 /**
+ * 同日に複数回 runBot() が実行された場合に上書きを防ぐため、
+ * R2 に存在しない最初のスロット ID を返す。
+ * 例: bot/2026-05-03 → bot/2026-05-03-2 → bot/2026-05-03-3 ... 最大 bot/2026-05-03-9
+ *
+ * @param {R2Bucket|null} bucket
+ * @param {string} jstDateISO - "YYYY-MM-DD" 形式
+ * @returns {Promise<string>}
+ */
+export async function findAvailableR2Id(bucket, jstDateISO) {
+  const base = `bot/${jstDateISO}`;
+  if (!bucket) return base;
+  if (!(await bucket.get(`${base}/meta.json`))) return base;
+  for (let n = 2; n <= 9; n++) {
+    const id = `${base}-${n}`;
+    if (!(await bucket.get(`${id}/meta.json`))) return id;
+  }
+  return `${base}-9`;
+}
+
+/**
  * Cron Trigger から呼び出されるエントリポイント。
  * 失敗時はログ記録と Discord 通知を行い、リトライはしない。
  * （/generate 内部に Pollinations フォールバックがあるため外側リトライは二重投稿の恐れあり）
@@ -465,7 +485,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
   const jst        = new Date(Date.now() + 9 * 60 * 60 * 1000);
   const dateStr    = `${jst.getFullYear()}年${jst.getMonth() + 1}月${jst.getDate()}日`;
   const jstDateISO = `${jst.getFullYear()}-${String(jst.getMonth() + 1).padStart(2, "0")}-${String(jst.getDate()).padStart(2, "0")}`;
-  const r2Id       = `bot/${jstDateISO}`;
+  const r2Id       = await findAvailableR2Id(env.IMAGE_BUCKET ?? null, jstDateISO);
   const prefix     = `[bot] ${dateStr}`;
 
   const apiKey = env.GEMINI_API_KEY;
@@ -592,7 +612,9 @@ export async function runBot(env, handleResearch, handleGenerate) {
     }
     if (mastoOk) {
       console.log(`${prefix} Mastodon 投稿 完了 id=${mastoResult.value?.id ?? "(不明)"}`);
-    } else if (!mastoSkipped) {
+    } else if (mastoSkipped) {
+      console.log(`${prefix} Mastodon 未設定・スキップ`);
+    } else {
       const mastoErrMsg = mastoResult.reason?.message ?? "";
       const isAuthError = /status=40[13]/.test(mastoErrMsg);
       console.error(`${prefix} Mastodon 投稿 失敗: ${isAuthError ? "設定エラー（認証失敗）: " : ""}${mastoErrMsg}`);
@@ -604,7 +626,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
         ? `✅ Bluesky投稿完了 ${dateStr}`
         : `❌ Bluesky投稿失敗: ${bskyResult.reason?.message}`;
       const mastoLine = mastoSkipped
-        ? null
+        ? "⏭️ Mastodon未設定・スキップ"
         : mastoOk
           ? "✅ Mastodon投稿完了"
           : `❌ Mastodon投稿失敗: ${mastoResult.reason?.message}`;

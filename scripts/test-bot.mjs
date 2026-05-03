@@ -14,7 +14,7 @@ import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptio
 
 import {
   buildPostText, buildMastodonText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
-  shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES,
+  shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id,
 } from "../worker/bot.js";
 
 import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt } from "../worker/index.js";
@@ -2424,6 +2424,67 @@ console.log("\n[buildMastodonText: pageUrl with ?id= → &lang=en]");
   );
   assert("?id=付きpageUrl: &lang=en が付加される", text.includes("?id=bot/2026-04-30&lang=en"));
   assert("?id=付きpageUrl: 日本語CTAにも元URLが含まれる", text.includes("?id=bot/2026-04-30"));
+}
+
+// ---------------------------------------------------------------------------
+// findAvailableR2Id - R2スロット決定
+// ---------------------------------------------------------------------------
+console.log("\n[findAvailableR2Id]");
+{
+  // 正常系: R2 が空 → bot/YYYY-MM-DD を返す
+  const emptyBucket = { get: async () => null };
+  assert("空R2: bot/2026-05-03 を返す", await findAvailableR2Id(emptyBucket, "2026-05-03") === "bot/2026-05-03");
+
+  // 正常系: 1スロット使用済み → bot/YYYY-MM-DD-2 を返す
+  const slot1Full = { get: async (k) => k === "bot/2026-05-03/meta.json" ? {} : null };
+  assert("1スロット使用済み: bot/2026-05-03-2 を返す", await findAvailableR2Id(slot1Full, "2026-05-03") === "bot/2026-05-03-2");
+
+  // 正常系: 2スロット使用済み → bot/YYYY-MM-DD-3 を返す
+  const slot2Full = { get: async (k) =>
+    (k === "bot/2026-05-03/meta.json" || k === "bot/2026-05-03-2/meta.json") ? {} : null
+  };
+  assert("2スロット使用済み: bot/2026-05-03-3 を返す", await findAvailableR2Id(slot2Full, "2026-05-03") === "bot/2026-05-03-3");
+
+  // 境界値: 全スロット使用済み（9件）→ bot/YYYY-MM-DD-9 を返す（上書き）
+  const allFull = { get: async () => ({}) };
+  assert("全スロット使用済み: bot/2026-05-03-9 を返す", await findAvailableR2Id(allFull, "2026-05-03") === "bot/2026-05-03-9");
+
+  // bucket が null の場合 → bot/YYYY-MM-DD を返す（R2未設定時）
+  assert("bucket null: bot/2026-05-03 を返す", await findAvailableR2Id(null, "2026-05-03") === "bot/2026-05-03");
+}
+
+// ---------------------------------------------------------------------------
+// mastoSkipped → Discord 通知に ⏭️ 表示
+// ---------------------------------------------------------------------------
+console.log("\n[mastoSkipped: Discord ⏭️ 表示]");
+{
+  const discordBodies = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("discord")) {
+      discordBodies.push(JSON.parse(opts?.body ?? "{}").content ?? "");
+      return { ok: true, status: 204, text: async () => "" };
+    }
+    // Bluesky mock
+    if (u.includes("createSession")) return { ok: true, status: 200, text: async () => JSON.stringify({ accessJwt: "jwt", did: "did:plc:test" }) };
+    if (u.includes("uploadBlob"))   return { ok: true, status: 200, text: async () => JSON.stringify({ blob: { ref: { $link: "ref" }, mimeType: "image/png", size: 100 } }) };
+    if (u.includes("createRecord")) return { ok: true, status: 200, text: async () => JSON.stringify({ uri: "at://test", cid: "cid" }) };
+    return { ok: true, status: 200, text: async () => JSON.stringify({}) };
+  };
+  await runBot(
+    {
+      GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+      BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+      // MASTODON_INSTANCE_URL・MASTODON_ACCESS_TOKEN は未設定
+    },
+    async () => ({ theme: "テスト記念日", description: "説明" }),
+    async () => ({ imageData: "aW1h", mimeType: "image/png", source: "gemini" })
+  );
+  globalThis.fetch = origFetch;
+  const allBodies = discordBodies.join("\n");
+  assert("Mastodon未設定: Discord通知に ⏭️ が含まれる", allBodies.includes("⏭️"));
+  assert("Mastodon未設定: Discord通知に「Mastodon未設定・スキップ」が含まれる", allBodies.includes("Mastodon未設定・スキップ"));
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
