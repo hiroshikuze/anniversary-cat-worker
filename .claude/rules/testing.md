@@ -46,7 +46,7 @@
 | `[bot] Bluesky 投稿 完了` | 投稿成功 |
 | `[bot] Mastodon 投稿 完了 id=xxx` | Mastodon投稿成功 |
 | `[bot] Mastodon 投稿 失敗: xxx` | Mastodon投稿失敗（error級。シークレット設定済みでも発生する） |
-| `[bot] Mastodon 未設定・スキップ` | MASTODON_INSTANCE_URLまたはMASTO_ACCESS_TOKEN未設定（正常スキップ） |
+| `[bot] Mastodon 未設定・スキップ` | MASTODON_INSTANCE_URLまたはMASTODON_ACCESS_TOKEN未設定（正常スキップ） |
 | `[bot] Discord 通知失敗: status=400` | Discord 2000文字超過（`notifyDiscord()`の切り詰めロジックで本来は発生しない） |
 | `[bot] Discord 通知失敗: xxx` | Discord Webhookへの接続失敗またはタイムアウト |
 | `[bot] エラー: xxx` | どこかで失敗（メッセージで原因特定） |
