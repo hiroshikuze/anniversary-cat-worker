@@ -134,7 +134,7 @@ FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 | 判断 | 理由 |
 | --- | --- |
 | BotはHTTP自己呼び出しをせず`handleResearch()`/`handleGenerate()`を直接呼ぶ | URL未設定・レート制限・BYPASS_TOKEN管理のリスクを排除 |
-| Cron式は`0 22 * * 1-5`（月〜金 7:00 JST・2026-05-01より） | JST 7:00 = UTC 22:00前日。Cloudflare Workersは`1=日曜日`のため`1-5`=日〜木UTC=月〜金JST。変更前: `0 10 * * 2-6`（19:00 JST） |
+| Cron式は`0 22 * * 1-5`（月〜金 7:00 JST・2026-05-01より） | 詳細は`.claude/rules/architecture.md`の「Bluesky Bot」参照 |
 | ユーザーによる記念日の自由入力は実装しない | プロンプトインジェクションでGemini APIキーのGoogleアカウントがBanされるリスク |
 | Geminiコンテンツポリシー違反のBanはAPIキー所有者（hiroshikuzeのメインアカウント）に発生する | Gmail/Drive等のGoogleサービス全体に影響が及ぶ |
 | 画像生成は2フェーズ方式（priorityMs=12,000ms） | Gemini平均8361ms・最大10203ms（実測）。Phase1でGemini優先、失敗時Pollinationsで即返却 |
@@ -184,32 +184,9 @@ FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 | R2ストレージ（14日保持・Cron起動時クリーンアップ） | `worker/r2-storage.js` | 稼働中 |
 | レート制限（`/generate`: IP 3回/日・グローバル 50回/日） | `worker/index.js` `checkRateLimit()` | 稼働中 |
 
-### 主要な定数値（変更時は実測データで根拠を示すこと）
+### 主要な定数値・APIエンドポイント一覧
 
-| 定数 | 値 | 根拠 |
-| --- | --- | --- |
-| `RATE_LIMITS.generate.perIp` | 3回/日 | API費用制御 |
-| `RATE_LIMITS.generate.global` | 50回/日 | API費用制御 |
-| `_twoPhaseRace` の `priorityMs` | 12,000ms | Gemini最大10203ms（実測）に余裕を持たせた値 |
-| fal.aiポーリング間隔 × 回数 | 5秒 × 3回（計15秒） | Queue API方式のwall-clock予算内で完了するよう設計 |
-| フロントポーリング上限 | 5秒 × 12回（60秒） | fal.ai通常完了時間（~20秒）の3倍の余裕 |
-| Bluesky画像上限 | 976,000 bytes | API上限1,000,000bytesに24KB余裕 |
-| SUZURIサイズ上限チェック | 20,000,000 bytes | SUZURI APIの20MB制限 |
-
-### APIエンドポイント一覧
-
-| メソッド | パス | 説明 |
-| --- | --- | --- |
-| POST | `/research` | 記念日テキスト + visualHint取得（10回/IP/日） |
-| POST | `/generate` | 画像生成（3回/IP/日・50回/グローバル/日） |
-| POST | `/suzuri-create` | ウォーターマーク済み画像でSUZURI商品登録 |
-| GET | `/image/:id` | R2保存画像 + メタデータ取得 |
-| GET | `/meta/:id` | R2メタデータのみ（ポーリング用軽量） |
-| GET | `/hires/:id` | R2高解像度画像（SUZURI向け安定URL） |
-| GET | `/thumb/:id` | R2画像をバイナリ直接返却（ギャラリーサムネイル用） |
-| GET | `/rss.xml` | RSSフィード（直近14日・サムネイル付き・1時間キャッシュ） |
-| GET | `/resume-hires/:id` | fal.ai完了確認 + SUZURI登録（安全網） |
-| GET | `/proxy-image?url=...` | Pollinations.aiのCORSプロキシ |
+詳細は`.claude/rules/architecture.md`の「主要な定数値」「APIエンドポイント一覧」参照。
 
 ### 必要なシークレット
 

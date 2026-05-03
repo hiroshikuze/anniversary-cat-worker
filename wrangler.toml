@@ -5,9 +5,9 @@ preview_urls = false
 
 [triggers]
 # "0 15 * * *"   → 毎日 0:00 JST  リサーチプール生成（翌日分の記念日候補をR2に保存）
-# "0 10 * * 2-6" → 月〜金 19:00 JST  Bluesky 営業 Bot
-# Cloudflare Workers の曜日指定は 1=日曜日 のため、月〜金は 2-6
-crons = ["0 15 * * *", "0 10 * * 2-6"]
+# "0 22 * * 1-5" → 月〜金 7:00 JST  Bluesky 営業 Bot（2026-05-01より）
+# Cloudflare Workers の曜日指定は 1=日曜日 のため、1-5=日〜木UTC=月〜金JST
+crons = ["0 15 * * *", "0 22 * * 1-5"]
 
 [vars]
 # GitHub Pages の URL を設定（デプロイ後に実際の URL に変更してください）

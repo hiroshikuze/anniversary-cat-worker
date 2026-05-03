@@ -40,7 +40,7 @@ wrangler deploy
 
 KV namespaceのIDは`wrangler.toml`の`[[kv_namespaces]]`に記載済み（`id = "531244f9f904493d93c3a418b9765df8"`）。
 
-Cron Trigger（`0 10 * * 2-6`）は`wrangler.toml`に設定済み。デプロイ後はCloudflareダッシュボードのTriggersタブで確認できる。
+Cron Trigger（`0 15 * * *` と `0 22 * * 1-5`）は`wrangler.toml`に設定済み。デプロイ後はCloudflareダッシュボードのTriggersタブで確認できる。**ダッシュボードで手動変更してもデプロイのたびに`wrangler.toml`の値で上書きされる。**スケジュール変更は必ず`wrangler.toml`を修正してからPRを出すこと。
 
 フロントエンドはGitHub Pagesで自動デプロイ（`frontend/`ディレクトリ）。
 
