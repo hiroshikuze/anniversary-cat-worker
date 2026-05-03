@@ -2261,6 +2261,10 @@ console.log("\n[buildMastodonText]");
   const enIdx = text.indexOf("Today is");
   const jaIdx = text.indexOf("今日は");
   assert("英語セクションが日本語セクションより前に来る", enIdx < jaIdx);
+  // 英語CTAのフォーマット: #Nyaniversary が目的語・today? が末尾（語順確認）
+  assert("英語CTA: #Nyaniversary today? の語順", text.includes("#Nyaniversary today?"));
+  assert("英語CTA: #にゃんバーサリー today? の語順でない", !text.includes("#にゃんバーサリー today?"));
+  assert("#にゃんバーサリー は末尾タグ行に含まれる", text.includes("#にゃんバーサリー"));
 }
 
 {
