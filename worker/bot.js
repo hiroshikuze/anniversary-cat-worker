@@ -115,7 +115,7 @@ export function buildMastodonText(theme, description, themeEn = "", descriptionE
 
   const enHeader  = `Today is "${safeThemeEn}"!`;
   const enDesc    = safeDescEn ? `\n${safeDescEn}` : "";
-  const enCta     = `\n\nWhy don't you try making your own #Nyaniversary #にゃんバーサリー today?\n${pageUrlEn}`;
+  const enCta     = `\n\nWhy don't you try making your own #Nyaniversary today?\n${pageUrlEn}`;
 
   const jaHeader  = theme.endsWith("の日") ? `今日は「${theme}」！🐱` : `今日は「${theme}」の日！🐱`;
   const jaDesc    = description ? `\n${description}` : "";

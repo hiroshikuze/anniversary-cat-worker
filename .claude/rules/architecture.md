@@ -370,7 +370,7 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 Today is "{themeEn}"!
 {descriptionEn}
 
-Why don't you try making your own #Nyaniversary #にゃんバーサリー today?
+Why don't you try making your own #Nyaniversary today?
 {pageUrlEn}
 
 今日は「{theme}」！🐱
