@@ -900,6 +900,8 @@
       const card = document.createElement("div");
       card.className = "flex-none cursor-pointer rounded-xl overflow-hidden border border-pink-100 bg-white shadow-sm hover:shadow-md transition-shadow";
       card.style.cssText = "width:130px; scroll-snap-align:start;";
+      card.setAttribute("data-umami-event", "gallery-click");
+      card.setAttribute("data-umami-event-theme", meta.theme ?? "");
       card.onclick = () => { window.location.href = `?id=${id}`; };
 
       card.innerHTML = `
@@ -1033,7 +1035,11 @@
           descEl.classList.remove("underline");
         }
 
-        window.umami?.track({ url: `/?id=${id}`, title: `${data.theme} - にゃんバーサリー` });
+        // Umamiページビュー計測（正しいパス形式・遅延ロード対応）
+        const _trackTitle = `${displayTheme} - にゃんバーサリー`;
+        const _trackUrl   = `/anniversary-cat-worker/${id}`;
+        const _doTrack    = () => window.umami?.track({ url: _trackUrl, title: _trackTitle });
+        window.umami ? _doTrack() : window.addEventListener("load", _doTrack, { once: true });
 
         document.getElementById("g-goods").classList.add("hidden");
         if (allSuzuriProductsRegistered(data.products)) {

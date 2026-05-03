@@ -343,6 +343,8 @@ Setting and surrounding atmosphere; the cat may naturally interact with theme-re
 - エラー時: リトライなし（`/generate`内部にPollinationsフォールバックあり）
 - Mastodon同時投稿: `Promise.allSettled`で並列実行。Mastodon失敗はBluesky投稿に影響しない。シークレット未設定時はスキップ
 - **Mastodon設定エラー検出**: `MASTODON_INSTANCE_URL`が`https://`で始まらない場合は`throw new Error(...)`でPromise.allSettledに拒否を返し、Discordの`mastoLine`に`❌ Mastodon投稿失敗: 設定エラー`として表示する（旧: `return null`でスキップしていたが、Discordに何も出ず原因不明になるため変更）。投稿後にstatus=401/403が返った場合も「設定エラー（認証失敗）」として`console.error`に分類して出力する
+- **Mastodon未設定時**: `mastoLine`に`⏭️ Mastodon未設定・スキップ`を表示し、`console.log`でCloudflareログにも記録する（旧: Discord通知から行ごと省略していたため処理状態が不明だった）
+- **R2保存キーのスロット方式（`bot/YYYY-MM-DD-n`）**: 同日に複数回`runBot()`が実行された場合（意図的・偶発的を問わず）、既存のR2キーを上書きせず`bot/YYYY-MM-DD-2`、`bot/YYYY-MM-DD-3`…とスロットをずらして保存する。`findAvailableR2Id(bucket, jstDateISO)`がmeta.jsonの存在確認で次のスロットを決定する（最大`-9`まで、超過時は`-9`を上書き）。ギャラリー・RSSは`bot/YYYY-MM-DD`（1スロット目）のみ参照。2スロット目以降のBluesky共有URLは`?id=bot/YYYY-MM-DD-2`形式で有効。削除は`listExpiredIds()`がスロット単位で自然に処理する（変更不要）
 
 ### 投稿テキスト形式
 
@@ -438,7 +440,7 @@ Mastodon投稿テキスト（日英二言語）を追加した結果、通知が
 ```text
 ✅ にゃんバーサリーBot
 ✅ Bluesky投稿完了 {dateStr}      ← Bluesky失敗時は ❌ Bluesky投稿失敗: {エラー}
-✅ Mastodon投稿完了               ← 設定済みの場合。失敗時は ❌ Mastodon投稿失敗: {エラー}。未設定時は行なし
+✅ Mastodon投稿完了               ← 設定済みの場合。失敗時は ❌ Mastodon投稿失敗: {エラー}。未設定時は ⏭️ Mastodon未設定・スキップ
 📅 テーマ: {theme}
 📝 説明: {description}           ← descriptionがある場合のみ
 🎨 視覚ヒント: {visualHint}      ← visualHintがある場合のみ
