@@ -463,6 +463,7 @@ console.log("\n[runBot: Mastodon投稿]");
     assert("themeEnあり: Discord通知が2回送られる", discordBodies.length >= 2);
     assert("themeEnあり: 2通目にMastodonテキストが含まれる", discordBodies[1]?.includes("Mastodon投稿テキスト"));
     assert("themeEnあり: 2通目に英語CTAが含まれる", discordBodies[1]?.includes("lang=en"));
+    assert("themeEnあり: 2通目にBluesky投稿テキストが含まれる", discordBodies[1]?.includes("Bluesky投稿テキスト"));
   }
 
   // ── Discord 2通目: themeEn未取得 → 常に送信・注記が入る ──
@@ -490,6 +491,37 @@ console.log("\n[runBot: Mastodon投稿]");
     assert("themeEn未取得: Discord通知が2回送られる", discordBodies.length >= 2);
     assert("themeEn未取得: 2通目に⚠️注記が含まれる", discordBodies[1]?.includes("⚠️"));
     assert("themeEn未取得: 2通目にBlueskyとの同一説明が含まれる", discordBodies[1]?.includes("Blueskyと同一"));
+  }
+
+  // ── Discord 2通目: Pollinationsプロンプトが2通目に含まれる ──
+  {
+    const discordBodies = [];
+    const { mockFetch } = makeBskyMastoFetch();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("discord")) {
+        discordBodies.push(JSON.parse(opts?.body ?? "{}").content ?? "");
+        return makeJsonResponse({}, 204);
+      }
+      return mockFetch(url, opts);
+    };
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: MASTO_INSTANCE, MASTODON_ACCESS_TOKEN: "masto-token",
+      },
+      async () => ({ theme: "テスト記念日", description: "説明", themeEn: "Test Day", descriptionEn: "Description" }),
+      async () => ({
+        imageData: btoa("fake-image-data"), mimeType: "image/png", source: "gemini",
+        prompt: "gemini prompt text",
+        pollinationsPrompt: "pollinations prompt text",
+      })
+    );
+    globalThis.fetch = origFetch;
+    assert("Pollinationsプロンプト: 2通目に含まれる", discordBodies[1]?.includes("Pollinationsプロンプト"));
+    assert("Pollinationsプロンプト: 1通目には含まれない", !discordBodies[0]?.includes("Pollinationsプロンプト"));
+    assert("Geminiプロンプト: 1通目に含まれる", discordBodies[0]?.includes("Geminiプロンプト"));
   }
 
   // ── Mastodon URLが https:// なし → Discord mastoLine に ❌ が出る ──

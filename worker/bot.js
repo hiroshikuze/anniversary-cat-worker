@@ -651,13 +651,15 @@ export async function runBot(env, handleResearch, handleGenerate) {
         generated.guest         ? `🐾 ゲスト性格: ${generated.guest.personality}`       : null,
         kanjiLine,
         `🖼 ソース: ${generated.source}`,
-        generated.prompt            ? `\n📋 Geminiプロンプト${generated.source === "gemini" ? "（採用）" : ""}:\n${generated.prompt}` : null,
-        generated.pollinationsPrompt ? `\n📋 Pollinationsプロンプト${generated.source === "pollinations" ? "（採用）" : ""}:\n${generated.pollinationsPrompt}` : null,
-        `\n📣 Bluesky投稿テキスト（X・Instagram等に転載用）:\n${text}`,
+        generated.prompt ? `\n📋 Geminiプロンプト${generated.source === "gemini" ? "（採用）" : ""}:\n${generated.prompt}` : null,
       ].filter(Boolean).join("\n");
       await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, bskyOk ? "✅" : "❌");
-      // 2通目: themeEn有無にかかわらず常に送信（成否確認とMastodonテキスト転載用）
+      // 2通目: Pollinationsプロンプト + Bluesky投稿テキスト + Mastodonテキスト
       const msg2Lines = [bskyLine, mastoLine].filter(Boolean);
+      if (generated.pollinationsPrompt) {
+        msg2Lines.push(`\n📋 Pollinationsプロンプト${generated.source === "pollinations" ? "（採用）" : ""}:\n${generated.pollinationsPrompt}`);
+      }
+      msg2Lines.push(`\n📣 Bluesky投稿テキスト（X・Instagram等に転載用）:\n${text}`);
       if (mastoText !== text) {
         msg2Lines.push(`\n📣 Mastodon投稿テキスト（二言語・転載用）:\n${mastoText}`);
       } else {
