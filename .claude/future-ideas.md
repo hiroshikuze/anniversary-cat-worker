@@ -1,5 +1,81 @@
 # 将来拡張メモ
 
+## リファクタリング候補（テスト容易性の改善）
+
+### 判断基準（2026-05 議論で確定）
+
+リファクタリングすべきシグナルは3つに限定する:
+
+1. **テストできない関数が生まれた** → 純粋な計算部分を切り出して`_setXxxForTest`パターンで差し替え可能にする
+2. **同じAPIエラーハンドリングが3箇所以上** → 共通ヘルパーに集約する（既存の動作を変えない）
+3. **1ファイルが肥大化してCIが遅くなった** → 機能単位で分割する
+
+「3箇所似ているから共通化したい」だけの動機・バグ修正のついでの周辺整理・将来拡張のための抽象化は行わない。
+
+### bot.js の具体的なリファクタリング候補
+
+#### 優先度高: `postToMastodon()` の切り出し（現在は無名IIFEが`Promise.allSettled`内に埋め込まれている）
+
+**現状の問題:**
+
+```js
+// runBot() の内部 - 匿名IIFEのため独立テスト不可能
+(env.MASTODON_INSTANCE_URL && env.MASTODON_ACCESS_TOKEN)
+  ? (async () => {
+      if (!env.MASTODON_INSTANCE_URL.startsWith("https://")) {
+        throw new Error(`設定エラー...`);
+      }
+      const mediaId = await uploadMediaToMastodon(...);
+      return postStatusToMastodon(...);
+    })()
+  : Promise.resolve(null),
+```
+
+Mastodonに問題が起きたとき（過去に苦戦した経緯）は、https://チェック・uploadMedia・postStatusのどのステップで失敗したかを独立テストで確認できない。`runBot()`全体を通した結合テストでしか検証できない。
+
+**修正案:**
+
+```js
+// export して独立テスト可能にする
+export async function postToMastodon(env, imageBytes, mimeType, altText, mastoText) {
+  if (!env.MASTODON_INSTANCE_URL || !env.MASTODON_ACCESS_TOKEN) return null;
+  if (!env.MASTODON_INSTANCE_URL.startsWith("https://")) {
+    throw new Error(`設定エラー: MASTODON_INSTANCE_URL が https:// で始まっていません`);
+  }
+  const mediaId = await uploadMediaToMastodon(env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, imageBytes, mimeType, altText);
+  return postStatusToMastodon(env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, mastoText, mediaId);
+}
+```
+
+これにより `test-bot.mjs` で `globalThis.fetch` をモックして https://チェック・upload失敗・post失敗を独立してテストできる。
+
+#### 優先度中: `buildBotDiscordMessages()` の切り出し（現在は`runBot()`内20行以上のインライン構築）
+
+**現状の問題:**
+
+`runBot()` の後半に 20行以上の `lines` 配列構築ロジックが埋め込まれており、Discord通知の文言を変えたときに正しく構築されるかを確認するには `runBot()` 全体を流す必要がある。
+
+**修正案:**
+
+```js
+// 純粋関数として切り出し → test-bot.mjs で直接呼べる
+export function buildBotDiscordMessages({ research, generated, bskyOk, bskyError, mastoOk, mastoSkipped, mastoError, dateStr, text, mastoText }) {
+  // lines 構築 → { msg1, msg2 } を返す
+}
+```
+
+引数はすべてプリミティブか単純なオブジェクトのため、外部APIモックなしにテストできる。
+
+#### 優先度低: `uploadMediaToMastodon` / `postStatusToMastodon` の`_`-prefix export
+
+現在はprivate関数のためpublic APIの`postToMastodon()`切り出し後に合わせて検討する。
+
+### 着手タイミング
+
+次にMastodon関連の修正が発生したタイミングで `postToMastodon()` の切り出しを一緒に行う（バグ修正のついでではなく、Mastodon関連タスクのついで）。`buildBotDiscordMessages()` はDiscord通知の文言変更タスクが来たタイミングで。
+
+---
+
 ## 将来の拡張に関する設計方針メモ
 
 ### ユーザーによる記念日の自由入力（未実装・保留中）
