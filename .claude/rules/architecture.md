@@ -422,12 +422,12 @@ Why don't you try making your own #Nyaniversary today?
 - タイムアウト: `AbortSignal.timeout(10_000)`（10秒）
 - `webhookUrl`が未設定の場合は即座にreturnしてスキップ
 
-**2通目分割方式（2026-04）:**
+**2通目分割方式（2026-04追加・2026-05再編）:**
 
-Mastodon投稿テキスト（日英二言語）を追加した結果、通知が2,000文字を超えるようになった。`runBot()`内で`notifyDiscord()`を2回`await`順次呼び出しすることで全文を送信する。
+`runBot()`内で`notifyDiscord()`を2回`await`順次呼び出しすることで全文を送信する。各通の文字数が2000字上限に対して均等になるよう、Geminiプロンプトを1通目・Pollinationsプロンプトとすべての投稿テキストを2通目に振り分けている（1通目 ~1,100字・2通目 ~1,200字）。
 
-- **1通目** (`✅`/`❌`): 投稿成否〜Bluesky投稿テキストまで（~1,400文字）
-- **2通目** (`📣`): 先頭に成否ステータス（bskyLine/mastoLine）を再掲 + Mastodon投稿テキストまたは注記。`themeEn`の有無にかかわらず**常に送信**する（成否確認のため）
+- **1通目** (`✅`/`❌`): 投稿成否 + テーマ情報 + Geminiプロンプト（採用/不採用いずれも表示）
+- **2通目** (`📣`): 成否再掲 + Pollinationsプロンプト + Bluesky投稿テキスト + Mastodon投稿テキストまたは注記
   - `themeEn`あり（日英二言語）: `📣 Mastodon投稿テキスト（二言語・転載用）:\n{mastoText}`
   - `themeEn`なし（日本語のみ）: `⚠️ themeEn未取得のためMastodon投稿テキストはBlueskyと同一（日本語のみ）`
 - 2通目に成否を再掲することで、1通目が文字数で省略されても結果を確認できる
@@ -455,6 +455,14 @@ Mastodon投稿テキスト（日英二言語）を追加した結果、通知が
 
 📋 Geminiプロンプト（採用）:     ← Gemini採用時は「（採用）」付き
 {prompt}                         ← promptがある場合のみ
+```
+
+**2通目フォーマット（themeEnあり）:**
+
+```text
+📣 にゃんバーサリーBot
+✅ Bluesky投稿完了 {dateStr}      ← 1通目と同じ成否ステータスを再掲
+✅ Mastodon投稿完了               ← 同上（失敗/未設定時はそれぞれ表示）
 
 📋 Pollinationsプロンプト:       ← Pollinations採用時は「（採用）」付き
 {pollinationsPrompt}             ← pollinationsPromptがある場合のみ
@@ -466,27 +474,23 @@ Mastodon投稿テキスト（日英二言語）を追加した結果、通知が
 {buildMastodonText()の出力全文}  ← 日英二言語・ハッシュタグ・URL含む
 ```
 
-**2通目フォーマット（themeEnあり）:**
-
-```text
-📣 にゃんバーサリーBot
-✅ Bluesky投稿完了 {dateStr}      ← 1通目と同じ成否ステータスを再掲
-✅ Mastodon投稿完了               ← 同上（失敗/未設定時はそれぞれ表示）
-
-📣 Mastodon投稿テキスト（二言語・転載用）:
-{buildMastodonText()の出力全文}
-```
-
 **2通目フォーマット（themeEn未取得）:**
 
 ```text
 📣 にゃんバーサリーBot
 ✅ Bluesky投稿完了 {dateStr}
 ✅ Mastodon投稿完了
+
+📋 Pollinationsプロンプト:
+{pollinationsPrompt}
+
+📣 Bluesky投稿テキスト（X・Instagram等に転載用）:
+{buildPostText()の出力全文}
+
 ⚠️ themeEn未取得のためMastodon投稿テキストはBlueskyと同一（日本語のみ）
 ```
 
-**設計意図**: 📣セクションをそのままコピーして他SNSに貼り付けられる。Bluesky（日本語）・Mastodon（日英）それぞれの転載用テキストを並記。どちらのAIが採用されたかは「（採用）」表示で確認できる。採用されなかった方のプロンプトも記載されるため、手動で再実行して比較検証が可能。
+**設計意図**: 1通目は「採用プロンプト確認」、2通目は「転載用テキスト一式 + フォールバックプロンプト」として役割を分離。どちらのAIが採用されたかは「（採用）」表示で確認でき、採用されなかった方のプロンプトも2通目に記載されるため手動比較検証が可能。
 
 ### Bluesky AT Protocolエンドポイント
 
