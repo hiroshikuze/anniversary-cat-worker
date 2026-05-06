@@ -658,32 +658,32 @@ export function pickGuestAnimal(mainPersona, rand = Math.random) {
   switch (typeIndex) {
     case 0: { // 犬
       const v = DOG_VARIANTS[Math.floor(rand() * DOG_VARIANTS.length)];
-      return { appearance: v, personality: DOG_PERSONALITY, guardianModifier: null };
+      return { appearance: v, personality: DOG_PERSONALITY, guardianModifier: null, snsTag: "#dog", suzuriTag: "#犬" };
     }
     case 1: { // ウサギ（品種×毛色を独立抽選）
       const breed = RABBIT_BREEDS[Math.floor(rand() * RABBIT_BREEDS.length)];
       const color = RABBIT_COLORS[Math.floor(rand() * RABBIT_COLORS.length)];
-      return { appearance: `${color} ${breed}`, personality: RABBIT_PERSONALITY, guardianModifier: null };
+      return { appearance: `${color} ${breed}`, personality: RABBIT_PERSONALITY, guardianModifier: null, snsTag: "#rabbit", suzuriTag: "#うさぎ" };
     }
     case 2: { // パンダ
-      return { appearance: PANDA_VARIANT, personality: PANDA_PERSONALITY, guardianModifier: null };
+      return { appearance: PANDA_VARIANT, personality: PANDA_PERSONALITY, guardianModifier: null, snsTag: "#panda", suzuriTag: "#パンダ" };
     }
     case 3: { // ペンギン
       const v = PENGUIN_VARIANTS[Math.floor(rand() * PENGUIN_VARIANTS.length)];
-      return { appearance: v, personality: PENGUIN_PERSONALITY, guardianModifier: null };
+      return { appearance: v, personality: PENGUIN_PERSONALITY, guardianModifier: null, snsTag: "#penguin", suzuriTag: "#ペンギン" };
     }
     case 4: { // 豚
       const v = PIG_VARIANTS[Math.floor(rand() * PIG_VARIANTS.length)];
-      return { appearance: v, personality: PIG_PERSONALITY, guardianModifier: null };
+      return { appearance: v, personality: PIG_PERSONALITY, guardianModifier: null, snsTag: "#pig", suzuriTag: "#豚" };
     }
     case 5: { // 鶏（ひよこ or 成鳥）
       if (rand() < CHICKEN_CHICK_PROBABILITY) {
-        return { appearance: CHICKEN_CHICK_VARIANT, personality: CHICKEN_CHICK_PERSONALITY, guardianModifier: null };
+        return { appearance: CHICKEN_CHICK_VARIANT, personality: CHICKEN_CHICK_PERSONALITY, guardianModifier: null, snsTag: "#chicken", suzuriTag: "#ニワトリ" };
       }
       const v = CHICKEN_ADULT_VARIANTS[Math.floor(rand() * CHICKEN_ADULT_VARIANTS.length)];
-      return { appearance: v, personality: CHICKEN_ADULT_PERSONALITY, guardianModifier: null };
+      return { appearance: v, personality: CHICKEN_ADULT_PERSONALITY, guardianModifier: null, snsTag: "#chicken", suzuriTag: "#ニワトリ" };
     }
-    case 6: { // 伴侶猫（毛柄はメイン猫との関係で決定）
+    case 6: { // 伴侶猫（毛柄はメイン猫との関係で決定・#catと重複するためタグなし）
       const coatRand = rand();
       let coatType;
       if (coatRand < COMPANION_CAT_COAT_WEIGHTS.similar / 100) {
@@ -695,13 +695,13 @@ export function pickGuestAnimal(mainPersona, rand = Math.random) {
       }
       const appearance  = COMPANION_CAT_APPEARANCES[coatType];
       const personality = COMPANION_CAT_PERSONALITIES[Math.floor(rand() * COMPANION_CAT_PERSONALITIES.length)];
-      return { appearance, personality, guardianModifier: null };
+      return { appearance, personality, guardianModifier: null, snsTag: null, suzuriTag: null };
     }
-    case 7: { // 子猫（メイン猫に保護者修飾を付与）
+    case 7: { // 子猫（メイン猫に保護者修飾を付与・#kittenと重複するためタグなし）
       const appearance = mainPersona
         ? "a tiny kitten with a matching coat to the main cat"
         : "a tiny fluffy kitten";
-      return { appearance, personality: KITTEN_PERSONALITY, guardianModifier: KITTEN_GUARDIAN_MODIFIER };
+      return { appearance, personality: KITTEN_PERSONALITY, guardianModifier: KITTEN_GUARDIAN_MODIFIER, snsTag: null, suzuriTag: null };
     }
     default:
       return null;
@@ -1191,7 +1191,7 @@ ${itemsXml}
       }
 
       try {
-        const sr = await createSuzuriProducts(suzuriTexture, meta.theme ?? "", env, RIGHT_SLUGS, null, meta.description ?? "", id);
+        const sr = await createSuzuriProducts(suzuriTexture, meta.theme ?? "", env, RIGHT_SLUGS, null, meta.description ?? "", id, meta.guestSuzuriTag ?? null);
         await updateMetaInR2(env.IMAGE_BUCKET, id, { products: sr.products });
         console.log(`[resume-hires] SUZURI登録完了`);
         return Response.json({ products: sr.products }, { headers: corsH });
@@ -1257,12 +1257,13 @@ ${itemsXml}
           try {
             const r2Id = `user/${crypto.randomUUID()}`;
             const meta = {
-              theme:       body.theme,
-              description: body.description ?? "",
-              sourceUrl:   "",
-              materialId:  null,
-              products:    [],
-              createdAt:   new Date().toISOString(),
+              theme:          body.theme,
+              description:    body.description ?? "",
+              sourceUrl:      "",
+              materialId:     null,
+              guestSuzuriTag: result.guest?.suzuriTag ?? null,
+              products:       [],
+              createdAt:      new Date().toISOString(),
             };
             await saveToR2(
               env.IMAGE_BUCKET,
@@ -1287,16 +1288,20 @@ ${itemsXml}
 
         // 重複防止: 対象スラッグが既に全件登録済みなら既存データを返して終了
         // （ボット画像の初回訪問者トリガー登録で、複数ユーザーが同時訪問した場合の二重登録防止）
-        if (r2Id && env.IMAGE_BUCKET && (slugs ?? []).length > 0) {
+        let guestSuzuriTag = null;
+        if (r2Id && env.IMAGE_BUCKET) {
           try {
             const existingMeta = await getMetaFromR2(env.IMAGE_BUCKET, r2Id);
-            const existingSlugs = new Set((existingMeta?.products ?? []).map(p => p.slug));
-            if ((slugs ?? []).every(s => existingSlugs.has(s))) {
-              console.log(`[suzuri-create] 重複スキップ slugs=${slugs.join(",")} r2Id=${r2Id}`);
-              return Response.json(
-                { products: (existingMeta.products ?? []).filter(p => slugs.includes(p.slug)) },
-                { headers: corsH }
-              );
+            guestSuzuriTag = existingMeta?.guestSuzuriTag ?? null;
+            if ((slugs ?? []).length > 0) {
+              const existingSlugs = new Set((existingMeta?.products ?? []).map(p => p.slug));
+              if ((slugs ?? []).every(s => existingSlugs.has(s))) {
+                console.log(`[suzuri-create] 重複スキップ slugs=${slugs.join(",")} r2Id=${r2Id}`);
+                return Response.json(
+                  { products: (existingMeta.products ?? []).filter(p => slugs.includes(p.slug)) },
+                  { headers: corsH }
+                );
+              }
             }
           } catch (_) { /* R2読み取り失敗は無視して続行 */ }
         }
@@ -1397,7 +1402,7 @@ ${itemsXml}
             }
             console.log(`[suzuri-create] texture type=${suzuriTexture.startsWith("data:") ? "base64" : "url"}`);
             try {
-              const sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, resolvedBackTexture, description ?? "", r2Id ?? null);
+              const sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, resolvedBackTexture, description ?? "", r2Id ?? null, guestSuzuriTag);
               if (r2Id && env.IMAGE_BUCKET) {
                 await updateMetaInR2(env.IMAGE_BUCKET, r2Id, { products: sr.products });
               }
@@ -1410,7 +1415,7 @@ ${itemsXml}
         } else {
           // center グループ: 即時処理
           const suzuriTexture = `data:${mimeType};base64,${imageData}`;
-          const suzuriResult = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, null, description ?? "", r2Id ?? null);
+          const suzuriResult = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, null, description ?? "", r2Id ?? null, guestSuzuriTag);
           if (r2Id && env.IMAGE_BUCKET) {
             try {
               await updateMetaInR2(env.IMAGE_BUCKET, r2Id, {

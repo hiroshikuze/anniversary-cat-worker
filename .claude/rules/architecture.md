@@ -152,18 +152,19 @@ anniversary-cat-worker/
 {description}          ← 空の場合はこのブロックごと省略
 
 にゃんバーサリー {URL}  ← r2Id指定時は?id={r2Id}付き画像ページ、未指定はTOPページ
-#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー #{themeTag}
+#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー #{themeTag} #{guestSuzuriTag}
 ```
 
 - 登録日のJST日付と期限日（+14日JST）は`buildDescription(theme, description, r2Id, nowMs)`内で算出
 - `nowMs`はテスト用引数（デフォルト`Date.now()`）。固定値で日付ロジックの回帰テストが可能
 - SUZURI自動削除（14日）は`scheduled()`のcleanupブロックで実装済み。R2と期限を統一している
 - `{themeTag}`はthemeの末尾の「の日」を除去してタグ化（例: 大仏の日 → `#大仏`）。記号のみになる場合は省略
+- `{guestSuzuriTag}`はゲスト登場時のみ追加（例: `#犬` `#うさぎ`）。伴侶猫・子猫は`#猫`と重複するため追加しない
 
 **`createSuzuriProducts()`のシグネチャ（2026-04更新）:**
 
 ```js
-createSuzuriProducts(imageUrl, theme, env, slugFilter = null, backTexture = null, description = "", r2Id = null)
+createSuzuriProducts(imageUrl, theme, env, slugFilter = null, backTexture = null, description = "", r2Id = null, guestSuzuriTag = null)
 ```
 
 - `backTexture`: Tシャツのみ`sub_materials`（背面印刷）に使用。`data:image/jpeg;base64,...`形式。nullの場合は背面印刷なし
@@ -357,10 +358,11 @@ Setting and surrounding atmosphere; the cat may naturally interact with theme-re
 あなたも今日の #にゃんバーサリー を作ってみませんか？
 https://hiroshikuze.github.io/anniversary-cat-worker/
 
-#{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー
+#{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー #{guestSnsTag}
 ```
 
-300 grapheme以内に収まる設計（実測 ~210 grapheme）。テーマタグを先頭にすることでInstagram手動投稿時に末尾タグを省略しやすくしている。
+- `{guestSnsTag}`はゲスト登場時のみ末尾に追加（例: `#dog` `#rabbit`）。伴侶猫・子猫は`#cat` `#kitten`と重複するため追加しない
+- 300 grapheme以内に収まる設計（実測 ~210 grapheme・ゲストタグ追加後も余裕あり）。テーマタグを先頭にすることでInstagram手動投稿時に末尾タグを省略しやすくしている。
 
 #### Mastodon（`buildMastodonText()`・英語優先・日英二言語）
 
@@ -379,7 +381,7 @@ Why don't you try making your own #Nyaniversary today?
 あなたも今日の #にゃんバーサリー を作ってみませんか？
 {pageUrl}
 
-#{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #Nyaniversary #にゃんバーサリー
+#{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #Nyaniversary #にゃんバーサリー #{guestSnsTag}
 ```
 
 - `themeEn`・`descriptionEn`は`handleResearch()`がGeminiから取得する英語フィールド
