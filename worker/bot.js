@@ -68,15 +68,17 @@ export function buildThemeTag(theme) {
  * @param {string} theme
  * @param {string} description
  * @param {string} [pageUrl] - CTA に使う URL（デフォルト: SITE_URL）
+ * @param {string|null} [guestSnsTag] - ゲスト動物の英語タグ（例: "#dog"）。null の場合は省略
  */
-export function buildPostText(theme, description, pageUrl = SITE_URL) {
+export function buildPostText(theme, description, pageUrl = SITE_URL, guestSnsTag = null) {
   const header   = theme.endsWith("の日")
     ? `今日は「${theme}」！🐱`
     : `今日は「${theme}」の日！🐱`;
   const body     = description ? `\n${description}` : "";
   const cta      = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${pageUrl}`;
   const themeTag = buildThemeTag(theme);
-  const allTags  = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
+  const baseTags = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
+  const allTags  = guestSnsTag ? `${baseTags} ${guestSnsTag}` : baseTags;
   const tags     = `\n\n${allTags}`;
   return header + body + cta + tags;
 }
@@ -90,23 +92,24 @@ export function buildPostText(theme, description, pageUrl = SITE_URL) {
  * @param {string} [themeEn]
  * @param {string} [descriptionEn]
  * @param {string} [pageUrl]
+ * @param {string|null} [guestSnsTag] - ゲスト動物の英語タグ（例: "#dog"）。null の場合は省略
  */
-export function buildMastodonText(theme, description, themeEn = "", descriptionEn = "", pageUrl = SITE_URL) {
+export function buildMastodonText(theme, description, themeEn = "", descriptionEn = "", pageUrl = SITE_URL, guestSnsTag = null) {
   const safeThemeEn = (themeEn ?? "").replace(/[^\x20-\x7E]/g, "").trim();
   const safeDescEn  = (descriptionEn ?? "").replace(/[^\x20-\x7E]/g, "").trim();
 
   const themeTag    = buildThemeTag(theme);
   const mastoTags   = [...MASTODON_EXTRA_TAGS, ...HASHTAG_LIST];
-  const tagStr      = themeTag
-    ? `${themeTag} ${mastoTags.join(" ")}`
-    : mastoTags.join(" ");
+  const baseTagStr  = themeTag ? `${themeTag} ${mastoTags.join(" ")}` : mastoTags.join(" ");
+  const tagStr      = guestSnsTag ? `${baseTagStr} ${guestSnsTag}` : baseTagStr;
 
   // themeEn がない場合は日本語のみ（buildPostText 相当）
   if (!safeThemeEn) {
     const header  = theme.endsWith("の日") ? `今日は「${theme}」！🐱` : `今日は「${theme}」の日！🐱`;
     const jpDesc  = description ? `\n${description}` : "";
     const cta     = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${pageUrl}`;
-    const fallbackTags = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
+    const baseFallbackTags = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
+    const fallbackTags = guestSnsTag ? `${baseFallbackTags} ${guestSnsTag}` : baseFallbackTags;
     return header + jpDesc + cta + `\n\n${fallbackTags}`;
   }
 
@@ -330,11 +333,12 @@ async function uploadBlob(accessJwt, imageBytes, mimeType) {
 }
 
 /** テキスト・画像・ファセットを含む投稿レコードを作成する */
-async function createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl = SITE_URL, themeTag = null) {
+async function createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl = SITE_URL, themeTag = null, guestSnsTag = null) {
+  const extraTags = [themeTag, guestSnsTag].filter(Boolean);
   const record = {
     $type:     "app.bsky.feed.post",
     text,
-    facets:    [...buildHashtagFacets(text, themeTag ? [themeTag] : []), ...buildUrlFacets(text, pageUrl)],
+    facets:    [...buildHashtagFacets(text, extraTags), ...buildUrlFacets(text, pageUrl)],
     embed:     {
       $type:  "app.bsky.embed.images",
       images: [{
@@ -531,14 +535,15 @@ export async function runBot(env, handleResearch, handleGenerate) {
     if (env.IMAGE_BUCKET) {
       try {
         const meta = {
-          theme:         research.theme,
-          description:   research.description  ?? "",
-          themeEn:       research.themeEn      ?? "",
-          descriptionEn: research.descriptionEn ?? "",
-          sourceUrl:     research.sourceUrl    ?? "",
-          kanjiChar:     research.kanjiChar    ?? null,
-          products:      [],
-          createdAt:     new Date().toISOString(),
+          theme:          research.theme,
+          description:    research.description  ?? "",
+          themeEn:        research.themeEn      ?? "",
+          descriptionEn:  research.descriptionEn ?? "",
+          sourceUrl:      research.sourceUrl    ?? "",
+          kanjiChar:      research.kanjiChar    ?? null,
+          guestSuzuriTag: generated.guest?.suzuriTag ?? null,
+          products:       [],
+          createdAt:      new Date().toISOString(),
         };
         await saveToR2(
           env.IMAGE_BUCKET,
@@ -562,11 +567,12 @@ export async function runBot(env, handleResearch, handleGenerate) {
     const mimeType   = shrunk.mimeType;
 
     const themeTag    = buildThemeTag(research.theme);
-    const text        = buildPostText(research.theme, research.description ?? "", pageUrl);
+    const guestSnsTag = generated.guest?.snsTag ?? null;
+    const text        = buildPostText(research.theme, research.description ?? "", pageUrl, guestSnsTag);
     const mastoText   = buildMastodonText(
       research.theme, research.description ?? "",
       research.themeEn ?? "", research.descriptionEn ?? "",
-      pageUrl
+      pageUrl, guestSnsTag
     );
     const desc     = research.description ?? "";
     const altText  = desc
@@ -582,7 +588,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
           env.BLUESKY_IDENTIFIER, env.BLUESKY_APP_PASSWORD
         );
         const blobRef = await uploadBlob(accessJwt, imageBytes, mimeType);
-        return createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl, themeTag);
+        return createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl, themeTag, guestSnsTag);
       })(),
       // Mastodon（日英二言語・シークレット未設定時はスキップ）
       (env.MASTODON_INSTANCE_URL && env.MASTODON_ACCESS_TOKEN)

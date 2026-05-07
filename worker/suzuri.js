@@ -9,7 +9,7 @@
 
 const SUZURI_API_BASE = "https://suzuri.jp/api/v1";
 
-function buildDescription(theme, description, r2Id, nowMs = Date.now()) {
+function buildDescription(theme, description, r2Id, nowMs = Date.now(), guestSuzuriTag = null) {
   const toJst = ms => new Date(ms + 9 * 60 * 60 * 1000);
 
   const jstNow    = toJst(nowMs);
@@ -29,7 +29,8 @@ function buildDescription(theme, description, r2Id, nowMs = Date.now()) {
   const themeTagRaw = themeBase.replace(/[^\p{L}\p{N}_]/gu, "").slice(0, 30);
   const themeTag    = themeTagRaw ? ` #${themeTagRaw}` : "";
 
-  return `${todayStr}の「${theme}」をテーマにしました。\n【期間限定！】${expiryStr}（日本時間）までの販売🐱${descBlock}\n\nにゃんバーサリー ${url}\n#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー${themeTag}`;
+  const guestTag = guestSuzuriTag ? ` ${guestSuzuriTag}` : "";
+  return `${todayStr}の「${theme}」をテーマにしました。\n【期間限定！】${expiryStr}（日本時間）までの販売🐱${descBlock}\n\nにゃんバーサリー ${url}\n#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー${themeTag}${guestTag}`;
 }
 
 export function _buildDescriptionForTest(theme, description, r2Id, nowMs) {
@@ -103,7 +104,7 @@ async function fetchAvailableItemIds(env) {
  * }}
  * @throws {Error} APIキー未設定またはAPIエラー時
  */
-export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = null, backTexture = null, description = "", r2Id = null) {
+export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = null, backTexture = null, description = "", r2Id = null, guestSuzuriTag = null) {
   if (!env.SUZURI_API_KEY) {
     throw new Error("SUZURI_API_KEY が設定されていません");
   }
@@ -152,7 +153,7 @@ export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = nu
     body: JSON.stringify({
       texture:     imageUrl,
       title:       `${theme}と水彩画にゃんこ`,
-      description: buildDescription(theme, description, r2Id),
+      description: buildDescription(theme, description, r2Id, Date.now(), guestSuzuriTag),
       products:    productsToCreate,
     }),
     signal: AbortSignal.timeout(30_000),

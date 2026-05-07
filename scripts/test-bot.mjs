@@ -2167,6 +2167,26 @@ console.log("\n[pickGuestAnimal]");
     assert(`ASCII check appearance: "${app.slice(0, 40)}"`, ASCII_RE.test(app));
     assert(`ASCII check personality: "${per.slice(0, 40)}"`, per === null || ASCII_RE.test(per));
   }
+
+  // ── snsTag / suzuriTag フィールド ──
+  {
+    const TAG_CASES = [
+      { rands: [0.05, 0.0, 0.0],               snsTag: "#dog",     suzuriTag: "#犬" },
+      { rands: [0.05, 1/8+0.01, 0.0, 0.0],     snsTag: "#rabbit",  suzuriTag: "#うさぎ" },
+      { rands: [0.05, 2/8+0.01],               snsTag: "#panda",   suzuriTag: "#パンダ" },
+      { rands: [0.05, 3/8+0.01, 0.0],          snsTag: "#penguin", suzuriTag: "#ペンギン" },
+      { rands: [0.05, 4/8+0.01, 0.0],          snsTag: "#pig",     suzuriTag: "#豚" },
+      { rands: [0.05, 5/8+0.01, 0.1],          snsTag: "#chicken", suzuriTag: "#ニワトリ" },
+      { rands: [0.05, 6/8+0.01, 0.3, 0.0],     snsTag: null,       suzuriTag: null },
+      { rands: [0.05, 7/8+0.01],               snsTag: null,       suzuriTag: null },
+    ];
+    for (const { rands, snsTag, suzuriTag } of TAG_CASES) {
+      let i = 0;
+      const g = pickGuestAnimal("orange tabby cat", () => rands[i++] ?? 0.5);
+      assert(`snsTag: 期待値 ${snsTag}`,       g?.snsTag === snsTag);
+      assert(`suzuriTag: 期待値 ${suzuriTag}`, g?.suzuriTag === suzuriTag);
+    }
+  }
 }
 
 // =============================================================================
@@ -2521,6 +2541,42 @@ console.log("\n[mastoSkipped: Discord ⏭️ 表示]");
   const allBodies = discordBodies.join("\n");
   assert("Mastodon未設定: Discord通知に ⏭️ が含まれる", allBodies.includes("⏭️"));
   assert("Mastodon未設定: Discord通知に「Mastodon未設定・スキップ」が含まれる", allBodies.includes("Mastodon未設定・スキップ"));
+}
+
+// ---------------------------------------------------------------------------
+// buildPostText: guestSnsTag
+// ---------------------------------------------------------------------------
+console.log("\n[buildPostText: guestSnsTag]");
+{
+  const text = buildPostText("ねこの日", "説明文", undefined, "#dog");
+  assert("guestSnsTag が含まれる",         text.includes("#dog"));
+  assert("既存の #cat も含まれる",          text.includes("#cat"));
+  assert("guestSnsTag は末尾タグ行に含まれる", text.indexOf("#dog") > text.indexOf("#にゃんバーサリー を作って"));
+}
+{
+  const text = buildPostText("ねこの日", "説明文", undefined, null);
+  assert("guestSnsTag null: 文字列 'null' が含まれない", !text.includes("null"));
+  assert("guestSnsTag null: #cat は含まれる", text.includes("#cat"));
+}
+
+// ---------------------------------------------------------------------------
+// buildMastodonText: guestSnsTag
+// ---------------------------------------------------------------------------
+console.log("\n[buildMastodonText: guestSnsTag]");
+{
+  const text = buildMastodonText("ねこの日", "説明文", "Cat Day", "A cat day", undefined, "#dog");
+  assert("guestSnsTag が含まれる",         text.includes("#dog"));
+  assert("既存の #cat も含まれる",          text.includes("#cat"));
+}
+{
+  // themeEn 空のフォールバックでも guestSnsTag が含まれる
+  const text = buildMastodonText("ねこの日", "説明文", "", "", undefined, "#dog");
+  assert("themeEn 空フォールバック: guestSnsTag が含まれる", text.includes("#dog"));
+}
+{
+  const text = buildMastodonText("ねこの日", "説明文", "Cat Day", "A cat day", undefined, null);
+  assert("guestSnsTag null: 文字列 'null' が含まれない", !text.includes("null"));
+  assert("guestSnsTag null: #cat は含まれる", text.includes("#cat"));
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
