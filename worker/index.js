@@ -188,12 +188,15 @@ export function getSeasonalFlower(dateStr) {
 }
 
 /**
- * handleResearch()の結果配列から google-search-fallback を除外し theme 重複を除去する。
+ * handleResearch()の結果配列から none（検索証拠ゼロ）を除外し theme 重複を除去する。
+ * google-search-fallback（webSearchQueriesあり）はGeminiが検索した証拠があるため保持する。
+ * Gemini 2.5以降、groundingChunksが返らずwebSearchQueriesのみ返るケースが増加したため
+ * 除外条件をgoogle-search-fallback→noneに緩和した（2026-05）。
  * @param {object[]} entries - handleResearch()の戻り値の配列
  * @returns {object[]}
  */
 export function filterAndDedupePool(entries) {
-  const valid = entries.filter(e => e.sourceUrlKind !== "google-search-fallback");
+  const valid = entries.filter(e => e.sourceUrlKind !== "none");
   const seen = new Set();
   return valid.filter(e => {
     if (seen.has(e.theme)) return false;
@@ -382,17 +385,6 @@ export async function handleResearch(body, apiKey) {
 
   const queries =
     data.candidates?.[0]?.groundingMetadata?.webSearchQueries ?? [];
-
-  // デバッグ: grounding構造確認用（確認後削除）
-  const gm = data.candidates?.[0]?.groundingMetadata ?? {};
-  console.log(
-    `[research-debug] model=${model}` +
-    ` chunks=${groundingChunks.length}` +
-    ` queries=${queries.length}` +
-    ` supports=${(gm.groundingSupports ?? []).length}` +
-    ` searchEntryPoint=${gm.searchEntryPoint ? "yes" : "no"}` +
-    ` gmKeys=${Object.keys(gm).join(",")}`
-  );
 
   // JSON内のsourceUrlがvertexaisearchリダイレクトの場合は除去してフォールバックへ
   if (result.sourceUrl?.includes("vertexaisearch.cloud.google.com")) {
