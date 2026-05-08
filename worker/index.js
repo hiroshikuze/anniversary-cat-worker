@@ -383,6 +383,17 @@ export async function handleResearch(body, apiKey) {
   const queries =
     data.candidates?.[0]?.groundingMetadata?.webSearchQueries ?? [];
 
+  // デバッグ: grounding構造確認用（確認後削除）
+  const gm = data.candidates?.[0]?.groundingMetadata ?? {};
+  console.log(
+    `[research-debug] model=${model}` +
+    ` chunks=${groundingChunks.length}` +
+    ` queries=${queries.length}` +
+    ` supports=${(gm.groundingSupports ?? []).length}` +
+    ` searchEntryPoint=${gm.searchEntryPoint ? "yes" : "no"}` +
+    ` gmKeys=${Object.keys(gm).join(",")}`
+  );
+
   // JSON内のsourceUrlがvertexaisearchリダイレクトの場合は除去してフォールバックへ
   if (result.sourceUrl?.includes("vertexaisearch.cloud.google.com")) {
     result.sourceUrl = "";
