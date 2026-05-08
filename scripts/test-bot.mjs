@@ -1915,7 +1915,7 @@ console.log("\n[getSeasonalFlower]");
 }
 
 // ---------------------------------------------------------------------------
-// filterAndDedupePool - google-search-fallback除外 + theme重複除去
+// filterAndDedupePool - none除外 + theme重複除去
 // ---------------------------------------------------------------------------
 console.log("\n[filterAndDedupePool]");
 {
@@ -1923,51 +1923,31 @@ console.log("\n[filterAndDedupePool]");
     { theme: "郵政記念日",       sourceUrlKind: "vertexaisearch-skipped", sourceUrl: "https://x.com" },
     { theme: "ネモフィラ",        sourceUrlKind: "grounding",              sourceUrl: "https://y.com" },
     { theme: "郵政記念日",       sourceUrlKind: "vertexaisearch-skipped", sourceUrl: "https://z.com" }, // 重複
-    { theme: "アースデイ",        sourceUrlKind: "google-search-fallback", sourceUrl: "https://www.google.com/search?q=..." }, // 除外
+    { theme: "アースデイ",        sourceUrlKind: "google-search-fallback", sourceUrl: "https://www.google.com/search?q=..." }, // 保持
     { theme: "青年海外協力隊の日", sourceUrlKind: "json",                   sourceUrl: "https://a.com" },
   ];
   const result = filterAndDedupePool(entries);
-  assert("google-search-fallbackを除外する", result.every(e => e.sourceUrlKind !== "google-search-fallback"));
+  assert("google-search-fallbackを保持する", result.some(e => e.sourceUrlKind === "google-search-fallback"));
   assert("theme重複を1件に絞る（郵政記念日は1件のみ）", result.filter(e => e.theme === "郵政記念日").length === 1);
   assert("vertexaisearch-skippedは保持する", result.some(e => e.sourceUrlKind === "vertexaisearch-skipped"));
-  assert("フィルタ後3件（郵政・ネモフィラ・青年海外協力隊）", result.length === 3);
+  assert("フィルタ後4件（郵政・ネモフィラ・アースデイ・青年海外協力隊）", result.length === 4);
   assert("先着順を維持（郵政記念日は0番目）", result[0].theme === "郵政記念日");
 }
 {
-  // 全件がgoogle-search-fallbackの場合は空配列
-  const allFallback = [
-    { theme: "A", sourceUrlKind: "google-search-fallback" },
-    { theme: "B", sourceUrlKind: "google-search-fallback" },
-  ];
-  assert("全件fallbackなら空配列を返す", filterAndDedupePool(allFallback).length === 0);
-}
-
-// ── 緩和後の期待動作（現時点ではFAILする・実装後にPASSするべきテスト）──
-{
-  // google-search-fallback（検索クエリあり）は保持される
-  const entries = [
-    { theme: "アースデイ",  sourceUrlKind: "google-search-fallback" },
-    { theme: "郵政記念日", sourceUrlKind: "grounding", sourceUrl: "https://y.com" },
-  ];
-  const result = filterAndDedupePool(entries);
-  assert("【緩和後】google-search-fallbackを保持する", result.some(e => e.sourceUrlKind === "google-search-fallback"));
-}
-{
-  // Discordログで確認された実際の状況: 全10件がgoogle-search-fallback → 季節補充不要になるべき
-  const allGsf = Array.from({ length: 10 }, (_, i) => ({
-    theme: `記念日${i + 1}`, sourceUrlKind: "google-search-fallback",
-  }));
-  const result = filterAndDedupePool(allGsf);
-  assert("【緩和後】全件google-search-fallbackでも3件以上保持する（季節補充不要）", result.length >= 3);
-}
-{
-  // sourceUrlKind=none（検索証拠ゼロ）は引き続き除外される
+  // sourceUrlKind=none（検索証拠ゼロ）は除外される
   const entries = [
     { theme: "A", sourceUrlKind: "none" },
     { theme: "B", sourceUrlKind: "google-search-fallback" },
   ];
-  const result = filterAndDedupePool(entries);
-  assert("【緩和後】sourceUrlKind=noneを除外する", result.every(e => e.sourceUrlKind !== "none"));
+  assert("sourceUrlKind=noneを除外する", filterAndDedupePool(entries).every(e => e.sourceUrlKind !== "none"));
+}
+{
+  // Discordログで確認された実際の状況: 全10件がgoogle-search-fallback → 季節補充不要
+  const allGsf = Array.from({ length: 10 }, (_, i) => ({
+    theme: `記念日${i + 1}`, sourceUrlKind: "google-search-fallback",
+  }));
+  const result = filterAndDedupePool(allGsf);
+  assert("全件google-search-fallbackでも3件以上保持する（季節補充不要）", result.length >= 3);
 }
 
 // ---------------------------------------------------------------------------
