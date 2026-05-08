@@ -263,10 +263,11 @@ async function generateResearchPool(env) {
 
   const raw          = results.filter(r => r.status === "fulfilled").map(r => r.value);
   const failedCount  = results.filter(r => r.status === "rejected").length;
-  const fbCount      = raw.filter(e => e.sourceUrlKind === "google-search-fallback").length;
+  const noneCount    = raw.filter(e => e.sourceUrlKind === "none").length;
+  const gsfCount     = raw.filter(e => e.sourceUrlKind === "google-search-fallback").length;
   let   entries      = filterAndDedupePool(raw);
 
-  console.log(`[pool] 取得 ${raw.length}/10件（失敗 ${failedCount}件・fallback除外 ${fbCount}件）→ dedup後 ${entries.length}件`);
+  console.log(`[pool] 取得 ${raw.length}/10件（失敗 ${failedCount}件・none除外 ${noneCount}件・gsf保持 ${gsfCount}件）→ dedup後 ${entries.length}件`);
 
   // 3件未満なら季節の花で補充
   let supplemented = false;
@@ -295,7 +296,7 @@ async function generateResearchPool(env) {
   const themeList = entries.map((e, i) => `  [${i + 1}] ${e.theme}`).join("\n");
   const msg = [
     `✅ リサーチプール生成完了 ${todayJst}`,
-    `📊 生成 ${raw.length}/10件 → fallback除外 ${fbCount}件 → 重複除去後 ${entries.length - (supplemented ? 1 : 0)}件${supplemented ? " → 季節補充1件追加" : ""}`,
+    `📊 生成 ${raw.length}/10件 → none除外 ${noneCount}件・gsf保持 ${gsfCount}件 → 重複除去後 ${entries.length - (supplemented ? 1 : 0)}件${supplemented ? " → 季節補充1件追加" : ""}`,
     `📅 テーマ一覧:\n${themeList}`,
   ].join("\n");
 
