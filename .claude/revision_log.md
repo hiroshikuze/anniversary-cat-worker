@@ -257,6 +257,14 @@
 - **教訓**: 「タイムアウトを追加した」という確認は「外部fetchを持つ関数すべてを`grep -n "AbortSignal\|fetch("`でリストアップして照合する」まで行う。特に「MastodonとBluesky両方に追加して」という指示のように複数対象がある場合は、実装後に全対象を機械的に確認する
 
 
+### 2026-05 | Gemini 2.5のgroundingChunks変化によるプール全件季節補充
+
+- **状況**: リサーチプール生成のDiscord通知で`fallback除外 10件 → 重複除去後 0件 → 季節補充1件追加`が数日連続して発生。Botが毎日「杜若の季節」等の季節補充テーマのみを投稿していた
+- **原因**: Gemini 2.5以降、`tools: [{ google_search: {} }]`を使ったリサーチで`groundingChunks`が返らなくなり、`webSearchQueries`のみが返るようになった。旧フィルターは`groundingChunks`のないエントリ（`google-search-fallback`）を全件除外していたため、プールが常に空→季節補充発動
+- **修正**: `filterAndDedupePool()`の除外条件を`google-search-fallback`→`none`（`webSearchQueries`すら返らないケース）に緩和。`webSearchQueries`が存在する＝Geminiが検索した証拠として信頼できる
+- **Discord通知の表示修正**: `fbCount`（`google-search-fallback`件数）を「fallback除外」と誤表示していたのを、実際に除外される`noneCount`を「none除外」・保持される`gsfCount`を「gsf保持」と分けて表示するよう修正
+- **教訓**: モデルのバージョンアップでAPIレスポンス構造が変わることがある。プール生成のDiscord通知を毎日確認し「全件除外」が続いたらフィルター条件を疑う。`google-search-fallback`のようなラベルが将来も同じ意味を持つとは限らない
+
 ---
 
 ```text
