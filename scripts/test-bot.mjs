@@ -1942,6 +1942,34 @@ console.log("\n[filterAndDedupePool]");
   assert("全件fallbackなら空配列を返す", filterAndDedupePool(allFallback).length === 0);
 }
 
+// ── 緩和後の期待動作（現時点ではFAILする・実装後にPASSするべきテスト）──
+{
+  // google-search-fallback（検索クエリあり）は保持される
+  const entries = [
+    { theme: "アースデイ",  sourceUrlKind: "google-search-fallback" },
+    { theme: "郵政記念日", sourceUrlKind: "grounding", sourceUrl: "https://y.com" },
+  ];
+  const result = filterAndDedupePool(entries);
+  assert("【緩和後】google-search-fallbackを保持する", result.some(e => e.sourceUrlKind === "google-search-fallback"));
+}
+{
+  // Discordログで確認された実際の状況: 全10件がgoogle-search-fallback → 季節補充不要になるべき
+  const allGsf = Array.from({ length: 10 }, (_, i) => ({
+    theme: `記念日${i + 1}`, sourceUrlKind: "google-search-fallback",
+  }));
+  const result = filterAndDedupePool(allGsf);
+  assert("【緩和後】全件google-search-fallbackでも3件以上保持する（季節補充不要）", result.length >= 3);
+}
+{
+  // sourceUrlKind=none（検索証拠ゼロ）は引き続き除外される
+  const entries = [
+    { theme: "A", sourceUrlKind: "none" },
+    { theme: "B", sourceUrlKind: "google-search-fallback" },
+  ];
+  const result = filterAndDedupePool(entries);
+  assert("【緩和後】sourceUrlKind=noneを除外する", result.every(e => e.sourceUrlKind !== "none"));
+}
+
 // ---------------------------------------------------------------------------
 // 【回帰】Gemini 502平文レスポンスでSyntaxErrorが伝播しない
 // ---------------------------------------------------------------------------
