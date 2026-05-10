@@ -1,5 +1,65 @@
 # 将来拡張メモ
 
+## Cloudflare Workers AI移行調査（2026-05・完了・保留）
+
+### 調査の背景
+
+2026年4月のGemini API費用¥2,609削減を目的に、Cloudflare Workers AIへの移行可否を調査した。
+
+### コストの主因（重要）
+
+月額¥2,609の大部分はテキストトークン費ではなく**Google Search grounding費**と推定される。
+
+```
+プール生成Cron: 10並列 × 30日 = 300クエリ/月
+ユーザー/research: 推定150クエリ/月
+合計: ~450クエリ × $0.035/クエリ = $15.75/月 ≒ ¥2,400
+```
+
+残り¥200前後がテキストトークン費（入力~400 tokens + 出力~200 tokens/リクエスト）と画像生成費。
+
+### 月間Gemini呼び出し数（実コード確認済み）
+
+| 呼び出し元 | モデル | 月間回数 | 備考 |
+| --- | --- | --- | --- |
+| プール生成Cron（`0 15 * * *`）| `gemini-2.5-flash`系（自動選択） | 300回 | 10並列 × 30日 |
+| Bot Cron（`0 22 * * 1-5`）| `gemini-2.5-flash-image` | 22回 | 画像生成のみ（プールヒット時はresearch不要） |
+| ユーザー`/research` | 同上 | 不定（上限なし） | プールヒット時は呼ばれない |
+| ユーザー`/generate` | 同上 | 不定（上限50回/日） | |
+
+### Workers AI代替可否
+
+| 機能 | 代替可否 | 理由 |
+| --- | --- | --- |
+| `handleResearch()`（テキスト＋検索） | **実質不可** | `google_search: {}`ツールがWorkers AIにない。Llamaで特定日の記念日を生成するとハルシネーションリスクが高い |
+| `handleGenerate()`（画像生成） | 技術的には可だが意味なし | FLUXはPollinationsフォールバックとして**すでに実装済み**。Workerに移行しても品質は現在の「Gemini失敗時」と同等 |
+
+### Workers AI画像生成のNeurons試算
+
+```
+FLUX.1 Schnell: ~580 neurons/画像
+
+最大利用時: 50回/日 × 580 = 29,000 neurons/日
+無料枠: 10,000 neurons/日
+課金対象: 19,000 × $0.011/1,000 ≈ $0.21/日 ≈ ¥6,200/月（最大時）
+```
+
+最大利用時は現状¥2,609より**高コスト**になるリスクがある。
+
+### 推奨アクション（未実施）
+
+1. **Google AI Studio無料tierへの移行可否を確認する（優先度高）**
+   - 現在のエンドポイント`generativelanguage.googleapis.com`はGoogle AI StudioのAPI
+   - Free tier制限: 15 RPM・1,500 RPD・Google Search groundingが無料tierで使えるかどうかの確認が必要
+   - 無料tierで使えれば¥0になる可能性がある（要Google Cloud Console確認）
+
+2. **Workers AI移行は採算が合わない（不採用）**
+   - researchの主コスト（Search grounding）は代替不可
+   - 画像生成はPollinationsで無料フォールバック済み
+   - 有料Workers AIは最大利用時に現状より高コスト
+
+---
+
 ## リファクタリング候補（テスト容易性の改善）
 
 ### 判断基準（2026-05 議論で確定）
