@@ -184,7 +184,7 @@
         今日の記念日を調べて、水彩画風の猫を生成します
       </p>
       <div class="inline-block bg-white border border-pink-200 text-pink-600 px-5 py-2 rounded-full text-sm shadow-sm">
-        📅 <span id="today-date">読み込み中...</span>
+        <span id="today-date-label" data-i18n="todayDateLabel" class="font-medium mr-1">今日の記念日</span>📅 <span id="today-date">読み込み中...</span>
       </div>
     </div>
 
@@ -199,6 +199,7 @@
           class="btn-primary w-full text-white font-medium py-3 px-6 rounded-2xl text-sm" data-i18n="researchBtn">
           🔍 今日の記念日を調べる
         </button>
+        <p class="text-xs text-pink-400 mt-2 text-center" data-i18n="researchSubtitle">AIが今日の記念日に合わせた猫のイラストを作ります</p>
       </div>
 
       <!-- ローディング -->
@@ -373,6 +374,8 @@
         expiredText:        `この記念日画像は期限切れです（${STORAGE_DAYS}日間保存）`,
         createNewBtn:       "🎨 今日の記念日で作る",
         newGenerateBtn:     "✨ 新しく生成",
+        todayDateLabel:     "今日の記念日",
+        researchSubtitle:   "AIが今日の記念日に合わせた猫のイラストを作ります",
         dateLocale:         "ja-JP",
         whatsNewTitle:      "🆕 アップデート情報",
         whatsNewClose:      "閉じる",
@@ -412,6 +415,8 @@
         expiredText:        `This anniversary image has expired (stored for ${STORAGE_DAYS} days)`,
         createNewBtn:       "🎨 Create Today's Anniversary",
         newGenerateBtn:     "✨ Generate New",
+        todayDateLabel:     "Today's Anniversary",
+        researchSubtitle:   "AI will create a cat illustration for today's anniversary",
         dateLocale:         "en-US",
         whatsNewTitle:      "🆕 What's New",
         whatsNewClose:      "Close",
@@ -546,6 +551,8 @@
           year: "numeric", month: "long", day: "numeric", weekday: "long",
           timeZone: "Asia/Tokyo",
         });
+      const labelEl = document.getElementById("today-date-label");
+      if (labelEl) labelEl.textContent = date === null ? t("todayDateLabel") : "";
     }
 
     function resetToInitial() {
@@ -895,7 +902,7 @@
       const dateStr = id.replace("bot/", "").replace(/-\d$/, "");
       const [y, m, d] = dateStr.split("-");
       const label = currentLang === "ja"
-        ? `${parseInt(m)}月${parseInt(d)}日`
+        ? `${parseInt(m)}月${parseInt(d)}日の記念日`
         : `${MONTH_NAMES_EN[parseInt(m) - 1]} ${parseInt(d)}`;
       const displayTheme = (currentLang === "en" && meta.themeEn) ? meta.themeEn : (meta.theme ?? "");
 
