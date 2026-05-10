@@ -208,8 +208,8 @@ console.log("\n[buildPostText: カスタムpageUrl]");
 {
   const customUrl = "https://hiroshikuze.github.io/anniversary-cat-worker/?id=bot/2026-03-28";
   const text = buildPostText("ねこの日", "猫を愛でる記念日です", customUrl);
-  assert("カスタムURLが含まれる", text.includes(customUrl));
-  assert("デフォルトSITE_URLは含まれない", !text.includes("hiroshikuze.github.io/anniversary-cat-worker/\n"));
+  assert("カスタムURLが📸行に含まれる", text.includes(`📸 ${customUrl}`));
+  assert("CTAにSITE_URLが含まれる", text.includes("作ってみませんか？\nhttps://hiroshikuze.github.io/anniversary-cat-worker/"));
 
   const graphemes = [...new Intl.Segmenter().segment(text)];
   assert(`300 grapheme以内（カスタムURL、実測: ${graphemes.length}）`, graphemes.length <= 300);
@@ -2477,7 +2477,7 @@ console.log("\n[_buildPollinationsPrompt: themeEn/visualHint先頭]");
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// buildMastodonText: pageUrlに?id=が含まれる場合の&lang=en付加
+// buildMastodonText: pageUrl（artworkUrl）が📸行に挿入され、CTAはSITE_URL
 // ────────────────────────────────────────────────────────────────────────────
 console.log("\n[buildMastodonText: pageUrl with ?id= → &lang=en]");
 {
@@ -2486,8 +2486,9 @@ console.log("\n[buildMastodonText: pageUrl with ?id= → &lang=en]");
     "図書館記念日", "図書館の日", "Library Day", "A day to celebrate public libraries",
     pageUrl
   );
-  assert("?id=付きpageUrl: &lang=en が付加される", text.includes("?id=bot/2026-04-30&lang=en"));
-  assert("?id=付きpageUrl: 日本語CTAにも元URLが含まれる", text.includes("?id=bot/2026-04-30"));
+  assert("?id=付きpageUrl: 📸行にartworkUrlが含まれる", text.includes(`📸 ${pageUrl}`));
+  assert("英語CTAはSITE_URL?lang=en を使用する", text.includes("anniversary-cat-worker/?lang=en"));
+  assert("?id=付きpageUrl: artworkUrlが日本語セクションにも含まれる", text.includes("?id=bot/2026-04-30"));
 }
 
 // ---------------------------------------------------------------------------

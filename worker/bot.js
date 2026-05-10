@@ -67,20 +67,21 @@ export function buildThemeTag(theme) {
  * Bluesky の上限は 300 grapheme。この形式では最大 ~210 grapheme 程度に収まる。
  * @param {string} theme
  * @param {string} description
- * @param {string} [pageUrl] - CTA に使う URL（デフォルト: SITE_URL）
+ * @param {string} [pageUrl] - 個別作品URL（?id=bot/YYYY-MM-DD）。SITE_URLと同値の場合は📸行を省略
  * @param {string|null} [guestSnsTag] - ゲスト動物の英語タグ（例: "#dog"）。null の場合は省略
  */
 export function buildPostText(theme, description, pageUrl = SITE_URL, guestSnsTag = null) {
-  const header   = theme.endsWith("の日")
+  const header      = theme.endsWith("の日")
     ? `今日は「${theme}」！🐱`
     : `今日は「${theme}」の日！🐱`;
-  const body     = description ? `\n${description}` : "";
-  const cta      = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${pageUrl}`;
-  const themeTag = buildThemeTag(theme);
-  const baseTags = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
-  const allTags  = guestSnsTag ? `${baseTags} ${guestSnsTag}` : baseTags;
-  const tags     = `\n\n${allTags}`;
-  return header + body + cta + tags;
+  const body        = description ? `\n${description}` : "";
+  const artworkLine = pageUrl !== SITE_URL ? `\n\n📸 ${pageUrl}` : "";
+  const cta         = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${SITE_URL}`;
+  const themeTag    = buildThemeTag(theme);
+  const baseTags    = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
+  const allTags     = guestSnsTag ? `${baseTags} ${guestSnsTag}` : baseTags;
+  const tags        = `\n\n${allTags}`;
+  return header + body + artworkLine + cta + tags;
 }
 
 /**
@@ -103,28 +104,27 @@ export function buildMastodonText(theme, description, themeEn = "", descriptionE
   const baseTagStr  = themeTag ? `${themeTag} ${mastoTags.join(" ")}` : mastoTags.join(" ");
   const tagStr      = guestSnsTag ? `${baseTagStr} ${guestSnsTag}` : baseTagStr;
 
+  const artworkLine = pageUrl !== SITE_URL ? `\n\n📸 ${pageUrl}` : "";
+
   // themeEn がない場合は日本語のみ（buildPostText 相当）
   if (!safeThemeEn) {
-    const header  = theme.endsWith("の日") ? `今日は「${theme}」！🐱` : `今日は「${theme}」の日！🐱`;
-    const jpDesc  = description ? `\n${description}` : "";
-    const cta     = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${pageUrl}`;
+    const header           = theme.endsWith("の日") ? `今日は「${theme}」！🐱` : `今日は「${theme}」の日！🐱`;
+    const jpDesc           = description ? `\n${description}` : "";
+    const cta              = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${SITE_URL}`;
     const baseFallbackTags = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
-    const fallbackTags = guestSnsTag ? `${baseFallbackTags} ${guestSnsTag}` : baseFallbackTags;
-    return header + jpDesc + cta + `\n\n${fallbackTags}`;
+    const fallbackTags     = guestSnsTag ? `${baseFallbackTags} ${guestSnsTag}` : baseFallbackTags;
+    return header + jpDesc + artworkLine + cta + `\n\n${fallbackTags}`;
   }
 
-  // pageUrlEn: 既存クエリに lang=en を追加
-  const pageUrlEn = pageUrl.includes("?") ? `${pageUrl}&lang=en` : `${pageUrl}?lang=en`;
+  const enHeader = `Today is "${safeThemeEn}"!`;
+  const enDesc   = safeDescEn ? `\n${safeDescEn}` : "";
+  const enCta    = `\n\nWhy don't you try making your own #Nyaniversary today?\n${SITE_URL}?lang=en`;
 
-  const enHeader  = `Today is "${safeThemeEn}"!`;
-  const enDesc    = safeDescEn ? `\n${safeDescEn}` : "";
-  const enCta     = `\n\nWhy don't you try making your own #Nyaniversary today?\n${pageUrlEn}`;
+  const jaHeader = theme.endsWith("の日") ? `今日は「${theme}」！🐱` : `今日は「${theme}」の日！🐱`;
+  const jaDesc   = description ? `\n${description}` : "";
+  const jaCta    = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${SITE_URL}`;
 
-  const jaHeader  = theme.endsWith("の日") ? `今日は「${theme}」！🐱` : `今日は「${theme}」の日！🐱`;
-  const jaDesc    = description ? `\n${description}` : "";
-  const jaCta     = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${pageUrl}`;
-
-  return enHeader + enDesc + enCta + "\n\n" + jaHeader + jaDesc + jaCta + `\n\n${tagStr}`;
+  return enHeader + enDesc + enCta + "\n\n" + jaHeader + jaDesc + artworkLine + jaCta + `\n\n${tagStr}`;
 }
 
 /**

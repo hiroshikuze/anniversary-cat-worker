@@ -355,6 +355,8 @@ Setting and surrounding atmosphere; the cat may naturally interact with theme-re
 今日は「{theme}」の日！🐱       ← theme が「の日」で終わる場合は「の日」を省略
 {description}
 
+📸 {artworkUrl}                  ← R2保存成功時のみ挿入（?id=bot/YYYY-MM-DD）
+
 あなたも今日の #にゃんバーサリー を作ってみませんか？
 https://hiroshikuze.github.io/anniversary-cat-worker/
 
@@ -362,24 +364,27 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 ```
 
 - `{guestSnsTag}`はゲスト登場時のみ末尾に追加（例: `#dog` `#rabbit`）。伴侶猫・子猫は`#cat` `#kitten`と重複するため追加しない
-- 300 grapheme以内に収まる設計（実測 ~210 grapheme・ゲストタグ追加後も余裕あり）。テーマタグを先頭にすることでInstagram手動投稿時に末尾タグを省略しやすくしている。
+- `artworkUrl`は`pageUrl !== SITE_URL`のとき（R2保存成功）のみ追加される。失敗時はCTAのみ（~210 grapheme）
+- 300 grapheme以内に収まる設計（`artworkUrl`あり時の実測 ~270 grapheme・ゲストタグ追加後も余裕あり）。テーマタグを先頭にすることでInstagram手動投稿時に末尾タグを省略しやすくしている。
 
 #### Mastodon（`buildMastodonText()`・英語優先・日英二言語）
 
-英語を先に置くことで海外ユーザーへのリーチを優先する。`pageUrlEn` は `?lang=en` クエリ付きの英語ダイレクトURL（`${SITE_URL}?lang=en` または `${SITE_URL}?id=${r2Id}&lang=en`）。
+英語を先に置くことで海外ユーザーへのリーチを優先する。CTAは日英ともに汎用URL（`SITE_URL`）を指し、個別作品URLは日本語セクション末尾の`📸`行で案内する。
 
 ```text
 Today is "{themeEn}"!
 {descriptionEn}
 
 Why don't you try making your own #Nyaniversary today?
-{pageUrlEn}
+https://hiroshikuze.github.io/anniversary-cat-worker/?lang=en
 
 今日は「{theme}」！🐱
 {description}
 
+📸 {artworkUrl}                  ← R2保存成功時のみ挿入（?id=bot/YYYY-MM-DD）
+
 あなたも今日の #にゃんバーサリー を作ってみませんか？
-{pageUrl}
+https://hiroshikuze.github.io/anniversary-cat-worker/
 
 #{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #Nyaniversary #にゃんバーサリー #{guestSnsTag}
 ```
@@ -387,7 +392,8 @@ Why don't you try making your own #Nyaniversary today?
 - `themeEn`・`descriptionEn`は`handleResearch()`がGeminiから取得する英語フィールド
 - `themeEn`が空の場合は英語セクション全体を省略し、Blueskyと同一テキスト（`buildPostText()`）にフォールバック
 - `descriptionEn`が空の場合は英語説明行のみ省略
-- 想定文字数: ~420文字（Mastodon標準上限500文字以内）
+- `artworkUrl`は`pageUrl !== SITE_URL`のとき（R2保存成功）のみ挿入。失敗時は省略
+- 想定文字数: ~460文字（artworkUrlあり時・Mastodon標準上限500文字以内）
 - altテキスト・SUZURI商品説明は**日本語のみ**（変更しない）
 
 **「の日」重複防止ロジック（`buildPostText`）:**
