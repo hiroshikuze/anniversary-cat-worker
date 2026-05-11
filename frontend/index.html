@@ -1047,7 +1047,7 @@
         // Umamiページビュー計測（正しいパス形式・遅延ロード対応）
         const _trackTitle = `${displayTheme} - にゃんバーサリー`;
         const _trackUrl   = `/anniversary-cat-worker/${id}`;
-        const _doTrack    = () => window.umami?.track({ url: _trackUrl, title: _trackTitle });
+        const _doTrack    = () => window.umami?.track(props => ({ ...props, url: _trackUrl, title: _trackTitle }));
         window.umami ? _doTrack() : window.addEventListener("load", _doTrack, { once: true });
 
         document.getElementById("g-goods").classList.add("hidden");
