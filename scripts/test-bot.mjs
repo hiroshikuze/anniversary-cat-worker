@@ -235,6 +235,30 @@ console.log("\n[buildUrlFacets: カスタムurl]");
 }
 
 // ---------------------------------------------------------------------------
+// buildUrlFacets - pageUrl と SITE_URL の両方を含むテキスト（重複マッチ防止）
+// ---------------------------------------------------------------------------
+console.log("\n[buildUrlFacets: pageUrl+SITE_URL 重複マッチ防止]");
+{
+  const SITE_URL = "https://hiroshikuze.github.io/anniversary-cat-worker/";
+  const pageUrl  = `${SITE_URL}?id=bot/2026-05-12`;
+  const text     = buildPostText("ねこの日", "説明", pageUrl);
+  const encoder  = new TextEncoder();
+  const textBytes = encoder.encode(text);
+
+  // pageUrl を検索 → 1件のみ（CTA の SITE_URL にはマッチしない）
+  const pageFacets = buildUrlFacets(text, pageUrl);
+  assert("pageUrl facets: 1件", pageFacets.length === 1);
+  const pageExtracted = new TextDecoder().decode(textBytes.slice(pageFacets[0].index.byteStart, pageFacets[0].index.byteEnd));
+  assert("pageUrl facet のバイト位置が正確", pageExtracted === pageUrl);
+
+  // SITE_URL を検索 → 1件のみ（pageUrl の前置きにはマッチしない）
+  const siteFacets = buildUrlFacets(text, SITE_URL);
+  assert("SITE_URL facets: 1件（pageUrl前置きにマッチしない）", siteFacets.length === 1);
+  const siteExtracted = new TextDecoder().decode(textBytes.slice(siteFacets[0].index.byteStart, siteFacets[0].index.byteEnd));
+  assert("SITE_URL facet のバイト位置が正確（CTAのURL）", siteExtracted === SITE_URL);
+}
+
+// ---------------------------------------------------------------------------
 // runBot - GEMINI_API_KEY 未設定時は早期終了（handleResearch を呼ばない）
 // ---------------------------------------------------------------------------
 console.log("\n[runBot: GEMINI_API_KEY 未設定]");

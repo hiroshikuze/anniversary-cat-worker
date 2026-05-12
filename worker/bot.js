@@ -170,6 +170,12 @@ export function buildUrlFacets(text, url = SITE_URL) {
   while (true) {
     const idx = text.indexOf(url, searchFrom);
     if (idx === -1) break;
+    // URLの直後が ? や # の場合は別URLの前置きとしてスキップ（例: SITE_URL?id=... の中の SITE_URL）
+    const afterChar = text[idx + url.length];
+    if (afterChar && /[?#]/.test(afterChar)) {
+      searchFrom = idx + url.length;
+      continue;
+    }
     const byteStart = encoder.encode(text.slice(0, idx)).length;
     const byteEnd   = byteStart + encoder.encode(url).length;
     facets.push({
@@ -335,10 +341,14 @@ async function uploadBlob(accessJwt, imageBytes, mimeType) {
 /** テキスト・画像・ファセットを含む投稿レコードを作成する */
 async function createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl = SITE_URL, themeTag = null, guestSnsTag = null) {
   const extraTags = [themeTag, guestSnsTag].filter(Boolean);
+  // pageUrl と SITE_URL が異なる場合（📸行 + CTA行 の2URL構成）は両方をfacet化する
+  const urlFacets = pageUrl !== SITE_URL
+    ? [...buildUrlFacets(text, pageUrl), ...buildUrlFacets(text, SITE_URL)]
+    : buildUrlFacets(text, SITE_URL);
   const record = {
     $type:     "app.bsky.feed.post",
     text,
-    facets:    [...buildHashtagFacets(text, extraTags), ...buildUrlFacets(text, pageUrl)],
+    facets:    [...buildHashtagFacets(text, extraTags), ...urlFacets],
     embed:     {
       $type:  "app.bsky.embed.images",
       images: [{
