@@ -44,6 +44,26 @@ TodoWriteを列挙する前にルール1のPlan（計画提示・承認）を完
 
 TodoWriteの1番目の項目がドキュメント以外になっている場合は着手しない。「小さな変更だから」「1行だけだから」は例外にならない。
 
+**テスト省略の条件（以下以外は必ずテストが必要）:**
+
+- ドキュメント・コメントのみの変更
+- 定数値の変更（ロジック変更なし）
+
+**フェーズ移行時の宣言義務:**
+
+各フェーズに移行する前に以下を出力する。この宣言なしにフェーズを移行しない。
+
+- `[Docs完了] → Testsフェーズへ移ります`
+- `[Tests完了] → Codeフェーズへ移ります`
+
+**違反を検知した場合（自己検知・ユーザー指摘いずれも）:**
+
+1. コード変更をいったん停止する
+2. 不足しているドキュメント更新またはテストをTodoWriteに追記する
+3. 不足分を完了させてからコード変更に戻る
+
+「すでに書いたから」を理由に順序を遡及免除しない。
+
 ---
 
 ## プロジェクト概要
@@ -84,39 +104,7 @@ Bluesky共有URL初回訪問 → loadSharedImage() → products:[]を検知
 
 ## ファイル構成
 
-```text
-anniversary-cat-worker/
-├── CLAUDE.md                         ← 判断品質ルール（毎セッション冒頭で確認）
-├── .claude/
-│   ├── revision_log.md               ← ミスパターン記録（毎セッション冒頭で読む）
-│   ├── settings.json                 ← PostToolUseフック（Markdownスペース検証）
-│   └── rules/
-│       ├── coding.md                 ← コーディング規約・Markdown執筆ルール
-│       ├── testing.md                ← テスト方針・診断手順・ログパターン
-│       ├── git-workflow.md           ← Gitワークフロー・デプロイ手順
-│       └── architecture.md          ← 設計・API仕様・過去バグ・将来拡張
-├── worker/
-│   ├── index.js                      ← Cloudflare Worker本体（fetch + scheduledハンドラ）
-│   ├── bot.js                        ← Bluesky/Mastodon Botロジック・Discord通知（runBot, buildPostText, etc.）
-│   ├── fal.js                        ← fal.ai ESRGAN 2xアップスケーリング（Queue API）
-│   ├── suzuri.js                     ← SUZURI API連携（商品生成・削除）
-│   └── r2-storage.js                 ← Cloudflare R2ストレージ操作
-├── frontend/
-│   ├── index.html                    ← フロントエンド（PWA対応、JP/EN切り替え）
-│   ├── manifest.json
-│   └── sw.js
-├── scripts/
-│   ├── health-check.js               ← E2E診断（GitHub Actionsのみ実行）
-│   ├── test-bot.mjs                  ← ユニットテスト（外部API不要）← npm test
-│   ├── test-suzuri-api.mjs           ← SUZURI API動作確認（実商品が生成される）
-│   ├── test-fal-models.mjs           ← fal.aiモデル比較（FAL_KEY必要）
-│   └── test-gemini-image-timing.mjs  ← Gemini画像生成の所要時間計測（GEMINI_API_KEY必要）
-├── .github/workflows/
-│   ├── health-check.yml              ← push時: ユニットテスト + E2Eチェック
-│   ├── deploy-worker.yml             ← main push時: Cloudflare Workersデプロイ
-│   └── deploy-pages.yml              ← main push時: GitHub Pagesデプロイ
-└── wrangler.toml                     ← Cloudflareデプロイ設定（Cron Trigger含む）
-```
+詳細は`.claude/rules/architecture.md`の「ファイル構成」参照。
 
 ---
 
@@ -197,17 +185,7 @@ FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 
 ### 必要なシークレット
 
-```bash
-wrangler secret put GEMINI_API_KEY           # 必須
-wrangler secret put BLUESKY_IDENTIFIER       # 必須（nyanmusu.bsky.social）
-wrangler secret put BLUESKY_APP_PASSWORD     # 必須
-wrangler secret put DISCORD_WEBHOOK_URL      # 必須（通知・監視用）
-wrangler secret put BYPASS_TOKEN             # 開発用（レート制限バイパス）
-wrangler secret put SUZURI_API_KEY           # SUZURIグッズ機能（任意）
-wrangler secret put FAL_KEY                  # fal.aiアップスケーリング（任意）
-wrangler secret put MASTODON_INSTANCE_URL    # Mastodon投稿（任意）例: https://mstdn.jp
-wrangler secret put MASTODON_ACCESS_TOKEN    # Mastodon投稿（任意）アプリのアクセストークン
-```
+詳細は`.claude/rules/git-workflow.md`の「初回セットアップ」参照。
 
 ---
 

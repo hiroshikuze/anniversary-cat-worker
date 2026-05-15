@@ -27,12 +27,15 @@
 wrangler kv namespace create RATE_KV
 
 # シークレットを設定（初回のみ）
-wrangler secret put GEMINI_API_KEY
-wrangler secret put BYPASS_TOKEN
-wrangler secret put BLUESKY_IDENTIFIER      # nyanmusu.bsky.social
-wrangler secret put BLUESKY_APP_PASSWORD    # BlueskyのApp Password
-wrangler secret put DISCORD_WEBHOOK_URL     # Discord Webhook URL
-wrangler secret put SUZURI_API_KEY          # SUZURI APIキー
+wrangler secret put GEMINI_API_KEY           # 必須
+wrangler secret put BLUESKY_IDENTIFIER       # 必須（nyanmusu.bsky.social）
+wrangler secret put BLUESKY_APP_PASSWORD     # 必須（BlueskyのApp Password）
+wrangler secret put DISCORD_WEBHOOK_URL      # 必須（Discord Webhook URL）
+wrangler secret put BYPASS_TOKEN             # 開発用（レート制限バイパス）
+wrangler secret put SUZURI_API_KEY           # SUZURIグッズ機能（任意）
+wrangler secret put FAL_KEY                  # fal.aiアップスケーリング（任意）
+wrangler secret put MASTODON_INSTANCE_URL    # Mastodon投稿（任意）例: https://mstdn.jp
+wrangler secret put MASTODON_ACCESS_TOKEN    # Mastodon投稿（任意）アプリのアクセストークン
 
 # Workerをデプロイ
 wrangler deploy
