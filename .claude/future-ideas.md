@@ -1126,3 +1126,88 @@ const KANJI_FONT_STACK = '"Hiragino Mincho ProN", "Yu Mincho", "游明朝", "Not
 ```
 
 詳細は`.claude/rules/suzuri-api-reference.md`の「3. 背面印刷」を参照。
+
+---
+
+## かなモード（ふりがな表示）設計メモ（2026-05・実装待ち）
+
+### 概要
+
+子供・日本語学習者向けに JP / **かな** / EN の3言語モードを追加する。
+「かな」モードでは日本語テキストに`<ruby>`タグでふりがなを付ける。
+
+### 確定した設計判断
+
+#### 言語トグルUI
+
+- 現在: `JP | EN`（`toggleLang()`で2値切り替え）
+- 変更後: `JP | かな | EN`（`setLang(lang)`で各スパンを独立クリック）
+- URLパラメーター: `?lang=kana`を追加（既存の`?lang=en`と同じ方式）
+
+#### ふりがなデータの取得元（2種類）
+
+| 対象 | 方法 |
+| --- | --- |
+| UIテキスト（ボタン・ラベル等） | kuroshiroで一括生成済み（`translations.kana`に格納予定） |
+| 動的コンテンツ（theme・description） | `handleResearch()`でGeminiに`themeKana`/`descriptionKana`（ruby HTML）を追加生成させR2に保存 |
+
+- `themeKana`/`descriptionKana`は`themeEn`/`descriptionEn`と同じパターンで実装する
+- 既存R2データ（`themeKana`なし）ではかなモードで`theme`（日本語）にフォールバック
+
+#### translations.kana 生成状況
+
+`scripts/generate-kana-translations.mjs`（kuroshiro使用）で全43キーの変換済みruby HTMLを生成・目視確認済み。
+
+修正確定事項:
+
+- `saleBanner`の`火`→`<ruby>火<rt>かようび</rt></ruby>`（曜日略語のため「かようび」と読む）
+- `saleBanner`はセール期間変更のたびにClaudeCodeに相談して`ja`/`kana`両方を更新する
+
+#### applyLang() の innerHTML 対応
+
+かなモードのキーのみ`innerHTML`で設定し、ja/enは従来通り`textContent`を維持する。
+
+```js
+if (currentLang === "kana" || key === "footer") {
+  el.innerHTML = val;
+} else {
+  el.textContent = val;
+}
+```
+
+#### SUZURIセクションの扱い
+
+**かなモード・ENモード両方でSUZURIセクションを表示する**（非表示にしない）。
+ただし、リンク先が日本語のみであることをモードに合った注釈で明示する。
+
+| モード | 注釈テキスト |
+| --- | --- |
+| かな | `<ruby>リンク先<rt>りんくさき</rt></ruby>はにほんごのみです` |
+| EN | `Note: The SUZURI shop is available in Japanese only.` |
+
+実装方法: `translations`に`goodsJaOnly`キーを追加し、`showGoods()`内でグッズラベルの下に表示する。
+
+#### Umami計測
+
+- `?lang=kana` URLにより自動で別ページとして集計される（追加実装不要）
+- `setLang()`に`umami?.track("lang-switch", { lang })`を1行追加して言語切り替えをカスタムイベント計測する
+
+### 実装待ちの作業（優先順）
+
+1. `handleResearch()`に`themeKana`/`descriptionKana`を追加（Worker側）
+2. R2保存・`/image/:id`レスポンスに`themeKana`/`descriptionKana`を含める
+3. `translations.kana`オブジェクトを`frontend/index.html`に追加
+4. `toggleLang()` → `setLang(lang)`リファクタリング + URLパラメーター対応
+5. `applyLang()`の`innerHTML`分岐追加
+6. `currentLang`初期化に`kana`を追加（`URLSearchParams`読み取り）
+7. `loadSharedImage()`・`buildGalleryCard()`の`kana`分岐追加
+8. `showGoods()`に`goodsJaOnly`注釈表示追加
+9. `setLang()`にUmamiイベント追加
+10. テスト: `handleResearch()`が`themeKana`を返すことを`test-bot.mjs`で確認
+
+### プレビューツール
+
+```bash
+node scripts/preview-kana.mjs "テーマ名" "説明文"
+# → /tmp/kana-preview.html を生成してブラウザで確認
+```
