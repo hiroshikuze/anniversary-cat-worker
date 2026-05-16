@@ -559,7 +559,6 @@
       const d = date ?? new Date();
       const locale = t("dateLocale");
       const dateOpts = { year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Tokyo" };
-      if (locale.startsWith("ja")) dateOpts.weekday = "long";
       document.getElementById("today-date").textContent =
         d.toLocaleDateString(locale, dateOpts);
       const labelEl = document.getElementById("today-date-label");
