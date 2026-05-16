@@ -105,6 +105,40 @@ Cloudflareダッシュボードは日本語UIの場合、英語UIとナビゲー
 - 設定タブ → **トリガーイベント** → Cronイベント一覧（実行時刻・CPU時間・ステータス表示）
 - 「成功」が表示されればCron自体は正常動作
 
+## フロントエンド機能存在チェック（CI）
+
+PR #121のリグレッション（マージ競合で英語機能が黙って削除）を受けて、CIに`frontend/index.html`の機能存在確認ステップを追加した（`.github/workflows/health-check.yml`）。
+
+### 選定基準
+
+以下の3条件をすべて満たす文字列のみチェックリストに追加する。
+
+1. **ユーザーが体験できる機能の境界**（表示・操作・導線に直結する）
+2. **削除されてもエラーにならない**（サイレントに消える・`npm test`や`health-check.js`で検出されない）
+3. **マージ競合で失われるリスクがある**（複数の関数・UIブロックが同一ファイルを変更する場所）
+
+### 現在のチェック一覧
+
+| 文字列 | カテゴリ | 代表する機能 |
+| --- | --- | --- |
+| `MONTH_NAMES_EN` | 英語i18n | 英語月名定数 |
+| `themeEn` | 英語i18n | 英語テーマ・説明文の表示 |
+| `params.set("lang"` | 英語i18n | `toggleLang()`の`?lang` URL同期 |
+| `gallery-click` | 計測 | ギャラリーカードのUmami計測 |
+| `umami?.track` | 計測 | `loadSharedImage()`内のUmami page view追跡 |
+| `createSuzuriFromImage` | SUZURI登録 | SUZURI登録フローの入口関数 |
+| `allSuzuriProductsRegistered` | SUZURI登録 | 全商品登録確認（部分登録バグ対策） |
+| `resizeForSuzuri` | SUZURI登録 | 2048px高解像度リサイズ（印刷品質） |
+| `applyWatermark` | 画像合成 | ウォーターマーク合成（著作権表示） |
+| `generateKanjiTexture` | 画像合成 | 漢字背面印刷テクスチャ生成 |
+| `loadSharedImage` | 共有URL | ボットリンク・共有URLの入口関数 |
+
+### 運用ルール
+
+- `frontend/index.html`に新機能を追加した場合は、上記の3条件に照らして追加要否を判断する
+- チェック文字列を変更・削除した場合は、チェックリストも同時に更新する
+- チェックリストへの追加は`CLAUDE.md`の「テスト制約」セクションのルールに従う
+
 ## SUZURI APIテストスクリプトの注意事項
 
 `node scripts/test-suzuri-api.mjs`を実行すると実際にSUZURIに商品が作成される。

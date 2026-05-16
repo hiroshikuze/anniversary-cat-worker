@@ -18,6 +18,26 @@ jobs:
         run: npm ci
       - name: Run bot unit tests
         run: node scripts/test-bot.mjs
+      - name: Frontend feature presence check
+        run: |
+          check() { grep -q "$1" frontend/index.html || { echo "❌ Missing: $1"; exit 1; }; }
+          # 英語i18n
+          check 'MONTH_NAMES_EN'
+          check 'themeEn'
+          check 'params.set("lang"'
+          # 計測
+          check 'gallery-click'
+          check 'umami?.track'
+          # SUZURI登録フロー
+          check 'createSuzuriFromImage'
+          check 'allSuzuriProductsRegistered'
+          check 'resizeForSuzuri'
+          # 画像合成
+          check 'applyWatermark'
+          check 'generateKanjiTexture'
+          # 共有URL・コア機能
+          check 'loadSharedImage'
+          echo "✅ All critical frontend features present"
       - name: Run health check
         run: node scripts/health-check.js
         env:
