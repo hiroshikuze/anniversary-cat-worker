@@ -369,14 +369,15 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 
 #### Mastodon（`buildMastodonText()`・英語優先・日英二言語）
 
-英語を先に置くことで海外ユーザーへのリーチを優先する。CTAは日英ともに汎用URL（`SITE_URL`）を指し、個別作品URLは日本語セクション末尾の`📸`行で案内する。
+英語を先に置くことで海外ユーザーへのリーチを優先する。英語セクションには英語版直リンク（`?lang=en`）を、日本語セクションには日本語版直リンクをそれぞれ掲載する。500文字制限の都合上、英語CTAのサイトトップURL（`?lang=en`）は省き、英語直リンクに一本化する。
 
 ```text
 Today is "{themeEn}"!
 {descriptionEn}
 
+📸 {artworkUrl}&lang=en          ← R2保存成功時のみ挿入（?id=bot/YYYY-MM-DD&lang=en）
+
 Why don't you try making your own #Nyaniversary today?
-https://hiroshikuze.github.io/anniversary-cat-worker/?lang=en
 
 今日は「{theme}」！🐱
 {description}
@@ -392,8 +393,8 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 - `themeEn`・`descriptionEn`は`handleResearch()`がGeminiから取得する英語フィールド
 - `themeEn`が空の場合は英語セクション全体を省略し、Blueskyと同一テキスト（`buildPostText()`）にフォールバック
 - `descriptionEn`が空の場合は英語説明行のみ省略
-- `artworkUrl`は`pageUrl !== SITE_URL`のとき（R2保存成功）のみ挿入。失敗時は省略
-- 想定文字数: ~460文字（artworkUrlあり時・Mastodon標準上限500文字以内）
+- `artworkUrl`は`pageUrl !== SITE_URL`のとき（R2保存成功）のみ英語・日本語の両方に挿入。失敗時は両方省略
+- 想定文字数: ~450文字（artworkUrlあり時・Mastodon標準上限500文字以内）
 - altテキスト・SUZURI商品説明は**日本語のみ**（変更しない）
 
 **「の日」重複防止ロジック（`buildPostText`）:**
