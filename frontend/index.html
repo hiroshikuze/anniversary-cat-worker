@@ -232,6 +232,13 @@
         <!-- グッズを買うセクション（SUZURI商品がある場合のみ表示） -->
         <div id="g-goods" class="hidden mt-4">
           <p class="text-xs text-pink-400 text-center mb-2" data-i18n="goodsLabel">🛍️ グッズを買う（SUZURI）</p>
+          <!-- セールバナー（SALE_START_UTC〜SALE_END_UTC の間のみ表示） -->
+          <div id="g-sale-banner" class="hidden mb-2">
+            <a href="https://suzuri.jp/nyanmusu" target="_blank" rel="noopener"
+               class="flex items-center justify-center gap-1.5 bg-purple-50 border border-purple-200 rounded-xl py-2 px-3 text-xs text-purple-700 font-medium hover:bg-purple-100 transition-colors">
+              <span>🏷️</span><span data-i18n="saleBanner"></span>
+            </a>
+          </div>
           <div id="g-goods-list" class="grid grid-cols-2 gap-2"></div>
           <p class="text-xs text-gray-400 text-center mt-2" data-i18n="goodsExpiry">共有リンクとグッズ購入は生成後14日間のみご利用いただけます</p>
         </div>
@@ -314,6 +321,9 @@
     // ==========================================================
     const WORKER_URL = "https://anniversary-cat-worker.hiroshikuze.workers.dev";
     const STORAGE_DAYS = 14;
+    // SUZURIセール期間: 2026-05-15 12:00 JST ～ 2026-05-19 23:59 JST
+    const SALE_START_UTC = Date.UTC(2026, 4, 15, 3, 0);
+    const SALE_END_UTC   = Date.UTC(2026, 4, 19, 14, 59);
 
     // ----------------------------------------------------------
     // What's New
@@ -366,6 +376,7 @@
         noImageError:       "画像データなし。返却フィールド: ",
         rateLimitError:     "本日の利用上限に達しました。明日またお試しください。",
         goodsLabel:         "🛍️ グッズを買う（SUZURI）",
+        saleBanner:         "セール中！5/19(火)まで最大500円引き",
         goodsExpiry:        `共有リンクとグッズ購入は生成後${STORAGE_DAYS}日間のみご利用いただけます`,
         outOfStockToast:    "この商品は現在在庫切れです",
         preparingToast:     "まもなく準備完了です。しばらくお待ちください",
@@ -405,6 +416,7 @@
         noImageError:       "No image data. Returned fields: ",
         rateLimitError:     "You have reached today's usage limit. Please try again tomorrow.",
         goodsLabel:         "🛍️ Buy Goods (SUZURI)",
+        saleBanner:         "Sale! Up to ¥500 off until May 19 (Tue)",
         goodsExpiry:        `Sharing links and goods are available for ${STORAGE_DAYS} days after generation`,
         outOfStockToast:    "This item is currently out of stock",
         preparingToast:     "Almost ready. Please wait a moment.",
@@ -750,6 +762,13 @@
       }
       if (hasAny) {
         document.getElementById("g-goods").classList.remove("hidden");
+        const now = Date.now();
+        const banner = document.getElementById("g-sale-banner");
+        if (now >= SALE_START_UTC && now <= SALE_END_UTC) {
+          banner.classList.remove("hidden");
+        } else {
+          banner.classList.add("hidden");
+        }
       }
     }
 
