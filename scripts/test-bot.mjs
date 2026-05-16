@@ -486,7 +486,7 @@ console.log("\n[runBot: Mastodon投稿]");
     globalThis.fetch = origFetch;
     assert("themeEnあり: Discord通知が2回送られる", discordBodies.length >= 2);
     assert("themeEnあり: 2通目にMastodonテキストが含まれる", discordBodies[1]?.includes("Mastodon投稿テキスト"));
-    assert("themeEnあり: 2通目に英語CTAが含まれる", discordBodies[1]?.includes("lang=en"));
+    assert("themeEnあり: 2通目にMastodon英語ヘッダーが含まれる", discordBodies[1]?.includes("Today is"));
     assert("themeEnあり: 2通目にBluesky投稿テキストが含まれる", discordBodies[1]?.includes("Bluesky投稿テキスト"));
   }
 
@@ -2386,9 +2386,12 @@ console.log("\n[buildMastodonText]");
 }
 
 {
-  // pageUrlEn（?lang=en URL）が含まれること
-  const text = buildMastodonText("ねこの日", "猫の記念日", "Cat Day", "A cat day");
-  assert("lang=en パラメータ付きURLが含まれる", text.includes("lang=en"));
+  // pageUrlEn（?lang=en 英語直リンク）はpageUrl指定時のみ含まれる
+  const pageUrl = "https://hiroshikuze.github.io/anniversary-cat-worker/?id=bot/2026-05-16";
+  const textWithUrl = buildMastodonText("ねこの日", "猫の記念日", "Cat Day", "A cat day", pageUrl);
+  assert("lang=en パラメータ付きURLが含まれる（pageUrl指定時）", textWithUrl.includes("lang=en"));
+  const textWithoutUrl = buildMastodonText("ねこの日", "猫の記念日", "Cat Day", "A cat day");
+  assert("pageUrlなし時: 英語直リンクなし", !textWithoutUrl.includes("lang=en"));
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -2501,7 +2504,7 @@ console.log("\n[_buildPollinationsPrompt: themeEn/visualHint先頭]");
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// buildMastodonText: pageUrl（artworkUrl）が📸行に挿入され、CTAはSITE_URL
+// buildMastodonText: pageUrl（artworkUrl）が英語・日本語の両セクションに挿入される
 // ────────────────────────────────────────────────────────────────────────────
 console.log("\n[buildMastodonText: pageUrl with ?id= → &lang=en]");
 {
@@ -2510,9 +2513,11 @@ console.log("\n[buildMastodonText: pageUrl with ?id= → &lang=en]");
     "図書館記念日", "図書館の日", "Library Day", "A day to celebrate public libraries",
     pageUrl
   );
-  assert("?id=付きpageUrl: 📸行にartworkUrlが含まれる", text.includes(`📸 ${pageUrl}`));
-  assert("英語CTAはSITE_URL?lang=en を使用する", text.includes("anniversary-cat-worker/?lang=en"));
-  assert("?id=付きpageUrl: artworkUrlが日本語セクションにも含まれる", text.includes("?id=bot/2026-04-30"));
+  assert("英語直リンク: 📸 ?id=...&lang=en が英語セクションに含まれる", text.includes(`📸 ${pageUrl}&lang=en`));
+  assert("日本語直リンク: 📸 ?id=... が日本語セクションに含まれる", text.includes(`📸 ${pageUrl}`));
+  assert("英語直リンクは日本語セクションより前にある",
+    text.indexOf(`${pageUrl}&lang=en`) < text.indexOf("今日は"));
+  assert("500文字以内", [...text].length <= 500);
 }
 
 // ---------------------------------------------------------------------------

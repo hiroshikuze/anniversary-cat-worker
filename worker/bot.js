@@ -104,7 +104,8 @@ export function buildMastodonText(theme, description, themeEn = "", descriptionE
   const baseTagStr  = themeTag ? `${themeTag} ${mastoTags.join(" ")}` : mastoTags.join(" ");
   const tagStr      = guestSnsTag ? `${baseTagStr} ${guestSnsTag}` : baseTagStr;
 
-  const artworkLine = pageUrl !== SITE_URL ? `\n\n📸 ${pageUrl}` : "";
+  const artworkLine   = pageUrl !== SITE_URL ? `\n\n📸 ${pageUrl}` : "";
+  const enArtworkLine = pageUrl !== SITE_URL ? `\n\n📸 ${pageUrl}&lang=en` : "";
 
   // themeEn がない場合は日本語のみ（buildPostText 相当）
   if (!safeThemeEn) {
@@ -118,13 +119,13 @@ export function buildMastodonText(theme, description, themeEn = "", descriptionE
 
   const enHeader = `Today is "${safeThemeEn}"!`;
   const enDesc   = safeDescEn ? `\n${safeDescEn}` : "";
-  const enCta    = `\n\nWhy don't you try making your own #Nyaniversary today?\n${SITE_URL}?lang=en`;
+  const enCta    = `\n\nWhy don't you try making your own #Nyaniversary today?`;
 
   const jaHeader = theme.endsWith("の日") ? `今日は「${theme}」！🐱` : `今日は「${theme}」の日！🐱`;
   const jaDesc   = description ? `\n${description}` : "";
   const jaCta    = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${SITE_URL}`;
 
-  return enHeader + enDesc + enCta + "\n\n" + jaHeader + jaDesc + artworkLine + jaCta + `\n\n${tagStr}`;
+  return enHeader + enDesc + enArtworkLine + enCta + "\n\n" + jaHeader + jaDesc + artworkLine + jaCta + `\n\n${tagStr}`;
 }
 
 /**
