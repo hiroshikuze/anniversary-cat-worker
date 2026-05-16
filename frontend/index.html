@@ -476,6 +476,7 @@
       const qs = params.toString();
       history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
       applyLang();
+      loadGallery();
       // 動的生成されたグッズボタンはdata-i18n外なので言語切り替え時に再描画
       if (lastProducts) showGoods(lastProducts);
       // 共有ビュー中のresultボタンも再描画
