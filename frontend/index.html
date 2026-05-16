@@ -184,7 +184,7 @@
         今日の記念日を調べて、水彩画風の猫を生成します
       </p>
       <div class="inline-block bg-white border border-pink-200 text-pink-600 px-5 py-2 rounded-full text-sm shadow-sm">
-        <span id="today-date-label" data-i18n="todayDateLabel" class="font-medium mr-1">今日の記念日</span>📅 <span id="today-date">読み込み中...</span>
+        📅 <span id="today-date">読み込み中...</span>
       </div>
     </div>
 
@@ -199,7 +199,6 @@
           class="btn-primary w-full text-white font-medium py-3 px-6 rounded-2xl text-sm" data-i18n="researchBtn">
           🔍 今日の記念日を調べる
         </button>
-        <p class="text-xs text-pink-400 mt-2 text-center" data-i18n="researchSubtitle">AIが今日の記念日に合わせた猫のイラストを作ります</p>
       </div>
 
       <!-- ローディング -->
@@ -385,8 +384,6 @@
         expiredText:        `この記念日画像は期限切れです（${STORAGE_DAYS}日間保存）`,
         createNewBtn:       "🎨 今日の記念日で作る",
         newGenerateBtn:     "✨ 新しく生成",
-        todayDateLabel:     "今日の記念日",
-        researchSubtitle:   "AIが今日の記念日に合わせた猫のイラストを作ります",
         dateLocale:         "ja-JP",
         whatsNewTitle:      "🆕 アップデート情報",
         whatsNewClose:      "閉じる",
@@ -403,8 +400,8 @@
         retryBtn:           "🔄 Retry",
         step2Label:         "Generate Cat Illustration",
         waitingText:        "Please research the anniversary first",
-        generatePreviewPre: "Drawing a cat with theme \u201c",
-        generatePreviewPost:"\u201d",
+        generatePreviewPre: "Drawing a cat with theme “",
+        generatePreviewPost:"”",
         generateBtn:        "🎨 Generate Cat Illustration",
         generateLoading:    "Drawing a watercolor-style cat...",
         generateTimeEst:    "This may take a moment (~30 seconds)",
@@ -427,8 +424,6 @@
         expiredText:        `This anniversary image has expired (stored for ${STORAGE_DAYS} days)`,
         createNewBtn:       "🎨 Create Today's Anniversary",
         newGenerateBtn:     "✨ Generate New",
-        todayDateLabel:     "Today's Anniversary",
-        researchSubtitle:   "AI will create a cat illustration for today's anniversary",
         dateLocale:         "en-US",
         whatsNewTitle:      "🆕 What's New",
         whatsNewClose:      "Close",
@@ -436,7 +431,7 @@
       },
     };
 
-    let currentLang = new URLSearchParams(window.location.search).get("lang") === "en" ? "en" : "ja";
+    let currentLang = "ja";
 
     function t(key) {
       return translations[currentLang][key] ?? translations.ja[key] ?? key;
@@ -466,29 +461,12 @@
 
     function toggleLang() {
       currentLang = currentLang === "ja" ? "en" : "ja";
-      // ?lang パラメータを URL に反映（既存の ?id= は保持）
-      const params = new URLSearchParams(window.location.search);
-      if (currentLang === "en") {
-        params.set("lang", "en");
-      } else {
-        params.delete("lang");
-      }
-      const qs = params.toString();
-      history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
       applyLang();
       // 動的生成されたグッズボタンはdata-i18n外なので言語切り替え時に再描画
       if (lastProducts) showGoods(lastProducts);
       // 共有ビュー中のresultボタンも再描画
       if (isSharedView && !document.getElementById("g-result").classList.contains("hidden")) {
         updateResultButtons();
-        // themeEn/descriptionEn が取得済みなら言語に応じて表示を切り替え
-        if (researchData) {
-          const dTheme = (currentLang === "en" && researchData.themeEn) ? researchData.themeEn : researchData.theme;
-          const dDesc  = (currentLang === "en" && researchData.descriptionEn) ? researchData.descriptionEn : researchData.description;
-          document.getElementById("g-result-label").textContent = dTheme ?? "";
-          const dEl = document.getElementById("g-result-description");
-          if (dEl) dEl.textContent = dDesc ?? "";
-        }
       }
     }
 
@@ -563,15 +541,12 @@
           year: "numeric", month: "long", day: "numeric", weekday: "long",
           timeZone: "Asia/Tokyo",
         });
-      const labelEl = document.getElementById("today-date-label");
-      if (labelEl) labelEl.textContent = date === null ? t("todayDateLabel") : "";
     }
 
     function resetToInitial() {
       isSharedView    = false;
       currentSharedId = null;
-      const langParam = currentLang === "en" ? "?lang=en" : "";
-      history.replaceState(null, "", window.location.pathname + langParam);
+      history.replaceState(null, "", window.location.pathname);
       updateDateDisplay();
       showGenerate("waiting");
     }
@@ -672,7 +647,7 @@
         btn.onclick = function () {
           isSharedView    = false;
           currentSharedId = null;
-          history.replaceState(null, "", window.location.pathname + (currentLang === "en" ? "?lang=en" : ""));
+          history.replaceState(null, "", window.location.pathname);
           startResearch();
         };
       } else {
@@ -916,32 +891,28 @@
       }
     }
 
-    const MONTH_NAMES_EN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     function buildGalleryCard(id, meta) {
-      const dateStr = id.replace("bot/", "").replace(/-\d$/, "");
+      const dateStr = id.replace("bot/", "");
       const [y, m, d] = dateStr.split("-");
       const label = currentLang === "ja"
-        ? `${parseInt(m)}月${parseInt(d)}日の記念日`
-        : `${MONTH_NAMES_EN[parseInt(m) - 1]} ${parseInt(d)}`;
-      const displayTheme = (currentLang === "en" && meta.themeEn) ? meta.themeEn : (meta.theme ?? "");
+        ? `${parseInt(m)}月${parseInt(d)}日`
+        : `${parseInt(m)}/${parseInt(d)}`;
 
       const card = document.createElement("div");
       card.className = "flex-none cursor-pointer rounded-xl overflow-hidden border border-pink-100 bg-white shadow-sm hover:shadow-md transition-shadow";
       card.style.cssText = "width:130px; scroll-snap-align:start;";
-      card.setAttribute("data-umami-event", "gallery-click");
-      card.setAttribute("data-umami-event-theme", meta.theme ?? "");
       card.onclick = () => { window.location.href = `?id=${id}`; };
 
       card.innerHTML = `
         <div class="bg-pink-50 flex items-center justify-center" style="height:120px;">
           <img src="${WORKER_URL}/thumb/${id}"
-            loading="lazy" alt="${displayTheme}"
+            loading="lazy" alt="${meta.theme ?? ""}"
             class="w-full h-full object-cover"
-            onerror="this.parentElement.innerHTML='<span class=\\'text-2xl\\'>🐱</span>'">
+            onerror="this.parentElement.innerHTML='<span class=\'text-2xl\'>🐱</span>'">
         </div>
         <div class="p-2">
           <p class="text-xs text-pink-400">${label}</p>
-          <p class="text-xs font-medium text-pink-700 leading-tight mt-0.5 line-clamp-2">${displayTheme}</p>
+          <p class="text-xs font-medium text-pink-700 leading-tight mt-0.5 line-clamp-2">${meta.theme ?? ""}</p>
         </div>`;
 
       return card;
@@ -999,10 +970,7 @@
           ? rightRes.value?.products ?? []
           : RIGHT_SLUGS.map(slug => ({ slug, sampleUrl: null, available: false, queued: rightQueued }));
         const allProducts = [...rightProducts, ...centerProducts];
-        // ギャラリーのバックグラウンド登録（別idのsuzuri完了）が表示中ページを上書きしないよう制限
-        if (allProducts.length > 0 && (r2Id === null || r2Id === currentSharedId)) {
-          showGoods(allProducts);
-        }
+        if (allProducts.length > 0) showGoods(allProducts);
         if (rightQueued && r2Id) {
           startPollingSuzuri(r2Id, RIGHT_SLUGS);
         }
@@ -1037,7 +1005,7 @@
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
 
-        researchData = { theme: data.theme, description: data.description, sourceUrl: data.sourceUrl, themeEn: data.themeEn ?? "", descriptionEn: data.descriptionEn ?? "" };
+        researchData = { theme: data.theme, description: data.description, sourceUrl: data.sourceUrl };
 
         const displayUrl = `data:${data.mimeType};base64,${data.imageData}`;
         const imgEl = document.getElementById("g-image");
@@ -1050,11 +1018,9 @@
 
         if (data.createdAt) updateDateDisplay(new Date(data.createdAt));
 
-        const displayTheme = (currentLang === "en" && data.themeEn) ? data.themeEn : data.theme;
-        const displayDesc  = (currentLang === "en" && data.descriptionEn) ? data.descriptionEn : data.description;
-        document.getElementById("g-result-label").textContent = displayTheme ?? "";
+        document.getElementById("g-result-label").textContent = data.theme ?? "";
         const descEl = document.getElementById("g-result-description");
-        descEl.textContent = displayDesc ?? "";
+        descEl.textContent = data.description ?? "";
         if (data.sourceUrl) {
           descEl.href = data.sourceUrl;
           descEl.classList.add("underline");
@@ -1062,12 +1028,6 @@
           descEl.removeAttribute("href");
           descEl.classList.remove("underline");
         }
-
-        // Umamiページビュー計測（正しいパス形式・遅延ロード対応）
-        const _trackTitle = `${displayTheme} - にゃんバーサリー`;
-        const _trackUrl   = `/anniversary-cat-worker/${id}`;
-        const _doTrack    = () => window.umami?.track(props => ({ ...props, url: _trackUrl, title: _trackTitle }));
-        window.umami ? _doTrack() : window.addEventListener("load", _doTrack, { once: true });
 
         document.getElementById("g-goods").classList.add("hidden");
         if (allSuzuriProductsRegistered(data.products)) {
@@ -1268,7 +1228,7 @@
       lastProducts    = null;
       isSharedView    = false;
       currentSharedId = null;
-      history.replaceState(null, "", window.location.pathname + (currentLang === "en" ? "?lang=en" : ""));
+      history.replaceState(null, "", window.location.pathname);
       document.getElementById("g-goods").classList.add("hidden");
       showGenerate("loading");
 
