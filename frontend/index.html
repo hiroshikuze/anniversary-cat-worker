@@ -558,11 +558,10 @@
     function updateDateDisplay(date = null) {
       const d = date ?? new Date();
       const locale = t("dateLocale");
+      const dateOpts = { year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Tokyo" };
+      if (locale.startsWith("ja")) dateOpts.weekday = "long";
       document.getElementById("today-date").textContent =
-        d.toLocaleDateString(locale, {
-          year: "numeric", month: "long", day: "numeric", weekday: "long",
-          timeZone: "Asia/Tokyo",
-        });
+        d.toLocaleDateString(locale, dateOpts);
       const labelEl = document.getElementById("today-date-label");
       if (labelEl) labelEl.textContent = date === null ? t("todayDateLabel") : "";
     }
