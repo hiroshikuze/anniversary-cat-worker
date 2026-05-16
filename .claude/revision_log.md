@@ -291,6 +291,25 @@
 
 ---
 
+### 2026-05 | update_pull_request_branch のマージが意図しない削除を引き起こした（PR #121）
+
+- **状況**: PR #121（UmamiでSUZURIクリック計測）を`update_pull_request_branch`でmainにリベース後マージした。その後の差分確認で`frontend/index.html`の英語機能（`?lang=en`、`themeEn`/`descriptionEn`、`MONTH_NAMES_EN`、ギャラリーのUmami計測）が消えていることが発覚
+- **技術的根本原因（2層）**:
+  1. feature branchが古いmainを起点にしており、mainとfeature branchの両方が同じ関数（`buildGalleryCard()`・`toggleLang()`等）を変更していた
+  2. `update_pull_request_branch`のマージ競合解決がfeature branch側の古いコンテンツを優先したため、mainで新規追加した英語機能が黙って削除された
+- **プロセス的根本原因**: マージ後に「SHAが異なること」のみを確認してマージを承認した。PRの全差分（削除行を含む）を読まなかった
+- **失われた機能**:
+  - 英語i18n: `MONTH_NAMES_EN`定数・`themeEn`/`descriptionEn`表示・`?lang=en` URL同期・`toggleLang()`
+  - 計測: ギャラリーカードの`data-umami-event="gallery-click"`・`loadSharedImage()`内のUmami page view追跡
+- **修正**: `cb735e6`（PR #121適用前のmain）の`frontend/index.html`を復元。ホットフィックスブランチ`claude/hotfix-restore-en-features-yH1La`でマージ
+- **再発防止策（今セッション実装）**:
+  - CI（`health-check.yml`）にgrep-based フロントエンド機能存在チェック（11項目）を追加。問題のある`frontend/index.html`がpushされると即CIが失敗する
+  - 選定基準を`testing.md`に文書化
+  - `CLAUDE.md`に「新機能追加時はチェックリストに追加する」ルールを追加
+- **教訓**: `update_pull_request_branch`実行後は必ずPRの全差分（削除行を含む）を読み、意図した変更のみか確認する。「SHAが異なる」は必要条件だが十分条件ではない。削除行（`-`行）が意図しない機能の喪失を意味していないか必ず確認する
+
+---
+
 ```text
 ### YYYY-MM | タイトル
 - **状況**: 何をしようとしていたか

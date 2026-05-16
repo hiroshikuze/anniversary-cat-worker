@@ -196,6 +196,8 @@ FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 
 `npm test`（= `scripts/test-bot.mjs`）は外部API不要でローカル実行可能。
 
+`frontend/index.html`に新機能を追加した際は、`.claude/rules/testing.md`の「選定基準」に照らし、該当する場合は`.github/workflows/health-check.yml`のフロントエンド機能チェックリストに追加する。
+
 ---
 
 ## 詳細ルール
