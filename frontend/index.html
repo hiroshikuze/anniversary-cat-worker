@@ -564,8 +564,10 @@
     // What's New モーダル
     // ----------------------------------------------------------
     function showWhatsNew() {
-      document.getElementById("whatsnew-title").textContent = t("whatsNewTitle");
-      document.getElementById("whatsnew-close-btn").textContent = t("whatsNewClose");
+      const _wnt = document.getElementById("whatsnew-title");
+      const _wnc = document.getElementById("whatsnew-close-btn");
+      if (currentLang === "kana") { _wnt.innerHTML = t("whatsNewTitle"); _wnc.innerHTML = t("whatsNewClose"); }
+      else { _wnt.textContent = t("whatsNewTitle"); _wnc.textContent = t("whatsNewClose"); }
       const list = document.getElementById("whatsnew-list");
       list.innerHTML = "";
       CHANGELOG.forEach((entry) => {

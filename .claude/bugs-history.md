@@ -167,4 +167,12 @@
 - **テスト**: `scripts/test-bot.mjs`に「プールあり→プールから取得」「プールなし→handleResearch呼び出し」のテストを追加
 - **場所**: `worker/bluesky-bot.js` `runBot()`
 
+### 21. かなモードでruby HTMLがテキストとして表示される（2026-05）
+
+- **原因**: `translations.kana`の値はruby HTMLを含む文字列だが、DOM書き込みを`textContent`で行うと`<ruby>`タグがそのままテキストとして表示される。`applyLang()`は`innerHTML`対応済みだったが、動的UI更新を行う関数群（`updateDateDisplay()`・`showGoods()`・`updateResultButtons()`・`showToast()`・`showWhatsNew()`）が`textContent`のままだった
+- **影響**: かなモードで日付ラベル・商品名・ボタンラベル・トースト・更新モーダルにタグ文字列が表示される
+- **修正**: 上記全関数で`currentLang === "kana"`のとき`innerHTML`を使うよう分岐を追加
+- **場所**: `frontend/index.html` `updateDateDisplay()` / `showGoods()` / `updateResultButtons()` / `showToast()` / `showWhatsNew()`
+- **教訓**: 翻訳値にHTMLを含む言語モードを追加した場合、`applyLang()`だけでなく「言語切り替え後に動的にDOMを書き換える全関数」をgrepして`textContent`→`innerHTML`対応漏れを確認する。チェックコマンド: `grep -n "textContent = t(" frontend/index.html`
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
