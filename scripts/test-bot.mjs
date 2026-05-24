@@ -2617,5 +2617,88 @@ console.log("\n[buildMastodonText: guestSnsTag]");
   assert("guestSnsTag null: #cat は含まれる", text.includes("#cat"));
 }
 
+// ---------------------------------------------------------------------------
+// handleResearch: themeKana / descriptionKana
+// ---------------------------------------------------------------------------
+console.log("\n[handleResearch: themeKana / descriptionKana]");
+
+// URL でモデル選択 API と research API を分岐するユーティリティ
+function makeResearchFetchMock(researchJson) {
+  return async (url) => {
+    if (url.includes("/models?key=")) {
+      // selectBestModel 用
+      return {
+        ok: true,
+        text: async () => JSON.stringify({
+          models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
+        }),
+      };
+    }
+    // handleResearch の generateContent 呼び出し
+    return {
+      ok: true,
+      text: async () => JSON.stringify({
+        candidates: [{
+          content: { parts: [{ text: JSON.stringify(researchJson) }] },
+          groundingMetadata: { groundingChunks: [], webSearchQueries: ["test query"] },
+        }],
+      }),
+    };
+  };
+}
+
+{
+  // Gemini が themeKana / descriptionKana を返した場合はそのまま返却する
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeResearchFetchMock({
+    theme: "大仏の日",
+    themeEn: "Great Buddha Day",
+    description: "東大寺の大仏開眼法要が行われた記念日。",
+    descriptionEn: "Anniversary of the eye-opening ceremony.",
+    themeKana: "<ruby>大仏<rt>だいぶつ</rt></ruby>の<ruby>日<rt>ひ</rt></ruby>",
+    descriptionKana: "<ruby>東大寺<rt>とうだいじ</rt></ruby>の<ruby>記念<rt>きねん</rt></ruby><ruby>日<rt>び</rt></ruby>。",
+    visualHint: "large Buddha statue, temple, incense",
+    foodItem: null,
+    kanjiChar: "尊",
+    sourceUrl: "https://example.com",
+  });
+
+  let result;
+  try {
+    result = await handleResearch({ date: "2026年5月21日" }, "test-key");
+  } catch (e) {
+    result = null;
+    console.error("  handleResearch threw:", e.message);
+  }
+  globalThis.fetch = origFetch;
+
+  assert("themeKana が返却される", typeof result?.themeKana === "string" && result.themeKana.includes("<ruby>"));
+  assert("descriptionKana が返却される", typeof result?.descriptionKana === "string" && result.descriptionKana.includes("<ruby>"));
+}
+{
+  // Gemini が themeKana を返さなかった場合は undefined になる
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeResearchFetchMock({
+    theme: "大仏の日",
+    themeEn: "Great Buddha Day",
+    description: "記念日の説明。",
+    descriptionEn: "Description.",
+    visualHint: "Buddha statue",
+    foodItem: null,
+    kanjiChar: "尊",
+    sourceUrl: "https://example.com",
+  });
+
+  let result2;
+  try {
+    result2 = await handleResearch({ date: "2026年5月21日" }, "test-key");
+  } catch (e) {
+    result2 = null;
+  }
+  globalThis.fetch = origFetch;
+
+  assert("themeKana 未返却時は undefined", !result2?.themeKana);
+}
+
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
 if (failed > 0) process.exit(1);
