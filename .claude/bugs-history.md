@@ -175,4 +175,20 @@
 - **場所**: `frontend/index.html` `updateDateDisplay()` / `showGoods()` / `updateResultButtons()` / `showToast()` / `showWhatsNew()`
 - **教訓**: 翻訳値にHTMLを含む言語モードを追加した場合、`applyLang()`だけでなく「言語切り替え後に動的にDOMを書き換える全関数」をgrepして`textContent`→`innerHTML`対応漏れを確認する。チェックコマンド: `grep -n "textContent = t(" frontend/index.html`
 
+### 22. startGenerate()が画像生成後の結果表示でkana/en変種を無視していた（2026-05）
+
+- **原因**: 画像生成完了後にテーマ・説明文を表示する箇所（`startGenerate()`）が`textContent`+日本語のみで固定されており、`themeKana`/`descriptionKana`/`themeEn`/`descriptionEn`を参照していなかった。`loadSharedImage()`・`setLang()`は正しく対応済みだったが`startGenerate()`だけ取りこぼされた
+- **影響**: かなモードで画像生成ボタンを押すと、結果テーマ・説明文がふりがななしで表示される。英語モードでも英語テキストが表示されない
+- **修正**: `loadSharedImage()`と同じ3分岐（en/kana/ja）パターンに統一
+- **場所**: `frontend/index.html` `startGenerate()` 結果表示ブロック
+- **教訓**: 同じ「テーマ・説明文の表示」ロジックが複数箇所にある場合（`loadSharedImage()`・`setLang()`・`startGenerate()`）、一か所修正したら残り全箇所も同時に確認する
+
+### 23. エラーメッセージのkana対応漏れ（getRateLimitMessage・err.message）（2026-05）
+
+- **原因**: `rateLimitError`・`imageLoadError`・`noImageError`はkana翻訳値にruby HTMLを含む。しかし`getRateLimitMessage()`の戻り値および`err.message`（`t()`から生成されたエラー）を`g-error-text`に`textContent`で設定していたため、ruby HTMLが生テキストとして表示された
+- **影響**: かなモードでレート制限・画像読み込み失敗・画像データなしのエラー時にrubyタグが露出する
+- **修正**: `setErrText(msg)`ヘルパー関数を新設し、全エラーテキスト設定箇所（5か所）を統一。kana時は`innerHTML`、それ以外は`textContent`を使用
+- **場所**: `frontend/index.html` `setErrText()` / `startResearch()` / `startGenerate()` 各catchブロック
+- **教訓**: `new Error(t("rubyHtmlKey"))`とすると`err.message`にruby HTMLが入り込む。エラーテキストをUIに表示する際は必ず`setErrText()`経由にする。`textContent = err.message`のような直接代入は禁止パターン
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）

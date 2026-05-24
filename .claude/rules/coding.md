@@ -67,6 +67,17 @@ grep -n "textContent = t(" frontend/index.html
 
 対象: `applyLang()`（一括適用）だけでなく、言語切り替え後に動的にDOMを書き換える全関数（`showGoods()`・`showToast()`・`showWhatsNew()`・`updateResultButtons()`・`updateDateDisplay()`等）を確認する。（過去バグ: Bug#21）
 
+**エラーテキスト表示には必ず`setErrText(msg)`を使う:**
+
+`rateLimitError`・`imageLoadError`・`noImageError`等のkana翻訳値はruby HTMLを含む。`new Error(t("rubyHtmlKey"))`で投げると`err.message`にHTMLが入り込む。エラーテキストをUIに出すときは`textContent`直接代入を禁止し、`setErrText()`経由に統一する。（過去バグ: Bug#23）
+
+```js
+// ❌ 禁止
+document.getElementById("g-error-text").textContent = err.message;
+// ✅ 正しい
+setErrText(err.message);
+```
+
 ## セキュリティ
 
 - ユーザー入力をそのままプロンプトに埋め込んでいないか（プロンプトインジェクション）

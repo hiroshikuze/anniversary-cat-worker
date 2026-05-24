@@ -613,6 +613,12 @@
       return localStorage.getItem("generateRateLimitMsg") || t("rateLimitError");
     }
 
+    // エラーテキストをかなモード対応で設定（ruby HTMLを含む可能性があるため）
+    function setErrText(msg) {
+      const el = document.getElementById("g-error-text");
+      if (currentLang === "kana") { el.innerHTML = msg; } else { el.textContent = msg; }
+    }
+
     // ----------------------------------------------------------
     // 状態
     // ----------------------------------------------------------
@@ -625,13 +631,33 @@
     // ----------------------------------------------------------
     // 初期化
     // ----------------------------------------------------------
+    // かなモード用の日付ふりがな生成（Intl.DateTimeFormat.formatToParts で成分を取得）
+    function formatDateKana(d) {
+      const parts = new Intl.DateTimeFormat("ja-JP", {
+        year: "numeric", month: "numeric", day: "numeric", weekday: "long",
+        timeZone: "Asia/Tokyo",
+      }).formatToParts(d);
+      const get = type => parts.find(p => p.type === type)?.value ?? "";
+      const weekdayKana = {
+        "日曜日": "にちようび", "月曜日": "げつようび", "火曜日": "かようび",
+        "水曜日": "すいようび", "木曜日": "もくようび", "金曜日": "きんようび", "土曜日": "どようび",
+      };
+      const wd = get("weekday");
+      const r = (k, f) => `<ruby>${k}<rp>(</rp><rt>${f}</rt><rp>)</rp></ruby>`;
+      return `${get("year")}${r("年","ねん")}${get("month")}${r("月","がつ")}${get("day")}${r("日","にち")}${r(wd, weekdayKana[wd] ?? "")}`;
+    }
+
     function updateDateDisplay(date = null) {
       const d = date ?? new Date();
       const locale = t("dateLocale");
       const dateOpts = { year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Tokyo" };
       if (locale.startsWith("ja")) dateOpts.weekday = "long";
-      document.getElementById("today-date").textContent =
-        d.toLocaleDateString(locale, dateOpts);
+      const todayDateEl = document.getElementById("today-date");
+      if (currentLang === "kana") {
+        todayDateEl.innerHTML = formatDateKana(d);
+      } else {
+        todayDateEl.textContent = d.toLocaleDateString(locale, dateOpts);
+      }
       const labelEl = document.getElementById("today-date-label");
       if (labelEl) {
         if (currentLang === "kana") {
@@ -1171,7 +1197,7 @@
 
         showGenerate("result");
       } catch (err) {
-        document.getElementById("g-error-text").textContent = err.message;
+        setErrText(err.message);
         showGenerate("error");
       }
     }
@@ -1349,7 +1375,7 @@
     // ----------------------------------------------------------
     async function startResearch() {
       if (isRateLimited()) {
-        document.getElementById("g-error-text").textContent = getRateLimitMessage();
+        setErrText(getRateLimitMessage());
         showGenerate("error");
         return;
       }
@@ -1368,7 +1394,7 @@
         // 自動的に画像生成を開始
         startGenerate();
       } catch (err) {
-        document.getElementById("g-error-text").textContent = err.message;
+        setErrText(err.message);
         showGenerate("error");
       }
     }
@@ -1379,7 +1405,7 @@
     async function startGenerate() {
       if (!researchData) return;
       if (isRateLimited()) {
-        document.getElementById("g-error-text").textContent = getRateLimitMessage();
+        setErrText(getRateLimitMessage());
         showGenerate("error");
         return;
       }
@@ -1412,9 +1438,20 @@
           throw new Error(t("imageLoadError"));
         });
         lastImageUrl = displayUrl;
-        document.getElementById("g-result-label").textContent = researchData.theme ?? "";
         const descEl = document.getElementById("g-result-description");
-        descEl.textContent = researchData.description ?? "";
+        {
+          const labelEl2 = document.getElementById("g-result-label");
+          if (currentLang === "en" && researchData.themeEn) {
+            labelEl2.textContent = researchData.themeEn;
+            descEl.textContent   = researchData.descriptionEn ?? researchData.description ?? "";
+          } else if (currentLang === "kana" && researchData.themeKana) {
+            labelEl2.innerHTML = researchData.themeKana;
+            descEl.innerHTML   = researchData.descriptionKana ?? researchData.description ?? "";
+          } else {
+            labelEl2.textContent = researchData.theme ?? "";
+            descEl.textContent   = researchData.description ?? "";
+          }
+        }
         if (researchData.sourceUrl) {
           descEl.href = researchData.sourceUrl;
           descEl.classList.add("underline");
@@ -1436,7 +1473,7 @@
 
       } catch (err) {
         console.error("[generate] error:", err.message);
-        document.getElementById("g-error-text").textContent = err.message;
+        setErrText(err.message);
         showGenerate("error");
       }
     }

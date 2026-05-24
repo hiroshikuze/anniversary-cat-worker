@@ -2700,5 +2700,44 @@ function makeResearchFetchMock(researchJson) {
   assert("themeKana 未返却時は undefined", !result2?.themeKana);
 }
 
+// ----------------------------------------------------------
+// formatDateKana: 日付ふりがな生成（frontend/index.html と同一ロジック）
+// ----------------------------------------------------------
+console.log("\n[formatDateKana]");
+{
+  function formatDateKana(d) {
+    const parts = new Intl.DateTimeFormat("ja-JP", {
+      year: "numeric", month: "numeric", day: "numeric", weekday: "long",
+      timeZone: "Asia/Tokyo",
+    }).formatToParts(d);
+    const get = type => parts.find(p => p.type === type)?.value ?? "";
+    const weekdayKana = {
+      "日曜日": "にちようび", "月曜日": "げつようび", "火曜日": "かようび",
+      "水曜日": "すいようび", "木曜日": "もくようび", "金曜日": "きんようび", "土曜日": "どようび",
+    };
+    const wd = get("weekday");
+    const r = (k, f) => `<ruby>${k}<rp>(</rp><rt>${f}</rt><rp>)</rp></ruby>`;
+    return `${get("year")}${r("年","ねん")}${get("month")}${r("月","がつ")}${get("day")}${r("日","にち")}${r(wd, weekdayKana[wd] ?? "")}`;
+  }
+
+  // 2026-05-24（日曜日）
+  const sun = new Date("2026-05-24T12:00:00+09:00");
+  const sunResult = formatDateKana(sun);
+  assert("年数を含む", sunResult.includes("2026"));
+  assert("年にrubyがある", sunResult.includes('<ruby>年<rp>(</rp><rt>ねん</rt><rp>)</rp></ruby>'));
+  assert("月にrubyがある", sunResult.includes('<ruby>月<rp>(</rp><rt>がつ</rt><rp>)</rp></ruby>'));
+  assert("日にrubyがある", sunResult.includes('<ruby>日<rp>(</rp><rt>にち</rt><rp>)</rp></ruby>'));
+  assert("日曜日にrubyがある", sunResult.includes('<ruby>日曜日<rp>(</rp><rt>にちようび</rt><rp>)</rp></ruby>'));
+
+  // 2026-05-25（月曜日）
+  const mon = new Date("2026-05-25T12:00:00+09:00");
+  const monResult = formatDateKana(mon);
+  assert("月曜日にrubyがある", monResult.includes('<ruby>月曜日<rp>(</rp><rt>げつようび</rt><rp>)</rp></ruby>'));
+
+  // 月（がつ）と月曜日（げつようび）が混在しても正しく分離される
+  // 月曜日の結果: "...月<ruby>月曜日..." ではなく "...<ruby>月曜日..." になっているはず
+  assert("月（数字）と月曜日が二重にrubyにならない", !monResult.includes('<ruby>月<rp>(</rp><rt>がつ</rt><rp>)</rp></ruby><ruby>月曜日'));
+}
+
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
 if (failed > 0) process.exit(1);

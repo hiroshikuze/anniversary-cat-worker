@@ -40,6 +40,8 @@ jobs:
           # かなモード
           check 'lang-btn-kana'
           check 'setLang'
+          check 'formatDateKana'
+          check 'setErrText'
           echo "✅ All critical frontend features present"
       - name: Run health check
         run: node scripts/health-check.js
