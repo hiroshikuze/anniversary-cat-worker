@@ -1244,19 +1244,25 @@ if (currentLang === "kana" || key === "footer") {
 - `?lang=kana` URLにより自動で別ページとして集計される（追加実装不要）
 - `setLang()`に`umami?.track("lang-switch", { lang })`を1行追加して言語切り替えをカスタムイベント計測する
 
-### 実装待ちの作業（優先順・Docs → Tests → Code）
+### 実装済み作業（2026-05）
 
-1. ドキュメント更新: `CLAUDE.md`のフロントエンド機能一覧にかなモードを追記、`architecture.md`のフロントエンド機能概要を更新
-2. テスト: `handleResearch()`が`themeKana`/`descriptionKana`を返すことを`test-bot.mjs`で確認
-3. `handleResearch()`に`themeKana`/`descriptionKana`を追加（Worker側）
-4. R2保存・`/image/:id`レスポンスに`themeKana`/`descriptionKana`を含める
-5. `translations.kana`オブジェクトを`frontend/index.html`に追加
-6. `toggleLang()` → `setLang(lang)`リファクタリング + URLパラメーター対応
-7. `applyLang()`の`innerHTML`分岐追加
-8. `currentLang`初期化に`kana`を追加（`URLSearchParams`読み取り）
-9. `loadSharedImage()`・`buildGalleryCard()`の`kana`分岐追加
-10. `showGoods()`に`goodsJaOnly`注釈表示追加
-11. `setLang()`にUmamiイベント追加
+1. ✅ ドキュメント更新: `CLAUDE.md`のフロントエンド機能一覧にかなモードを追記、`architecture.md`のフロントエンド機能概要を更新
+2. ✅ テスト: `handleResearch()`が`themeKana`/`descriptionKana`を返すことを`test-bot.mjs`で確認
+3. ✅ `handleResearch()`に`themeKana`/`descriptionKana`を追加（Worker側）
+4. ✅ R2保存・`/image/:id`レスポンスに`themeKana`/`descriptionKana`を含める（`...meta`スプレッドで自動包含）
+5. ✅ `translations.kana`オブジェクトを`frontend/index.html`に追加（43キー・ruby HTML）
+6. ✅ `toggleLang()` → `setLang(lang)`リファクタリング + URLパラメーター対応（`?lang=kana`）
+7. ✅ `applyLang()`の`innerHTML`分岐追加（kanaモード時は全キーを`innerHTML`で設定）
+8. ✅ `currentLang`初期化に`kana`を追加（`URLSearchParams`読み取り）
+9. ✅ `loadSharedImage()`・`buildGalleryCard()`の`kana`分岐追加
+10. ✅ `showGoods()`に`goodsJaOnly`注釈表示追加（静的`<p data-i18n="goodsJaOnly">`をHTML側に追加）
+11. ✅ `setLang()`にUmamiイベント追加（`umami?.track("lang-switch", { lang })`）
+
+**補足事項:**
+
+- `saleBanner`の`火`は「かようび」と読む（設計メモ確定事項）。kuroshiro自動生成は「ひ」と誤読したため手動修正済み。次回セール期間変更時も同様に修正すること
+- `health-check.yml`に`translations.kana`・`setLang`チェックを追加済み
+- `testing.md`のチェックリストを更新済み（かなモード2件追加・`toggleLang`→`setLang`説明修正）
 
 ### プレビューツール
 

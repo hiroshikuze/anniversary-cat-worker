@@ -178,6 +178,7 @@ FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 | fal.ai運用イベントのDiscord通知（403・FAILED・タイムアウト・20MB超） | `worker/fal.js` `worker/index.js` | 稼働中 |
 | R2ストレージ（14日保持・Cron起動時クリーンアップ） | `worker/r2-storage.js` | 稼働中 |
 | レート制限（`/generate`: IP 3回/日・グローバル 50回/日） | `worker/index.js` `checkRateLimit()` | 稼働中 |
+| かなモード（JP/かな/EN 3択・ruby furigana・Gemini生成`themeKana`/`descriptionKana`） | `frontend/index.html` `translations.kana`/`setLang()` / `worker/index.js` `handleResearch()` | 稼働中 |
 
 ### 主要な定数値・APIエンドポイント一覧
 

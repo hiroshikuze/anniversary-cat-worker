@@ -37,6 +37,9 @@ jobs:
           check 'generateKanjiTexture'
           # 共有URL・コア機能
           check 'loadSharedImage'
+          # かなモード
+          check 'lang-btn-kana'
+          check 'setLang'
           echo "✅ All critical frontend features present"
       - name: Run health check
         run: node scripts/health-check.js
