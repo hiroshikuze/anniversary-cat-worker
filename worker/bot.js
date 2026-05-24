@@ -546,15 +546,17 @@ export async function runBot(env, handleResearch, handleGenerate) {
     if (env.IMAGE_BUCKET) {
       try {
         const meta = {
-          theme:          research.theme,
-          description:    research.description  ?? "",
-          themeEn:        research.themeEn      ?? "",
-          descriptionEn:  research.descriptionEn ?? "",
-          sourceUrl:      research.sourceUrl    ?? "",
-          kanjiChar:      research.kanjiChar    ?? null,
-          guestSuzuriTag: generated.guest?.suzuriTag ?? null,
-          products:       [],
-          createdAt:      new Date().toISOString(),
+          theme:           research.theme,
+          description:     research.description   ?? "",
+          themeEn:         research.themeEn       ?? "",
+          descriptionEn:   research.descriptionEn ?? "",
+          themeKana:       research.themeKana     ?? "",
+          descriptionKana: research.descriptionKana ?? "",
+          sourceUrl:       research.sourceUrl     ?? "",
+          kanjiChar:       research.kanjiChar     ?? null,
+          guestSuzuriTag:  generated.guest?.suzuriTag ?? null,
+          products:        [],
+          createdAt:       new Date().toISOString(),
         };
         await saveToR2(
           env.IMAGE_BUCKET,
