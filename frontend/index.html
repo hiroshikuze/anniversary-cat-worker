@@ -613,6 +613,12 @@
       return localStorage.getItem("generateRateLimitMsg") || t("rateLimitError");
     }
 
+    // エラーテキストをかなモード対応で設定（ruby HTMLを含む可能性があるため）
+    function setErrText(msg) {
+      const el = document.getElementById("g-error-text");
+      if (currentLang === "kana") { el.innerHTML = msg; } else { el.textContent = msg; }
+    }
+
     // ----------------------------------------------------------
     // 状態
     // ----------------------------------------------------------
@@ -1191,7 +1197,7 @@
 
         showGenerate("result");
       } catch (err) {
-        document.getElementById("g-error-text").textContent = err.message;
+        setErrText(err.message);
         showGenerate("error");
       }
     }
@@ -1369,7 +1375,7 @@
     // ----------------------------------------------------------
     async function startResearch() {
       if (isRateLimited()) {
-        document.getElementById("g-error-text").textContent = getRateLimitMessage();
+        setErrText(getRateLimitMessage());
         showGenerate("error");
         return;
       }
@@ -1388,7 +1394,7 @@
         // 自動的に画像生成を開始
         startGenerate();
       } catch (err) {
-        document.getElementById("g-error-text").textContent = err.message;
+        setErrText(err.message);
         showGenerate("error");
       }
     }
@@ -1399,7 +1405,7 @@
     async function startGenerate() {
       if (!researchData) return;
       if (isRateLimited()) {
-        document.getElementById("g-error-text").textContent = getRateLimitMessage();
+        setErrText(getRateLimitMessage());
         showGenerate("error");
         return;
       }
@@ -1432,9 +1438,20 @@
           throw new Error(t("imageLoadError"));
         });
         lastImageUrl = displayUrl;
-        document.getElementById("g-result-label").textContent = researchData.theme ?? "";
         const descEl = document.getElementById("g-result-description");
-        descEl.textContent = researchData.description ?? "";
+        {
+          const labelEl2 = document.getElementById("g-result-label");
+          if (currentLang === "en" && researchData.themeEn) {
+            labelEl2.textContent = researchData.themeEn;
+            descEl.textContent   = researchData.descriptionEn ?? researchData.description ?? "";
+          } else if (currentLang === "kana" && researchData.themeKana) {
+            labelEl2.innerHTML = researchData.themeKana;
+            descEl.innerHTML   = researchData.descriptionKana ?? researchData.description ?? "";
+          } else {
+            labelEl2.textContent = researchData.theme ?? "";
+            descEl.textContent   = researchData.description ?? "";
+          }
+        }
         if (researchData.sourceUrl) {
           descEl.href = researchData.sourceUrl;
           descEl.classList.add("underline");
@@ -1456,7 +1473,7 @@
 
       } catch (err) {
         console.error("[generate] error:", err.message);
-        document.getElementById("g-error-text").textContent = err.message;
+        setErrText(err.message);
         showGenerate("error");
       }
     }
