@@ -1032,6 +1032,12 @@
         : currentLang === "kana" && meta.themeKana
           ? meta.themeKana
           : (meta.theme ?? "");
+      // alt属性はプレーンテキスト固定（ruby HTMLを含めない）
+      const altTheme = meta.theme ?? "";
+      // kana: line-clamp-2は-webkit-boxを使いrubyの基底文字が消えるため、max-heightで代替
+      const themeParaAttr = currentLang === "kana"
+        ? 'class="text-xs font-medium text-pink-700 mt-0.5 overflow-hidden" style="max-height:4em"'
+        : 'class="text-xs font-medium text-pink-700 leading-tight mt-0.5 line-clamp-2"';
 
       const card = document.createElement("div");
       card.className = "flex-none cursor-pointer rounded-xl overflow-hidden border border-pink-100 bg-white shadow-sm hover:shadow-md transition-shadow";
@@ -1043,13 +1049,13 @@
       card.innerHTML = `
         <div class="bg-pink-50 flex items-center justify-center" style="height:120px;">
           <img src="${WORKER_URL}/thumb/${id}"
-            loading="lazy" alt="${displayTheme}"
+            loading="lazy" alt="${altTheme}"
             class="w-full h-full object-cover"
             onerror="this.parentElement.innerHTML='<span class=\\'text-2xl\\'>🐱</span>'">
         </div>
         <div class="p-2">
           <p class="text-xs text-pink-400">${label}</p>
-          <p class="text-xs font-medium text-pink-700 leading-tight mt-0.5 line-clamp-2">${displayTheme}</p>
+          <p ${themeParaAttr}>${displayTheme}</p>
         </div>`;
 
       return card;
