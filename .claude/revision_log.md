@@ -310,11 +310,19 @@
 
 ---
 
-### 2026-05 | かなモードで翻訳値のruby HTMLがテキスト表示される（Bug#21）
+### 2026-05 | かなモードruby HTML露出バグを複数パスで修正（Bug#21・22・23）
 
 - **状況**: かなモード（JP/かな/EN 3択）を実装し、`translations.kana`の全43キーにruby HTMLを設定した
-- **ミス**: `applyLang()`（`data-i18n`属性を一括適用する関数）はkana時に`innerHTML`を使う対応済みだったが、言語切り替え後に個別にDOMを書き換える関数群（`updateDateDisplay`・`showGoods`・`updateResultButtons`・`showToast`・`showWhatsNew`）が`textContent`のままで、画面上にタグ文字列が露出した
-- **教訓**: 翻訳値にHTMLを含む言語を追加するときは`applyLang()`だけでなく**全DOM書き込み箇所を確認する**。修正後は`grep -n "textContent = t(" frontend/index.html`でチェックする習慣をつける。また、保留項目として「CIにkana innerHTML存在チェックを追加する」「test-bot.mjsにtranslations.kana完全性テストを追加する」が残っている
+- **ミス（第1パス）**: `applyLang()`はkana時に`innerHTML`を使う対応済みだったが、動的UI更新関数群（`updateDateDisplay`・`showGoods`・`updateResultButtons`・`showToast`・`showWhatsNew`）が`textContent`のままだった（Bug#21）
+- **ミス（第2パス・実装確認時に追加発見）**:
+  - `startGenerate()`の画像生成後の結果表示が`textContent`+日本語固定で、`themeKana`/`descriptionKana`を参照していなかった（Bug#22）
+  - `getRateLimitMessage()`・`err.message`（`t("imageLoadError")`等から生成）を`textContent`でエラー表示していた（Bug#23）
+- **教訓**:
+  - 翻訳値にHTMLを含む言語を追加するときは`applyLang()`だけでなく**全DOM書き込み箇所を確認する**（`grep -n "textContent = t(" frontend/index.html`）
+  - 同じ表示ロジック（テーマ・説明文の表示）が複数箇所にある場合、1か所修正したら残り全箇所を同時確認する
+  - `new Error(t("rubyHtmlKey"))`でエラーを投げると`err.message`にruby HTMLが入る。エラーテキスト表示は`setErrText()`経由に統一する
+  - **初回修正後に必ず`実装抜けがないか確認`を行うこと**。同一バグクラスの漏れが複数パスで見つかるケースがある
+- **保留**: `test-bot.mjs`にtranslations.kana完全性テスト追加（DOMテスト環境なしでは困難・future-ideasに記録済み）
 
 ---
 

@@ -1261,8 +1261,13 @@ if (currentLang === "kana" || key === "footer") {
 **補足事項:**
 
 - `saleBanner`の`火`は「かようび」と読む（設計メモ確定事項）。kuroshiro自動生成は「ひ」と誤読したため手動修正済み。次回セール期間変更時も同様に修正すること
-- `health-check.yml`に`translations.kana`・`setLang`チェックを追加済み
-- `testing.md`のチェックリストを更新済み（かなモード2件追加・`toggleLang`→`setLang`説明修正）
+- `health-check.yml`に`translations.kana`・`setLang`・`formatDateKana`・`setErrText`チェックを追加済み
+- `testing.md`のチェックリストを更新済み（かなモード4件追加・`toggleLang`→`setLang`説明修正）
+
+**保留: translations.kana完全性テスト（2026-05）**
+
+`translations.ja`の全キーが`translations.kana`にも存在するかを`test-bot.mjs`で自動検証したい。現在はCIのgrep存在チェックのみで、キーの網羅性は手動確認に頼っている。
+実装方針: `frontend/index.html`を`fs.readFileSync`で読み込み、正規表現で各翻訳オブジェクトのキー一覧を抽出して比較する。難点はテンプレートリテラルと入れ子構造のパースが煩雑なこと。`vm.runInNewContext`を使えば実行できるが、`window`依存部分をスタブする必要がある。
 
 ### プレビューツール
 
