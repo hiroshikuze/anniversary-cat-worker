@@ -49,6 +49,24 @@
 - 2026-03: 「SUZURI APIは招待制」と記録したが、公式ドキュメント未確認だった。実際は誰でも即時利用可能
 - 2026-04: Wikipedia MediaWiki APIの調査でエージェントがja.wikipedia.orgへのアクセスを403でブロックされたにもかかわらず、確定情報として報告した
 
+## かなモードのDOM書き込みルール
+
+`translations.kana`の値はruby HTMLを含む。`el.textContent = t(key)`で書いた箇所は、`currentLang === "kana"`のとき`innerHTML`に切り替えが必要。
+
+**標準パターン:**
+
+```js
+if (currentLang === "kana") { el.innerHTML = t(key); } else { el.textContent = t(key); }
+```
+
+**新しいUI要素を追加したら必ず確認:**
+
+```bash
+grep -n "textContent = t(" frontend/index.html
+```
+
+対象: `applyLang()`（一括適用）だけでなく、言語切り替え後に動的にDOMを書き換える全関数（`showGoods()`・`showToast()`・`showWhatsNew()`・`updateResultButtons()`・`updateDateDisplay()`等）を確認する。（過去バグ: Bug#21）
+
 ## セキュリティ
 
 - ユーザー入力をそのままプロンプトに埋め込んでいないか（プロンプトインジェクション）

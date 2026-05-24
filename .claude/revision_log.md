@@ -310,6 +310,14 @@
 
 ---
 
+### 2026-05 | かなモードで翻訳値のruby HTMLがテキスト表示される（Bug#21）
+
+- **状況**: かなモード（JP/かな/EN 3択）を実装し、`translations.kana`の全43キーにruby HTMLを設定した
+- **ミス**: `applyLang()`（`data-i18n`属性を一括適用する関数）はkana時に`innerHTML`を使う対応済みだったが、言語切り替え後に個別にDOMを書き換える関数群（`updateDateDisplay`・`showGoods`・`updateResultButtons`・`showToast`・`showWhatsNew`）が`textContent`のままで、画面上にタグ文字列が露出した
+- **教訓**: 翻訳値にHTMLを含む言語を追加するときは`applyLang()`だけでなく**全DOM書き込み箇所を確認する**。修正後は`grep -n "textContent = t(" frontend/index.html`でチェックする習慣をつける。また、保留項目として「CIにkana innerHTML存在チェックを追加する」「test-bot.mjsにtranslations.kana完全性テストを追加する」が残っている
+
+---
+
 ```text
 ### YYYY-MM | タイトル
 - **状況**: 何をしようとしていたか

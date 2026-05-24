@@ -564,8 +564,10 @@
     // What's New モーダル
     // ----------------------------------------------------------
     function showWhatsNew() {
-      document.getElementById("whatsnew-title").textContent = t("whatsNewTitle");
-      document.getElementById("whatsnew-close-btn").textContent = t("whatsNewClose");
+      const _wnt = document.getElementById("whatsnew-title");
+      const _wnc = document.getElementById("whatsnew-close-btn");
+      if (currentLang === "kana") { _wnt.innerHTML = t("whatsNewTitle"); _wnc.innerHTML = t("whatsNewClose"); }
+      else { _wnt.textContent = t("whatsNewTitle"); _wnc.textContent = t("whatsNewClose"); }
       const list = document.getElementById("whatsnew-list");
       list.innerHTML = "";
       CHANGELOG.forEach((entry) => {
@@ -631,7 +633,13 @@
       document.getElementById("today-date").textContent =
         d.toLocaleDateString(locale, dateOpts);
       const labelEl = document.getElementById("today-date-label");
-      if (labelEl) labelEl.textContent = date === null ? t("todayDateLabel") : "";
+      if (labelEl) {
+        if (currentLang === "kana") {
+          labelEl.innerHTML = date === null ? t("todayDateLabel") : "";
+        } else {
+          labelEl.textContent = date === null ? t("todayDateLabel") : "";
+        }
+      }
     }
 
     function resetToInitial() {
@@ -735,7 +743,7 @@
       if (!btn) return;
       if (isSharedView) {
         btn.setAttribute("data-i18n", "newGenerateBtn");
-        btn.textContent = t("newGenerateBtn");
+        if (currentLang === "kana") { btn.innerHTML = t("newGenerateBtn"); } else { btn.textContent = t("newGenerateBtn"); }
         btn.onclick = function () {
           isSharedView    = false;
           currentSharedId = null;
@@ -745,7 +753,7 @@
         };
       } else {
         btn.setAttribute("data-i18n", "regenerateBtn");
-        btn.textContent = t("regenerateBtn");
+        if (currentLang === "kana") { btn.innerHTML = t("regenerateBtn"); } else { btn.textContent = t("regenerateBtn"); }
         btn.onclick = startGenerate;
       }
     }
@@ -763,7 +771,7 @@
     let _toastTimer = null;
     function showToast(message, durationMs = 3000) {
       const el = document.getElementById("g-toast");
-      el.textContent = message;
+      if (currentLang === "kana") { el.innerHTML = message; } else { el.textContent = message; }
       el.classList.remove("hidden");
       el.style.animation = "none";
       // reflow to restart animation
@@ -802,7 +810,7 @@
           };
           const label = document.createElement("p");
           label.className = "text-xs text-center py-1 text-gray-600 font-medium";
-          label.textContent = `${icon} ${name}`;
+          if (currentLang === "kana") { label.innerHTML = `${icon} ${name}`; } else { label.textContent = `${icon} ${name}`; }
           a.appendChild(img);
           a.appendChild(label);
           listEl.appendChild(a);
@@ -815,7 +823,7 @@
           a.className = "btn-secondary py-2 px-3 rounded-xl text-sm font-medium text-center flex items-center justify-center gap-1";
           a.setAttribute("data-umami-event", "suzuri-click");
           a.setAttribute("data-umami-event-slug", p.slug);
-          a.textContent = `${icon} ${name}`;
+          if (currentLang === "kana") { a.innerHTML = `${icon} ${name}`; } else { a.textContent = `${icon} ${name}`; }
           listEl.appendChild(a);
         } else if (p.queued) {
           // バックグラウンド処理中（案2）: 生成済み画像を暗くしてアイコンをオーバーレイ表示
@@ -836,7 +844,7 @@
           iconSpan.textContent = icon;
           const labelSpan = document.createElement("span");
           labelSpan.className = "text-xs text-pink-400 mt-1";
-          labelSpan.textContent = t("preparingBtn");
+          if (currentLang === "kana") { labelSpan.innerHTML = t("preparingBtn"); } else { labelSpan.textContent = t("preparingBtn"); }
           overlay.appendChild(iconSpan);
           overlay.appendChild(labelSpan);
           div.appendChild(overlay);
@@ -845,7 +853,7 @@
           // 在庫切れ等（無効）
           const btn = document.createElement("button");
           btn.className = "btn-disabled py-2 px-3 rounded-xl text-sm font-medium text-center flex items-center justify-center gap-1 w-full";
-          btn.textContent = `${icon} ${name}`;
+          if (currentLang === "kana") { btn.innerHTML = `${icon} ${name}`; } else { btn.textContent = `${icon} ${name}`; }
           btn.setAttribute("aria-disabled", "true");
           btn.addEventListener("click", () => {
             showToast(t("outOfStockToast"));
