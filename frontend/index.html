@@ -625,13 +625,33 @@
     // ----------------------------------------------------------
     // 初期化
     // ----------------------------------------------------------
+    // かなモード用の日付ふりがな生成（Intl.DateTimeFormat.formatToParts で成分を取得）
+    function formatDateKana(d) {
+      const parts = new Intl.DateTimeFormat("ja-JP", {
+        year: "numeric", month: "numeric", day: "numeric", weekday: "long",
+        timeZone: "Asia/Tokyo",
+      }).formatToParts(d);
+      const get = type => parts.find(p => p.type === type)?.value ?? "";
+      const weekdayKana = {
+        "日曜日": "にちようび", "月曜日": "げつようび", "火曜日": "かようび",
+        "水曜日": "すいようび", "木曜日": "もくようび", "金曜日": "きんようび", "土曜日": "どようび",
+      };
+      const wd = get("weekday");
+      const r = (k, f) => `<ruby>${k}<rp>(</rp><rt>${f}</rt><rp>)</rp></ruby>`;
+      return `${get("year")}${r("年","ねん")}${get("month")}${r("月","がつ")}${get("day")}${r("日","にち")}${r(wd, weekdayKana[wd] ?? "")}`;
+    }
+
     function updateDateDisplay(date = null) {
       const d = date ?? new Date();
       const locale = t("dateLocale");
       const dateOpts = { year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Tokyo" };
       if (locale.startsWith("ja")) dateOpts.weekday = "long";
-      document.getElementById("today-date").textContent =
-        d.toLocaleDateString(locale, dateOpts);
+      const todayDateEl = document.getElementById("today-date");
+      if (currentLang === "kana") {
+        todayDateEl.innerHTML = formatDateKana(d);
+      } else {
+        todayDateEl.textContent = d.toLocaleDateString(locale, dateOpts);
+      }
       const labelEl = document.getElementById("today-date-label");
       if (labelEl) {
         if (currentLang === "kana") {
