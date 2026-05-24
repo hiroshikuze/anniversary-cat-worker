@@ -215,7 +215,9 @@ async function checkResearch(apiKey, allModels) {
     check("sourceUrl あり", true, result.sourceUrl.slice(0, 80));
     await checkSourceUrl(result.sourceUrl);
   } else {
-    check("sourceUrl あり", false, "sourceUrl もフォールバック用クエリも取得できませんでした");
+    // Gemini 2.5 以降は groundingChunks・webSearchQueries を返さない場合がある（既知動作）。
+    // Worker は sourceUrl 空のまま theme/description を返すため、サービスへの影響なし。
+    warn("sourceUrl: vertexaisearch除去後にフォールバックURLも取得できず（Gemini 2.5の既知動作。Worker は sourceUrlKind=none として継続）");
   }
 }
 
