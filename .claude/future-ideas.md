@@ -1275,3 +1275,51 @@ if (currentLang === "kana" || key === "footer") {
 node scripts/preview-kana.mjs "テーマ名" "説明文"
 # → /tmp/kana-preview.html を生成してブラウザで確認
 ```
+
+---
+
+## Playwright MCPによるUI検証・suzuri.jp調査の自動化（未着手・2026-06）
+
+### 背景
+
+WebFetchはHTTPリクエストのみでJavaScriptを実行しない。そのため：
+
+- JS描画後のUIを検証できない（ボタン表示・バナー表示・グッズカード等）
+- suzuri.jpはCloudflare等のWAFでWebFetchを403で弾く（Tシャツセール調査ができない）
+
+現状は手動スクリーンショットをClaudeに渡す運用で対応している。
+
+### 解決策：Playwright MCPサーバー（無料）
+
+```bash
+npx @playwright/mcp@latest
+```
+
+`~/.claude.json`に追加:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
+    }
+  }
+}
+```
+
+設定後はClaudeがheadless Chromiumを起動してJS描画後のページを自律的に取得・分析できる。
+
+### できるようになること
+
+- suzuri.jpのセール記事（`https://suzuri.jp/media/category/news/`）をClaudeが自分で調査
+- にゃんバーサリーのUIをJS実行後の状態で検証（バナー表示・グッズカード・ポーリング挙動等）
+- スクリーンショットの手動共有が不要になる
+
+### 制約
+
+**ローカル環境専用**。Claude Code CLIまたはデスクトップアプリが必要。ブラウザ版・スマホアプリ・GitHub連携では利用不可（MCPサーバーをローカルで起動できないため）。
+
+### 着手タイミング
+
+自宅Windows環境でClaude Code CLIまたはデスクトップアプリをセットアップするタイミング。
