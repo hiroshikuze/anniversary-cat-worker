@@ -498,7 +498,7 @@ export function pickPersona() {
 // Finka(2017) リンカーン大学5タイプを参考に、本サービスのトーン（記念日・かわいい）に合わせ調整。
 // 攻撃的・神経質・触られ嫌い・衝動的なタイプは除外。ツンデレはRare(3%)。
 const CAT_PERSONALITIES = [
-  { weight: 35, desc: "gazing lovingly at viewer, sitting close, soft gentle expression" },
+  { weight: 35, desc: "gazing warmly at the scene, sitting close to the theme setting, soft contented expression, as if savoring the moment" },
   { weight: 30, desc: "crouching in playful pounce position, alert bright eyes, paw reaching for theme item" },
   { weight: 25, desc: "leaning forward with wide curious eyes, carefully investigating the theme item" },
   { weight:  7, desc: "grooming itself serenely, self-contained and peaceful" },

@@ -1295,7 +1295,7 @@ console.log("\n[pickPersonality]");
 
 {
   // Human Cat（weight=35）が Cantankerous（weight=3）より多く出現すること
-  const humanCat     = "gazing lovingly at viewer, sitting close, soft gentle expression";
+  const humanCat     = "gazing warmly at the scene, sitting close to the theme setting, soft contented expression, as if savoring the moment";
   const cantankerous = "sitting with back slightly turned, dignified aloof expression, secretly glancing back";
   let humanCount = 0;
   let tsundereCount = 0;
