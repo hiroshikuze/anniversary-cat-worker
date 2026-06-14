@@ -326,6 +326,15 @@
 
 ---
 
+### 2026-06 | デプロイCI失敗の`/subdomain`認証エラーは一時的なCloudflare API不調だった
+
+- **状況**: PR #132マージ後の`deploy-worker.yml`が失敗。ログでは`Uploaded anniversary-cat-worker`まで成功していたが、後続の`/accounts/.../workers/scripts/.../subdomain`へのリクエストで`Unable to authenticate request [code: 10001]`が発生していた
+- **診断**: 直前の成功run（#127）のログと比較し、スクリプト本体のアップロードは両方成功・差分は`/subdomain`呼び出し（workers.dev URL表示+Cron trigger再適用）のみと特定した
+- **対処**: `rerun_failed_jobs`で同コミットを再実行したところ2回目は正常完了し、Cron triggerも再適用された。コード変更は不要だった
+- **教訓**: スクリプト本体のアップロードが成功していれば、後続`/subdomain`ステップの`[code: 10001]`は一時的なCloudflare API不調の可能性が高い。過去の成功runログと比較して「どのAPI呼び出しだけが新たに失敗しているか」を特定し、再実行で解消するか確認する。トークン権限の恒久的な問題と判断するのは再実行でも同じエラーが繰り返される場合のみ
+
+---
+
 ```text
 ### YYYY-MM | タイトル
 - **状況**: 何をしようとしていたか
