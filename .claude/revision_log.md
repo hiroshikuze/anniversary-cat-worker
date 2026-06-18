@@ -335,6 +335,20 @@
 
 ---
 
+### 2026-06 | GEMINI_API_KEYを他リポジトリと共用していたためローテーションでBot Cronが失敗（対応中）
+
+- **状況**: 別リポジトリ案件と本リポジトリでGEMINI_API_KEYを共用していた。別リポジトリの課金が想定より高かったためユーザーが鍵をローテーションしたところ、本リポジトリのCloudflare Workerシークレットが旧キーのまま残り、2026-06-15朝のBot Cronが`画像生成に失敗しました（API key expired. Please renew the API key. / All promises were rejected）`で失敗（Discord通知で検知）
+- **原因**: 1つのAPIキーを複数リポジトリで共用していたため、一方の都合（コスト懸念によるローテーション）がもう一方（本リポジトリ）に無通知で影響した
+- **対処方針（ユーザーに案内・本セッションでは未実施）**:
+  1. このリポジトリ専用の新しいGEMINI_API_KEYをGoogle AI Studioで発行
+  2. `wrangler secret put GEMINI_API_KEY`でCloudflare Workerシークレットを更新（最優先・本番復旧）
+  3. GitHub Actionsシークレット`GEMINI_API_KEY`を更新（`health-check.yml`のE2Eで使用）
+  4. testing.mdの「Botの手動テスト（本番発火）」でログ・Discord通知を確認
+- **注意**: 次回セッション開始時、上記4ステップが完了済みか必ずユーザーに確認すること。未完了ならBot Cronは依然失敗し続ける
+- **教訓**: 外部APIキーは利用するリポジトリ・プロジェクト単位で専用に発行する。共用すると一方の都合（コスト最適化・セキュリティローテーション等）による変更が他方に無通知で波及し、検知がCron実行失敗（Discord通知）まで遅れる
+
+---
+
 ```text
 ### YYYY-MM | タイトル
 - **状況**: 何をしようとしていたか
