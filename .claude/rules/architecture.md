@@ -101,7 +101,7 @@ anniversary-cat-worker/
 ```
 
 - `slugs`は任意。指定時はそのスラッグのみSUZURI登録する（未指定時は全4商品）。
-- `r2Id`は任意。指定時はSUZURI登録完了後にR2の`meta.json`を`materialId`/`products`で更新する。最初の呼び出しにのみ指定する。
+- `r2Id`は任意。指定時はSUZURI登録完了後にR2の`meta.json`を`materialIds`/`products`で更新する。フロントは右グループ（t-shirt/sticker）・中央グループ（can-badge/acrylic-keychain）の**両方の呼び出し**に同じ`r2Id`を渡す（`createSuzuriFromImage()`）。
 - `hiresImageData`は任意。t-shirt/stickerグループのみ送る。フロントがCanvas `imageSmoothingQuality:"high"`（Chrome: Lanczos / Firefox・Safari: bicubic）で2048pxにリサイズした画像。fal.ai失敗時のフォールバックとして使用し、元画像（~1024px）より印刷品質が向上する。`imageData`はfal.ai投入用として元サイズのまま維持する（2048px入力→ESRGAN→4096px≈24MBとなりSUZURI 20MB超過を招くため）。
 - `description`は任意。`/research`が返す記念日説明文。SUZURIマテリアルの`description`フィールドに使用する。
 - `backTexture`は任意。t-shirt/stickerグループのみ送る。フロントが`generateKanjiTexture(kanjiChar)`でCanvas生成した漢字テクスチャ（`data:image/jpeg;base64,...`形式）。`kanjiChar`がnullまたは無効値の場合は🐾フォールバックで生成し、必ず送信する。Tシャツのみ`sub_materials`（背面印刷）として適用。
@@ -109,6 +109,10 @@ anniversary-cat-worker/
 **重複防止チェック（2026-04追加）:**
 
 `r2Id`と`slugs`が両方指定された場合、R2メタの`products`に対象スラッグが全件存在すれば既存データを返して登録をスキップする。これによりボット画像への複数ユーザー同時訪問による二重登録を防ぐ。
+
+**SUZURIマテリアルは画像1件につき2つ作成される（2026-06明確化）:**
+
+右グループ（t-shirt/sticker）・中央グループ（can-badge/acrylic-keychain）はそれぞれ独立して`createSuzuriProducts()`を呼ぶため、`POST /api/v1/materials`が**2回**実行され、SUZURI側には別々の`materialId`を持つ2つのマテリアルが作成される。R2メタの`materialIds`（配列）は両方の呼び出し結果を`updateMetaInR2()`で蓄積し（`products`と同じupsertパターン）、14日後のクリーンアップ（`scheduled()`）が配列内の全IDを削除する。`/resume-hires/:id`（安全網エンドポイント）が右グループを再実行した場合も同様に`materialIds`へ追記する。
 
 **レスポンス:**
 
@@ -118,6 +122,8 @@ anniversary-cat-worker/
   "materialId": 12345
 }
 ```
+
+`materialId`はこの呼び出し（1グループ分）で作成されたマテリアルのIDを返す。R2に蓄積される配列は`materialIds`（複数形）であり、フィールド名が異なる点に注意。
 
 | フィールド | 説明 |
 | --- | --- |

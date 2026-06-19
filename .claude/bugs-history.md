@@ -191,4 +191,18 @@
 - **場所**: `frontend/index.html` `setErrText()` / `startResearch()` / `startGenerate()` 各catchブロック
 - **教訓**: `new Error(t("rubyHtmlKey"))`とすると`err.message`にruby HTMLが入り込む。エラーテキストをUIに表示する際は必ず`setErrText()`経由にする。`textContent = err.message`のような直接代入は禁止パターン
 
+### 24. SUZURIマテリアルが画像1件につき2つ作成され、片方がクリーンアップから漏れて孤立する（2026-06）
+
+- **症状**: ユーザーから「ボットが毎日SUZURI商品を生成しているが、古い商品の削除が一部失敗しているように見える」と報告
+- **原因**: `/suzuri-create`はTシャツ/ステッカー（rightグループ・`ctx.waitUntil()`で非同期処理）とキャンバッジ/アクキー（centerグループ・即時処理）を別々に`createSuzuriProducts()`で登録するため、画像1件につきSUZURI側マテリアルが**2つ**作成される。しかしR2の`meta.json`は単数フィールド`materialId`しか持たず、rightグループの非同期処理および`/resume-hires/:id`（安全網エンドポイント）が`updateMetaInR2()`を呼ぶ際に`products`のみを渡して`materialId`を渡し忘れていた。結果としてrightグループのmaterialIdは一度もR2に保存されず、14日後の`scheduled()`クリーンアップはcenterグループのIDしか削除できなかった
+- **影響**: 生成された画像すべてについて、Tシャツ/ステッカーのSUZURIマテリアルが永久に孤立し続ける（14日後クリーンアップが対象を認識できない）
+- **修正**:
+  - R2メタのスキーマを単数`materialId`から配列`materialIds`に変更。`worker/r2-storage.js` `updateMetaInR2()`に`products`と同様のマージ（蓄積・重複排除）ロジックを追加
+  - 3つの`createSuzuriProducts()`呼び出し箇所（centerグループ・rightグループ・`/resume-hires/:id`）すべてで`materialIds: [sr.materialId]`を渡すよう統一
+  - 旧スキーマ（単数`materialId`）との後方互換のため`collectMaterialIds(meta)`を新設し、`scheduled()`のクリーンアップループで新旧両スキーマを読み出せるようにした
+  - 過去分の孤立マテリアルを検出・削除する`scripts/audit-suzuri-materials.mjs`を新設（`GET /api/v1/materials`一覧をdescriptionの期限表記で判定）
+- **テスト**: `scripts/test-bot.mjs`に`materialIds`マージ・`collectMaterialIds()`・`parseExpiryDate()`の正常系/境界値/エラー系テストを追加
+- **場所**: `worker/r2-storage.js` `updateMetaInR2()` `collectMaterialIds()` / `worker/index.js` `scheduled()` `/suzuri-create` `/resume-hires/:id` / `scripts/audit-suzuri-materials.mjs`
+- **教訓**: 1つの論理エンティティ（画像1件）が複数の外部リソース（SUZURIマテリアル）を作成しうる設計では、ID集約フィールドは最初から配列で持つ。単数フィールドの「最後に書き込んだ値だけ残る」という性質は、複数の呼び出し元が非同期・別タイミングで書き込む構成と相性が悪い
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）

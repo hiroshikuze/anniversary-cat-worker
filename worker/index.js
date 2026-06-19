@@ -10,7 +10,7 @@
  */
 
 import { runBot, notifyDiscord } from "./bot.js";
-import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2 } from "./r2-storage.js";
+import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2, collectMaterialIds } from "./r2-storage.js";
 import { createSuzuriProducts, deleteSuzuriMaterial } from "./suzuri.js";
 import { submitFalJob, getFalResult } from "./fal.js";
 
@@ -968,12 +968,12 @@ export default {
           for (const id of expiredIds) {
             if (env.SUZURI_API_KEY) {
               const meta = await getMetaFromR2(env.IMAGE_BUCKET, id);
-              if (meta?.materialId) {
+              for (const materialId of collectMaterialIds(meta)) {
                 try {
-                  await deleteSuzuriMaterial(meta.materialId, env);
-                  console.log(`[cleanup] SUZURI material=${meta.materialId} 削除完了`);
+                  await deleteSuzuriMaterial(materialId, env);
+                  console.log(`[cleanup] SUZURI material=${materialId} 削除完了`);
                 } catch (e) {
-                  console.warn(`[cleanup] SUZURI material=${meta.materialId} 削除失敗: ${e.message}`);
+                  console.warn(`[cleanup] SUZURI material=${materialId} 削除失敗: ${e.message}`);
                 }
               }
             }
@@ -1196,7 +1196,7 @@ ${itemsXml}
 
       try {
         const sr = await createSuzuriProducts(suzuriTexture, meta.theme ?? "", env, RIGHT_SLUGS, null, meta.description ?? "", id, meta.guestSuzuriTag ?? null);
-        await updateMetaInR2(env.IMAGE_BUCKET, id, { products: sr.products });
+        await updateMetaInR2(env.IMAGE_BUCKET, id, { materialIds: [sr.materialId], products: sr.products });
         console.log(`[resume-hires] SUZURI登録完了`);
         return Response.json({ products: sr.products }, { headers: corsH });
       } catch (e) {
@@ -1268,7 +1268,7 @@ ${itemsXml}
               themeKana:       body.themeKana      ?? "",
               descriptionKana: body.descriptionKana ?? "",
               sourceUrl:       "",
-              materialId:      null,
+              materialIds:     [],
               guestSuzuriTag:  result.guest?.suzuriTag ?? null,
               products:        [],
               createdAt:       new Date().toISOString(),
@@ -1412,7 +1412,7 @@ ${itemsXml}
             try {
               const sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, resolvedBackTexture, description ?? "", r2Id ?? null, guestSuzuriTag);
               if (r2Id && env.IMAGE_BUCKET) {
-                await updateMetaInR2(env.IMAGE_BUCKET, r2Id, { products: sr.products });
+                await updateMetaInR2(env.IMAGE_BUCKET, r2Id, { materialIds: [sr.materialId], products: sr.products });
               }
               console.log(`[suzuri-create] right グループ完了 slugs=${slugs?.join(",")}`);
             } catch (e) {
@@ -1427,8 +1427,8 @@ ${itemsXml}
           if (r2Id && env.IMAGE_BUCKET) {
             try {
               await updateMetaInR2(env.IMAGE_BUCKET, r2Id, {
-                materialId: suzuriResult.materialId,
-                products:   suzuriResult.products,
+                materialIds: [suzuriResult.materialId],
+                products:    suzuriResult.products,
               });
             } catch (e) {
               console.warn(`[suzuri-create] R2メタ更新失敗: ${e.message}`);

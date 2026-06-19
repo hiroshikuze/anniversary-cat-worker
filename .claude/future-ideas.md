@@ -361,14 +361,14 @@ ctx.waitUntil()が途中終了した稀なケース向け。フロントの60秒
 → Map by slug で upsert → 全4件になる
 ```
 
-`materialId` は最初に書き込んだグループ（Request A）のものを保持。Request Bのバックグラウンドタスクは `materialId` を更新しない。
+`materialId`は2グループそれぞれの`createSuzuriProducts()`呼び出しで別々に発行される（画像1件につきSUZURI側マテリアルは2つ作成される）。R2メタは`materialIds`（配列）で両方を蓄積し、14日後のクリーンアップで全件削除する（2026-06修正・旧設計では片方のみ保持しクリーンアップ漏れが発生していた）。
 
 #### GET /meta/:id エンドポイント
 
 ポーリング専用の軽量エンドポイント。`/image/:id` と異なり画像データを含まないため、ポーリングのトラフィックを最小化できる。
 
 ```json
-{ "theme": "...", "products": [...], "materialId": 123, "createdAt": "..." }
+{ "theme": "...", "products": [...], "materialIds": [123, 456], "createdAt": "..." }
 ```
 
 #### 技術仕様
@@ -530,7 +530,7 @@ curl -n "/api/v1/materials?limit=30&offset=0" \
 ```
 
 **活用場面**: 過去に登録したマテリアルの棚卸しや、孤立したマテリアルの削除。
-`scripts/test-suzuri-api.mjs`に追加すると運用管理が楽になる。
+`scripts/audit-suzuri-materials.mjs`（2026-06追加）で実際に使用している。
 
 ---
 

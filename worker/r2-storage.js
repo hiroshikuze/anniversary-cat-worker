@@ -16,7 +16,7 @@
  * @param {R2Bucket} bucket
  * @param {string} id - キープレフィックス（例: "bot/2026-03-28"）
  * @param {{ data: string, mimeType: string }} webImage - base64画像
- * @param {{ theme: string, description: string, sourceUrl: string, materialId: number|null, products: Array, createdAt: string }} meta
+ * @param {{ theme: string, description: string, sourceUrl: string, materialIds: number[], products: Array, createdAt: string }} meta
  */
 export async function saveToR2(bucket, id, webImage, meta) {
   const imageBytes = base64ToUint8Array(webImage.data);
@@ -109,7 +109,8 @@ export async function deleteFromR2(bucket, id) {
 /**
  * R2のメタデータを部分更新する。画像は変更せずmeta.jsonのみ上書きする。
  * products フィールドはスラッグ単位でマージ（上書きではなくupsert）する。
- * 複数グループ（right/center）が別々に更新しても全商品が保持される。
+ * materialIds フィールドは重複排除しつつ蓄積する。
+ * 複数グループ（right/center）が別々に更新しても全商品・全マテリアルIDが保持される。
  * @param {R2Bucket} bucket
  * @param {string} id
  * @param {object} updates - 既存メタに上書きするフィールド
@@ -123,9 +124,26 @@ export async function updateMetaInR2(bucket, id, updates) {
     for (const p of updates.products) map.set(p.slug, p);
     merged.products = [...map.values()];
   }
+  if (updates.materialIds) {
+    const set = new Set(existing.materialIds ?? []);
+    for (const materialId of updates.materialIds) set.add(materialId);
+    merged.materialIds = [...set];
+  }
   await bucket.put(`${id}/meta.json`, JSON.stringify(merged), {
     httpMetadata: { contentType: "application/json" },
   });
+}
+
+/**
+ * R2メタからSUZURIマテリアルIDの配列を読み出す。
+ * 新スキーマ（materialIds配列）と旧スキーマ（単数materialId）の両方に対応する。
+ * @param {object} meta
+ * @returns {number[]}
+ */
+export function collectMaterialIds(meta) {
+  if (Array.isArray(meta?.materialIds)) return meta.materialIds;
+  if (meta?.materialId) return [meta.materialId];
+  return [];
 }
 
 // ---------------------------------------------------------------------------
