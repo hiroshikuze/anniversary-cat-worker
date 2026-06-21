@@ -12,7 +12,7 @@
 | `GET` | `/api/v1/items` | アイテムID一覧取得・在庫確認 | `worker/suzuri.js` `fetchAvailableItemIds()` |
 | `POST` | `/api/v1/materials` | マテリアル＋商品一括作成 | `worker/suzuri.js` `createSuzuriProducts()` |
 | `DELETE` | `/api/v1/materials/{id}` | マテリアル削除（14日後の自動クリーンアップ・テスト後の手動削除） | `worker/suzuri.js` `deleteSuzuriMaterial()`（`worker/index.js` `scheduled()`から呼び出し）/ `scripts/test-suzuri-api.mjs` |
-| `GET` | `/api/v1/materials` | マテリアル一覧取得（孤立マテリアルの棚卸し用） | `scripts/audit-suzuri-materials.mjs`（2026-06追加） |
+| `GET` | `/api/v1/materials` | マテリアル一覧取得（孤立マテリアルの棚卸し用） | `scripts/audit-suzuri-materials.mjs`（2026-06追加）。`limit`は**1〜50**のみ許可（`100`を渡すと400エラー。実APIレスポンスのスキーマ正規表現`/^([1-9]|[1-4][0-9]|50)$/`で確認済み。他エンドポイントの`limit=100`慣習とは異なる点に注意） |
 
 ---
 

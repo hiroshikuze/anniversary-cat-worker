@@ -58,7 +58,7 @@ export function parseExpiryDate(description, now = new Date()) {
  */
 async function fetchAllMaterials(apiKey) {
   const headers = { "Authorization": `Bearer ${apiKey}` };
-  const limit = 100;
+  const limit = 50; // SUZURI API側の上限（100は400エラー。詳細は.claude/rules/suzuri-api-reference.md参照）
   let offset = 0;
   const materials = [];
 
