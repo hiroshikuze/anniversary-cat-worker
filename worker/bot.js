@@ -555,6 +555,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
           sourceUrl:       research.sourceUrl     ?? "",
           kanjiChar:       research.kanjiChar     ?? null,
           guestSuzuriTag:  generated.guest?.suzuriTag ?? null,
+          materialIds:     [],
           products:        [],
           createdAt:       new Date().toISOString(),
         };

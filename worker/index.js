@@ -10,7 +10,7 @@
  */
 
 import { runBot, notifyDiscord } from "./bot.js";
-import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2 } from "./r2-storage.js";
+import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2, collectMaterialIds } from "./r2-storage.js";
 import { createSuzuriProducts, deleteSuzuriMaterial } from "./suzuri.js";
 import { submitFalJob, getFalResult } from "./fal.js";
 
@@ -154,37 +154,47 @@ function toJSTDateStringWorker(date) {
 // 事前リサーチプール ― SEASONAL_FLOWERS / getSeasonalFlower / filterAndDedupePool
 // ---------------------------------------------------------------------------
 
+// visual: その季節要素の実際の見た目をASCII英語で記述したvisualHint用フィールド。
+// 苔・紅葉・銀杏・千両は花を咲かせない（または花が主役でない）ため flowers/petals を含めない
+// （Bug#25: 全件共通の "flowers, ... soft petals, ..." テンプレートが季節と矛盾する画像の原因だった）
 const SEASONAL_FLOWERS = [
-  { startMd: "01-01", endMd: "01-15", name: "寒椿" },
-  { startMd: "01-16", endMd: "01-31", name: "水仙" },
-  { startMd: "02-01", endMd: "02-14", name: "蝋梅" },
-  { startMd: "02-15", endMd: "02-28", name: "梅" },
-  { startMd: "03-01", endMd: "03-15", name: "菜の花" },
-  { startMd: "03-16", endMd: "03-31", name: "彼岸桜" },
-  { startMd: "04-01", endMd: "04-15", name: "染井吉野" },
-  { startMd: "04-16", endMd: "04-30", name: "藤" },
-  { startMd: "05-01", endMd: "05-15", name: "杜若" },
-  { startMd: "05-16", endMd: "05-31", name: "皐月" },
-  { startMd: "06-01", endMd: "06-15", name: "紫陽花" },
-  { startMd: "06-16", endMd: "06-30", name: "苔" },
-  { startMd: "07-01", endMd: "07-15", name: "蓮" },
-  { startMd: "07-16", endMd: "07-31", name: "桔梗" },
-  { startMd: "08-01", endMd: "08-15", name: "向日葵" },
-  { startMd: "08-16", endMd: "08-31", name: "百日紅" },
-  { startMd: "09-01", endMd: "09-15", name: "萩" },
-  { startMd: "09-16", endMd: "09-30", name: "彼岸花" },
-  { startMd: "10-01", endMd: "10-15", name: "秋桜" },
-  { startMd: "10-16", endMd: "10-31", name: "金木犀" },
-  { startMd: "11-01", endMd: "11-15", name: "菊" },
-  { startMd: "11-16", endMd: "11-30", name: "紅葉" },
-  { startMd: "12-01", endMd: "12-15", name: "銀杏" },
-  { startMd: "12-16", endMd: "12-31", name: "千両" },
+  { startMd: "01-01", endMd: "01-15", name: "寒椿",   visual: "winter camellia blossoms, deep red petals, snow-dusted garden" },
+  { startMd: "01-16", endMd: "01-31", name: "水仙",   visual: "narcissus flowers, white and yellow blooms, winter garden" },
+  { startMd: "02-01", endMd: "02-14", name: "蝋梅",   visual: "wintersweet blossoms, pale yellow flowers, bare winter branches" },
+  { startMd: "02-15", endMd: "02-28", name: "梅",     visual: "plum blossoms, pink and white flowers, early spring branches" },
+  { startMd: "03-01", endMd: "03-15", name: "菜の花", visual: "rapeseed flowers, bright yellow blooms, spring countryside field" },
+  { startMd: "03-16", endMd: "03-31", name: "彼岸桜", visual: "higan cherry blossoms, soft pink petals, drifting spring breeze" },
+  { startMd: "04-01", endMd: "04-15", name: "染井吉野", visual: "cherry blossoms, pink petals falling, Japanese garden breeze" },
+  { startMd: "04-16", endMd: "04-30", name: "藤",     visual: "wisteria flowers, hanging purple clusters, trellis garden" },
+  { startMd: "05-01", endMd: "05-15", name: "杜若",   visual: "iris flowers, purple blooms, pond-side garden" },
+  { startMd: "05-16", endMd: "05-31", name: "皐月",   visual: "satsuki azalea blossoms, vivid pink flowers, garden hedge" },
+  { startMd: "06-01", endMd: "06-15", name: "紫陽花", visual: "hydrangea flowers, blue and purple blooms, rainy season garden" },
+  { startMd: "06-16", endMd: "06-30", name: "苔",     visual: "lush green moss, mossy stones, quiet shaded garden" },
+  { startMd: "07-01", endMd: "07-15", name: "蓮",     visual: "lotus flowers, pink blooms, pond with green leaves" },
+  { startMd: "07-16", endMd: "07-31", name: "桔梗",   visual: "balloon flowers, purple star-shaped blooms, summer garden" },
+  { startMd: "08-01", endMd: "08-15", name: "向日葵", visual: "sunflowers, bright yellow blooms, summer field" },
+  { startMd: "08-16", endMd: "08-31", name: "百日紅", visual: "crape myrtle blossoms, vivid pink flowers, late summer garden" },
+  { startMd: "09-01", endMd: "09-15", name: "萩",     visual: "bush clover flowers, small purple-pink blooms, autumn garden" },
+  { startMd: "09-16", endMd: "09-30", name: "彼岸花", visual: "red spider lilies, vivid red blooms, autumn rice field" },
+  { startMd: "10-01", endMd: "10-15", name: "秋桜",   visual: "cosmos flowers, pink and white blooms, autumn breeze field" },
+  { startMd: "10-16", endMd: "10-31", name: "金木犀", visual: "fragrant olive blossoms, tiny orange flowers, sweet autumn scent" },
+  { startMd: "11-01", endMd: "11-15", name: "菊",     visual: "chrysanthemum flowers, layered autumn blooms, garden display" },
+  { startMd: "11-16", endMd: "11-30", name: "紅葉",   visual: "autumn maple leaves, red and gold foliage, falling leaves" },
+  { startMd: "12-01", endMd: "12-15", name: "銀杏",   visual: "ginkgo leaves, golden fan-shaped foliage, tree-lined avenue" },
+  { startMd: "12-16", endMd: "12-31", name: "千両",   visual: "nandina red berries, glossy green leaves, winter garden" },
 ];
 
 /** 日付文字列（YYYY-MM-DD）から季節の花名を返す */
 export function getSeasonalFlower(dateStr) {
   const md = dateStr.slice(5); // "YYYY-MM-DD" → "MM-DD"
   return SEASONAL_FLOWERS.find(e => md >= e.startMd && md <= e.endMd)?.name ?? "梅";
+}
+
+/** 日付文字列（YYYY-MM-DD）から季節要素の実際の見た目（visualHint用ASCII記述）を返す */
+export function getSeasonalFlowerVisual(dateStr) {
+  const md = dateStr.slice(5);
+  return SEASONAL_FLOWERS.find(e => md >= e.startMd && md <= e.endMd)?.visual
+    ?? "plum blossoms, pink and white flowers, early spring branches";
 }
 
 /**
@@ -276,7 +286,7 @@ async function generateResearchPool(env) {
     entries = [...entries, {
       theme:              `${flowerName}の季節`,
       description:        `今の季節を彩る${flowerName}`,
-      visualHint:         `${flowerName} flowers, Japanese garden, soft petals, gentle breeze`,
+      visualHint:         getSeasonalFlowerVisual(todayJst),
       foodItem:           null,
       kanjiChar:          null,
       sourceUrl:          "",
@@ -968,12 +978,12 @@ export default {
           for (const id of expiredIds) {
             if (env.SUZURI_API_KEY) {
               const meta = await getMetaFromR2(env.IMAGE_BUCKET, id);
-              if (meta?.materialId) {
+              for (const materialId of collectMaterialIds(meta)) {
                 try {
-                  await deleteSuzuriMaterial(meta.materialId, env);
-                  console.log(`[cleanup] SUZURI material=${meta.materialId} 削除完了`);
+                  await deleteSuzuriMaterial(materialId, env);
+                  console.log(`[cleanup] SUZURI material=${materialId} 削除完了`);
                 } catch (e) {
-                  console.warn(`[cleanup] SUZURI material=${meta.materialId} 削除失敗: ${e.message}`);
+                  console.warn(`[cleanup] SUZURI material=${materialId} 削除失敗: ${e.message}`);
                 }
               }
             }
@@ -1196,7 +1206,7 @@ ${itemsXml}
 
       try {
         const sr = await createSuzuriProducts(suzuriTexture, meta.theme ?? "", env, RIGHT_SLUGS, null, meta.description ?? "", id, meta.guestSuzuriTag ?? null);
-        await updateMetaInR2(env.IMAGE_BUCKET, id, { products: sr.products });
+        await updateMetaInR2(env.IMAGE_BUCKET, id, { materialIds: [sr.materialId], products: sr.products });
         console.log(`[resume-hires] SUZURI登録完了`);
         return Response.json({ products: sr.products }, { headers: corsH });
       } catch (e) {
@@ -1268,7 +1278,7 @@ ${itemsXml}
               themeKana:       body.themeKana      ?? "",
               descriptionKana: body.descriptionKana ?? "",
               sourceUrl:       "",
-              materialId:      null,
+              materialIds:     [],
               guestSuzuriTag:  result.guest?.suzuriTag ?? null,
               products:        [],
               createdAt:       new Date().toISOString(),
@@ -1412,7 +1422,7 @@ ${itemsXml}
             try {
               const sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, resolvedBackTexture, description ?? "", r2Id ?? null, guestSuzuriTag);
               if (r2Id && env.IMAGE_BUCKET) {
-                await updateMetaInR2(env.IMAGE_BUCKET, r2Id, { products: sr.products });
+                await updateMetaInR2(env.IMAGE_BUCKET, r2Id, { materialIds: [sr.materialId], products: sr.products });
               }
               console.log(`[suzuri-create] right グループ完了 slugs=${slugs?.join(",")}`);
             } catch (e) {
@@ -1427,8 +1437,8 @@ ${itemsXml}
           if (r2Id && env.IMAGE_BUCKET) {
             try {
               await updateMetaInR2(env.IMAGE_BUCKET, r2Id, {
-                materialId: suzuriResult.materialId,
-                products:   suzuriResult.products,
+                materialIds: [suzuriResult.materialId],
+                products:    suzuriResult.products,
               });
             } catch (e) {
               console.warn(`[suzuri-create] R2メタ更新失敗: ${e.message}`);

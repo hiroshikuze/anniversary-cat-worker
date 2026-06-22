@@ -361,14 +361,14 @@ ctx.waitUntil()が途中終了した稀なケース向け。フロントの60秒
 → Map by slug で upsert → 全4件になる
 ```
 
-`materialId` は最初に書き込んだグループ（Request A）のものを保持。Request Bのバックグラウンドタスクは `materialId` を更新しない。
+`materialId`は2グループそれぞれの`createSuzuriProducts()`呼び出しで別々に発行される（画像1件につきSUZURI側マテリアルは2つ作成される）。R2メタは`materialIds`（配列）で両方を蓄積し、14日後のクリーンアップで全件削除する（2026-06修正・旧設計では片方のみ保持しクリーンアップ漏れが発生していた）。
 
 #### GET /meta/:id エンドポイント
 
 ポーリング専用の軽量エンドポイント。`/image/:id` と異なり画像データを含まないため、ポーリングのトラフィックを最小化できる。
 
 ```json
-{ "theme": "...", "products": [...], "materialId": 123, "createdAt": "..." }
+{ "theme": "...", "products": [...], "materialIds": [123, 456], "createdAt": "..." }
 ```
 
 #### 技術仕様
@@ -530,7 +530,7 @@ curl -n "/api/v1/materials?limit=30&offset=0" \
 ```
 
 **活用場面**: 過去に登録したマテリアルの棚卸しや、孤立したマテリアルの削除。
-`scripts/test-suzuri-api.mjs`に追加すると運用管理が楽になる。
+`scripts/audit-suzuri-materials.mjs`（2026-06追加）で実際に使用している。
 
 ---
 
@@ -848,43 +848,52 @@ if (existingMeta && existingMeta.blueskyPostUri) {
 月単位より粒度が細かいため、季節感がより正確に反映される。
 苔（6月下旬）・銀杏（12月上旬）は京都の季節感に基づく。
 
+各エントリは`visual`フィールドを持つ。`visualHint`生成テンプレートを`"${name} flowers, ... soft petals, ..."`で固定していたところ、苔・紅葉・銀杏・千両のように花を咲かせない（または花が主役でない）季節要素にも「flowers」「soft petals」と指示してしまい、画像生成モデルが実際の見た目と矛盾するビジュアル（例: 苔のテーマで桜の花びらが舞う）を補完する不具合があった（Bug#25参照）。`visual`は各要素の実際の見た目（花・葉・実等）をASCII英語で個別に記述し、テンプレートの一括適用を廃止する。
+
 ```js
-// [MM-DD, MM-DD] の範囲で当日がどの区間か判定して flower_name を返す
+// [MM-DD, MM-DD] の範囲で当日がどの区間か判定して flower_name / visual を返す
 const SEASONAL_FLOWERS = [
-  { startMd: "01-01", endMd: "01-15", name: "寒椿" },
-  { startMd: "01-16", endMd: "01-31", name: "水仙" },
-  { startMd: "02-01", endMd: "02-14", name: "蝋梅" },
-  { startMd: "02-15", endMd: "02-28", name: "梅" },
-  { startMd: "03-01", endMd: "03-15", name: "菜の花" },
-  { startMd: "03-16", endMd: "03-31", name: "彼岸桜" },
-  { startMd: "04-01", endMd: "04-15", name: "染井吉野" },
-  { startMd: "04-16", endMd: "04-30", name: "藤" },
-  { startMd: "05-01", endMd: "05-15", name: "杜若" },
-  { startMd: "05-16", endMd: "05-31", name: "皐月" },
-  { startMd: "06-01", endMd: "06-15", name: "紫陽花" },
-  { startMd: "06-16", endMd: "06-30", name: "苔" },       // 西芳寺（苔寺）が見頃
-  { startMd: "07-01", endMd: "07-15", name: "蓮" },
-  { startMd: "07-16", endMd: "07-31", name: "桔梗" },
-  { startMd: "08-01", endMd: "08-15", name: "向日葵" },
-  { startMd: "08-16", endMd: "08-31", name: "百日紅" },
-  { startMd: "09-01", endMd: "09-15", name: "萩" },
-  { startMd: "09-16", endMd: "09-30", name: "彼岸花" },
-  { startMd: "10-01", endMd: "10-15", name: "秋桜" },
-  { startMd: "10-16", endMd: "10-31", name: "金木犀" },
-  { startMd: "11-01", endMd: "11-15", name: "菊" },
-  { startMd: "11-16", endMd: "11-30", name: "紅葉" },
-  { startMd: "12-01", endMd: "12-15", name: "銀杏" },     // 京都では12月上旬まで見頃
-  { startMd: "12-16", endMd: "12-31", name: "千両" },
+  { startMd: "01-01", endMd: "01-15", name: "寒椿",   visual: "winter camellia blossoms, deep red petals, snow-dusted garden" },
+  { startMd: "01-16", endMd: "01-31", name: "水仙",   visual: "narcissus flowers, white and yellow blooms, winter garden" },
+  { startMd: "02-01", endMd: "02-14", name: "蝋梅",   visual: "wintersweet blossoms, pale yellow flowers, bare winter branches" },
+  { startMd: "02-15", endMd: "02-28", name: "梅",     visual: "plum blossoms, pink and white flowers, early spring branches" },
+  { startMd: "03-01", endMd: "03-15", name: "菜の花", visual: "rapeseed flowers, bright yellow blooms, spring countryside field" },
+  { startMd: "03-16", endMd: "03-31", name: "彼岸桜", visual: "higan cherry blossoms, soft pink petals, drifting spring breeze" },
+  { startMd: "04-01", endMd: "04-15", name: "染井吉野", visual: "cherry blossoms, pink petals falling, Japanese garden breeze" },
+  { startMd: "04-16", endMd: "04-30", name: "藤",     visual: "wisteria flowers, hanging purple clusters, trellis garden" },
+  { startMd: "05-01", endMd: "05-15", name: "杜若",   visual: "iris flowers, purple blooms, pond-side garden" },
+  { startMd: "05-16", endMd: "05-31", name: "皐月",   visual: "satsuki azalea blossoms, vivid pink flowers, garden hedge" },
+  { startMd: "06-01", endMd: "06-15", name: "紫陽花", visual: "hydrangea flowers, blue and purple blooms, rainy season garden" },
+  { startMd: "06-16", endMd: "06-30", name: "苔",     visual: "lush green moss, mossy stones, quiet shaded garden" },       // 西芳寺（苔寺）が見頃。花ではないため flowers/petals を含めない
+  { startMd: "07-01", endMd: "07-15", name: "蓮",     visual: "lotus flowers, pink blooms, pond with green leaves" },
+  { startMd: "07-16", endMd: "07-31", name: "桔梗",   visual: "balloon flowers, purple star-shaped blooms, summer garden" },
+  { startMd: "08-01", endMd: "08-15", name: "向日葵", visual: "sunflowers, bright yellow blooms, summer field" },
+  { startMd: "08-16", endMd: "08-31", name: "百日紅", visual: "crape myrtle blossoms, vivid pink flowers, late summer garden" },
+  { startMd: "09-01", endMd: "09-15", name: "萩",     visual: "bush clover flowers, small purple-pink blooms, autumn garden" },
+  { startMd: "09-16", endMd: "09-30", name: "彼岸花", visual: "red spider lilies, vivid red blooms, autumn rice field" },
+  { startMd: "10-01", endMd: "10-15", name: "秋桜",   visual: "cosmos flowers, pink and white blooms, autumn breeze field" },
+  { startMd: "10-16", endMd: "10-31", name: "金木犀", visual: "fragrant olive blossoms, tiny orange flowers, sweet autumn scent" },
+  { startMd: "11-01", endMd: "11-15", name: "菊",     visual: "chrysanthemum flowers, layered autumn blooms, garden display" },
+  { startMd: "11-16", endMd: "11-30", name: "紅葉",   visual: "autumn maple leaves, red and gold foliage, falling leaves" },   // 葉であり花ではない
+  { startMd: "12-01", endMd: "12-15", name: "銀杏",   visual: "ginkgo leaves, golden fan-shaped foliage, tree-lined avenue" }, // 京都では12月上旬まで見頃。葉であり花ではない
+  { startMd: "12-16", endMd: "12-31", name: "千両",   visual: "nandina red berries, glossy green leaves, winter garden" },     // 実であり花ではない
 ];
 
-// 当日の MM-DD を取得して該当エントリを返す
+// 当日の MM-DD を取得して該当エントリの flower_name を返す
 function getSeasonalFlower(dateStr) {
   const md = dateStr.slice(5); // "YYYY-MM-DD" → "MM-DD"
   return SEASONAL_FLOWERS.find(e => md >= e.startMd && md <= e.endMd)?.name ?? "梅";
 }
+
+// 当日の MM-DD を取得して該当エントリの visual（visualHint用ASCII記述）を返す
+function getSeasonalFlowerVisual(dateStr) {
+  const md = dateStr.slice(5);
+  return SEASONAL_FLOWERS.find(e => md >= e.startMd && md <= e.endMd)?.visual
+    ?? "plum blossoms, pink and white flowers, early spring branches";
+}
 ```
 
-日本に花のない期間はないため、常に最低1件の補充が保証される。AIの誤動作なし・追加APIコストなし・完全決定論的。
+日本に花のない期間はないため、常に最低1件の補充が保証される。AIの誤動作なし・追加APIコストなし・完全決定論的。`visualHint`には`getSeasonalFlowerVisual()`の戻り値をそのまま使用し（`generateResearchPool()`内のテンプレート文字列は廃止）、`theme`/`description`表示用の花名取得は引き続き`getSeasonalFlower()`を使う。
 
 ##### 実測データ（`scripts/test-gemini-research-batch.mjs` / 2026-04-22）
 
@@ -975,6 +984,7 @@ export function pickFromPool(pool, rand = Math.random) {
 - `pickFromPool(pool, rand)`: `worker/index.js`（export済み・`test-bot.mjs`でテスト）
 - `filterAndDedupePool(entries)`: `worker/index.js`（export済み・`test-bot.mjs`でテスト）
 - `getSeasonalFlower(dateStr)`: `worker/index.js`（export済み・`test-bot.mjs`でテスト）
+- `getSeasonalFlowerVisual(dateStr)`: `worker/index.js`（export済み・`test-bot.mjs`でテスト・2026-06追加。Bug#25対応）
 - `scheduled()`のcron分岐: `event.cron === "0 15 * * *"` → `generateResearchPool(env)` を `ctx.waitUntil()`
 - `/research`エンドポイント: R2プール優先 → `pickFromPool()` → フォールバックの2段構え
 - `runBot()`: R2プール優先 → `pickFromPool()` → フォールバックの2段構え
@@ -1323,3 +1333,17 @@ npx @playwright/mcp@latest
 ### 着手タイミング
 
 自宅Windows環境でClaude Code CLIまたはデスクトップアプリをセットアップするタイミング。
+
+## health-check.jsへのFAL_KEY検証追加（未着手・2026-06）
+
+### 背景
+
+health-check.jsにSUZURI/Mastodon/Cloudflareのキー検証を追加した際（2026-06）、fal.aiのFAL_KEYも同様に検証対象へ加える案を検討した。
+
+### 見送った理由
+
+fal.aiの公式ドキュメント（`docs.fal.ai`・`fal.ai/docs`）がサンドボックスから403でアクセスできず、安全に呼び出せる軽量エンドポイント（例: モデル一覧・ユーザー情報取得等）のパスを一次情報で確認できなかった。WebSearchの二次情報では「通常スコープのAPIキーでモデル検索系エンドポイントにアクセスできる」という手がかりはあったが、確証度が低く誤判定（false positive/negative）のリスクを避けて見送った。
+
+### 着手タイミング
+
+実際にcurlやfal.aiダッシュボードでエンドポイント仕様を確認できるタイミング（自宅環境等、サンドボックス外でfal.ai公式ドキュメントにアクセスできるとき）。確認後、`worker/fal.js`の`Authorization: Key`形式に合わせて`checkFalAuth(falKey)`を`scripts/health-check.js`に追加する。

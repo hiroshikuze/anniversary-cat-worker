@@ -9,7 +9,8 @@
  * 終了コード 0 = 全件成功、1 = 1件以上失敗
  */
 
-import { updateMetaInR2 } from "../worker/r2-storage.js";
+import { updateMetaInR2, collectMaterialIds } from "../worker/r2-storage.js";
+import { parseExpiryDate } from "./audit-suzuri-materials.mjs";
 import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptionForTest } from "../worker/suzuri.js";
 
 import {
@@ -17,7 +18,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id,
 } from "../worker/bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -986,6 +987,46 @@ console.log("\n[createSuzuriProducts: トリブン価格]");
 }
 
 // ---------------------------------------------------------------------------
+// parseExpiryDate（scripts/audit-suzuri-materials.mjs）
+// ---------------------------------------------------------------------------
+console.log("\n[parseExpiryDate]");
+
+{
+  // 正常系: 期限表記が今日より過去 → 期限切れと判定できる日付を返す
+  const now = new Date("2026-06-19T00:00:00.000Z");
+  const expiry = parseExpiryDate("6月1日の「テスト記念日」をテーマにしました。\n【期間限定！】6月5日（日本時間）までの販売🐱", now);
+  assert("parseExpiryDate: 正常系で期限日のDateを返す", expiry instanceof Date);
+  assert("parseExpiryDate: 月日が正しく抽出される", expiry?.getUTCMonth() === 5 && expiry?.getUTCDate() === 5);
+  assert("parseExpiryDate: 年は現在年が採用される", expiry?.getUTCFullYear() === 2026);
+}
+
+{
+  // 境界値: 素朴な今年解釈が90日超未来になる場合は前年と判断する
+  // （例: 12月期限の表記を翌年6月の棚卸しで読むと素朴解釈は半年後になるため前年と判断する）
+  const now = new Date("2026-06-19T00:00:00.000Z");
+  const farFuture = new Date(now.getTime() + 100 * 24 * 60 * 60 * 1000);
+  const desc = `【期間限定！】${farFuture.getUTCMonth() + 1}月${farFuture.getUTCDate()}日（日本時間）までの販売🐱`;
+  const expiry = parseExpiryDate(desc, now);
+  assert("parseExpiryDate: 100日後相当の素朴解釈は前年と判断される", expiry?.getUTCFullYear() === now.getUTCFullYear() - 1);
+}
+
+{
+  // 境界値: 90日以内の未来は今年のまま判定する
+  const now = new Date("2026-06-19T00:00:00.000Z");
+  const nearFuture = new Date(now.getTime() + 80 * 24 * 60 * 60 * 1000);
+  const desc = `【期間限定！】${nearFuture.getUTCMonth() + 1}月${nearFuture.getUTCDate()}日（日本時間）までの販売🐱`;
+  const expiry = parseExpiryDate(desc, now);
+  assert("parseExpiryDate: 80日以内の未来は今年のまま判定する", expiry?.getUTCFullYear() === now.getUTCFullYear());
+}
+
+{
+  // エラー系: 期限表記が見つからない場合はnull
+  assert("parseExpiryDate: 期限表記がない場合はnull", parseExpiryDate("普通の説明文です", new Date()) === null);
+  assert("parseExpiryDate: descriptionが空文字の場合はnull", parseExpiryDate("", new Date()) === null);
+  assert("parseExpiryDate: descriptionがnullの場合はnull", parseExpiryDate(null, new Date()) === null);
+}
+
+// ---------------------------------------------------------------------------
 // updateMetaInR2
 // ---------------------------------------------------------------------------
 console.log("\n[updateMetaInR2]");
@@ -1008,10 +1049,10 @@ function makeMockBucket(initialMeta) {
 
 {
   // 正常系: 指定フィールドが上書きされ、他のフィールドは保持される
-  const bucket = makeMockBucket({ theme: "テスト記念日", materialId: null, products: [] });
-  await updateMetaInR2(bucket, "test-id", { materialId: 42, products: [{ slug: "sticker" }] });
+  const bucket = makeMockBucket({ theme: "テスト記念日", materialIds: [], products: [] });
+  await updateMetaInR2(bucket, "test-id", { materialIds: [42], products: [{ slug: "sticker" }] });
   const result = bucket._read("test-id/meta.json");
-  assert("updateMetaInR2: materialId が更新される", result.materialId === 42);
+  assert("updateMetaInR2: materialIds が更新される", JSON.stringify(result.materialIds) === JSON.stringify([42]));
   assert("updateMetaInR2: products が更新される", result.products[0].slug === "sticker");
   assert("updateMetaInR2: 既存フィールド theme が保持される", result.theme === "テスト記念日");
 }
@@ -1021,7 +1062,7 @@ function makeMockBucket(initialMeta) {
   const bucket = makeMockBucket(); // meta なし
   let threw = false;
   try {
-    await updateMetaInR2(bucket, "nonexistent-id", { materialId: 1 });
+    await updateMetaInR2(bucket, "nonexistent-id", { materialIds: [1] });
   } catch {
     threw = true;
   }
@@ -1034,13 +1075,65 @@ function makeMockBucket(initialMeta) {
   // updatesで渡した以外のフィールドが消えないこと
   const bucket = makeMockBucket({
     theme: "記念日A", description: "説明A", sourceUrl: "https://example.com",
-    materialId: null, products: [], createdAt: "2026-03-28T00:00:00.000Z",
+    materialIds: [], products: [], createdAt: "2026-03-28T00:00:00.000Z",
   });
-  await updateMetaInR2(bucket, "test-id", { materialId: 99 });
+  await updateMetaInR2(bucket, "test-id", { materialIds: [99] });
   const result = bucket._read("test-id/meta.json");
   assert("updateMetaInR2: description が消えない", result.description === "説明A");
   assert("updateMetaInR2: sourceUrl が消えない", result.sourceUrl === "https://example.com");
   assert("updateMetaInR2: createdAt が消えない", result.createdAt === "2026-03-28T00:00:00.000Z");
+}
+
+// ---------------------------------------------------------------------------
+// updateMetaInR2: materialIdsマージ（蓄積・重複排除）
+// ---------------------------------------------------------------------------
+console.log("\n[updateMetaInR2: materialIdsマージ]");
+
+{
+  // centerグループのmaterialId書き込み後、rightグループのmaterialIdが追記される
+  const bucket = makeMockBucket({ theme: "テスト", materialIds: [10], products: [] });
+  await updateMetaInR2(bucket, "test-id", { materialIds: [20] });
+  const result = bucket._read("test-id/meta.json");
+  assert("materialIdsマージ: 両方のIDが保持される", JSON.stringify(result.materialIds.sort()) === JSON.stringify([10, 20]));
+}
+
+{
+  // 境界値: 同じIDを2回書き込んでも重複しない
+  const bucket = makeMockBucket({ theme: "テスト", materialIds: [10], products: [] });
+  await updateMetaInR2(bucket, "test-id", { materialIds: [10] });
+  const result = bucket._read("test-id/meta.json");
+  assert("materialIdsマージ: 同一IDの重複書き込みは1件にまとまる", result.materialIds.length === 1);
+}
+
+{
+  // 境界値: 既存フィールドが旧スキーマ（materialIdsキー自体がない）でも書き込める
+  const bucket = makeMockBucket({ theme: "テスト", products: [] });
+  await updateMetaInR2(bucket, "test-id", { materialIds: [30] });
+  const result = bucket._read("test-id/meta.json");
+  assert("materialIdsマージ: 既存にmaterialIdsキーがなくても新規作成される", JSON.stringify(result.materialIds) === JSON.stringify([30]));
+}
+
+// ---------------------------------------------------------------------------
+// collectMaterialIds（旧materialId/新materialIds互換読み出し）
+// ---------------------------------------------------------------------------
+console.log("\n[collectMaterialIds]");
+
+{
+  // 正常系: 新スキーマ（materialIds配列）をそのまま返す
+  assert("collectMaterialIds: materialIds配列をそのまま返す",
+    JSON.stringify(collectMaterialIds({ materialIds: [1, 2] })) === JSON.stringify([1, 2]));
+}
+
+{
+  // 境界値: 旧スキーマ（単数materialId）を配列化して返す
+  assert("collectMaterialIds: 旧materialIdを配列化する",
+    JSON.stringify(collectMaterialIds({ materialId: 5 })) === JSON.stringify([5]));
+}
+
+{
+  // エラー系: どちらも存在しない場合は空配列
+  assert("collectMaterialIds: 両方欠落時は空配列", JSON.stringify(collectMaterialIds({})) === JSON.stringify([]));
+  assert("collectMaterialIds: materialIdがnullの場合も空配列", JSON.stringify(collectMaterialIds({ materialId: null })) === JSON.stringify([]));
 }
 
 // ---------------------------------------------------------------------------
@@ -1054,7 +1147,7 @@ console.log("\n[updateMetaInR2: productsマージ]");
     { slug: "can-badge", sampleUrl: "https://suzuri.jp/cb", available: true },
     { slug: "acrylic-keychain", sampleUrl: "https://suzuri.jp/ak", available: true },
   ];
-  const bucket = makeMockBucket({ theme: "テスト", materialId: 10, products: existing });
+  const bucket = makeMockBucket({ theme: "テスト", materialIds: [10], products: existing });
   const newProducts = [
     { slug: "t-shirt", sampleUrl: "https://suzuri.jp/ts", available: true },
     { slug: "sticker", sampleUrl: "https://suzuri.jp/st", available: true },
@@ -1066,7 +1159,7 @@ console.log("\n[updateMetaInR2: productsマージ]");
   assert("productsマージ: acrylic-keychain が保持される", result.products.some(p => p.slug === "acrylic-keychain"));
   assert("productsマージ: t-shirt が追加される", result.products.some(p => p.slug === "t-shirt"));
   assert("productsマージ: sticker が追加される", result.products.some(p => p.slug === "sticker"));
-  assert("productsマージ: materialId は変わらない", result.materialId === 10);
+  assert("productsマージ: materialIds は変わらない", JSON.stringify(result.materialIds) === JSON.stringify([10]));
 }
 
 {
@@ -1936,6 +2029,43 @@ console.log("\n[getSeasonalFlower]");
   assert("12-01 → 銀杏", getSeasonalFlower("2026-12-01") === "銀杏");
   assert("12-16 → 千両", getSeasonalFlower("2026-12-16") === "千両");
   assert("12-31 → 千両（境界値）", getSeasonalFlower("2026-12-31") === "千両");
+}
+
+// ---------------------------------------------------------------------------
+// getSeasonalFlowerVisual - 季節要素ごとの実際の見た目をASCII英語で返す
+// Bug#25: 全エントリ共通の "flowers, ... soft petals, ..." テンプレートが
+// 苔・紅葉・銀杏・千両のように花が主役でない要素にも花びらを指示してしまい、
+// 画像生成モデルが季節と矛盾するビジュアル（苔のテーマで桜の花びら等）を補完していた。
+// ---------------------------------------------------------------------------
+console.log("\n[getSeasonalFlowerVisual]");
+{
+  // ── 正常系: 花が主役の要素は flower/petal 系の語を含む ──
+  assert("01-01 → 寒椿: camellia を含む", getSeasonalFlowerVisual("2026-01-01").includes("camellia"));
+  assert("04-01 → 染井吉野: cherry blossoms を含む", getSeasonalFlowerVisual("2026-04-01").includes("cherry blossoms"));
+
+  // ── 境界値: 苔（花を咲かせない）は flower/petal を含まない（Bug#25の回帰チェック）──
+  assert("06-16 → 苔: moss を含む", getSeasonalFlowerVisual("2026-06-16").includes("moss"));
+  assert("06-16 → 苔: flower を含まない", !getSeasonalFlowerVisual("2026-06-16").includes("flower"));
+  assert("06-16 → 苔: petal を含まない", !getSeasonalFlowerVisual("2026-06-16").includes("petal"));
+  assert("06-30 → 苔（境界値）: petal を含まない", !getSeasonalFlowerVisual("2026-06-30").includes("petal"));
+
+  // ── 境界値: 紅葉・銀杏（葉）・千両（実）も flower/petal を含まない ──
+  assert("11-16 → 紅葉: leaves を含む",        getSeasonalFlowerVisual("2026-11-16").includes("leaves"));
+  assert("11-16 → 紅葉: petal を含まない",      !getSeasonalFlowerVisual("2026-11-16").includes("petal"));
+  assert("12-01 → 銀杏: leaves を含む",        getSeasonalFlowerVisual("2026-12-01").includes("leaves"));
+  assert("12-01 → 銀杏: flower を含まない",     !getSeasonalFlowerVisual("2026-12-01").includes("flower"));
+  assert("12-16 → 千両: berries を含む",       getSeasonalFlowerVisual("2026-12-16").includes("berries"));
+  assert("12-16 → 千両（境界値）: flower を含まない", !getSeasonalFlowerVisual("2026-12-16").includes("flower"));
+
+  // ── エラー系: 全24エントリがASCIIのみ（Pollinationsプロンプトの非ASCIIフィルター要件と整合）──
+  const allDates = [
+    "2026-01-01", "2026-01-16", "2026-02-01", "2026-02-15", "2026-03-01", "2026-03-16",
+    "2026-04-01", "2026-04-16", "2026-05-01", "2026-05-16", "2026-06-01", "2026-06-16",
+    "2026-07-01", "2026-07-16", "2026-08-01", "2026-08-16", "2026-09-01", "2026-09-16",
+    "2026-10-01", "2026-10-16", "2026-11-01", "2026-11-16", "2026-12-01", "2026-12-16",
+  ];
+  const allAscii = allDates.every(d => /^[\x20-\x7E]*$/.test(getSeasonalFlowerVisual(d)));
+  assert("全24エントリがASCIIのみ", allAscii);
 }
 
 // ---------------------------------------------------------------------------

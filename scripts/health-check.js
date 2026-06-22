@@ -266,6 +266,75 @@ async function checkPollinations() {
   else pass(`画像 (image/*) を返す: Content-Type=${ct}`);
 }
 
+// ─── チェック S1: SUZURI API 認証確認 ────────────────────────────────────────
+async function checkSuzuriAuth(apiKey) {
+  console.log("\n[S1] SUZURI API 認証確認");
+  const { ok, res, error } = await safeFetch(
+    "https://suzuri.jp/api/v1/items?limit=1",
+    { headers: { "Authorization": `Bearer ${apiKey}` } }
+  );
+  if (!check("SUZURI API へ到達できる", ok, error)) return;
+
+  const resText = await res.text();
+  let data;
+  try { data = JSON.parse(resText); } catch {
+    check("JSON レスポンス", false, `status=${res.status} body=${resText.slice(0, 120)}`);
+    return;
+  }
+  if (!check("HTTP 200（認証成功）", res.status === 200, `status=${res.status} ${data.message ?? JSON.stringify(data).slice(0, 100)}`)) {
+    if (res.status === 401) fail("SUZURI_API_KEY が無効・期限切れの可能性（要更新）");
+    return;
+  }
+  check("items フィールドあり", Array.isArray(data.items), `${data.items?.length ?? 0} 件`);
+}
+
+// ─── チェック M1: Mastodon 認証確認 ──────────────────────────────────────────
+async function checkMastodonAuth(instanceUrl, accessToken) {
+  console.log("\n[M1] Mastodon 認証確認");
+  if (!check("MASTODON_INSTANCE_URL が https:// で始まる", instanceUrl.startsWith("https://"), instanceUrl)) return;
+
+  const { ok, res, error } = await safeFetch(
+    `${instanceUrl.replace(/\/$/, "")}/api/v1/accounts/verify_credentials`,
+    { headers: { "Authorization": `Bearer ${accessToken}` } }
+  );
+  if (!check("Mastodon API へ到達できる", ok, error)) return;
+
+  const resText = await res.text();
+  let data;
+  try { data = JSON.parse(resText); } catch {
+    check("JSON レスポンス", false, `status=${res.status} body=${resText.slice(0, 120)}`);
+    return;
+  }
+  if (!check("HTTP 200（認証成功）", res.status === 200, `status=${res.status} ${data.error ?? JSON.stringify(data).slice(0, 100)}`)) {
+    if (res.status === 401 || res.status === 403) fail("MASTODON_ACCESS_TOKEN が無効・スコープ不足の可能性（要更新）");
+    return;
+  }
+  check("username あり", !!data.username, data.username ?? "(空)");
+}
+
+// ─── チェック C1: Cloudflare API トークン確認 ────────────────────────────────
+async function checkCloudflareToken(apiToken) {
+  console.log("\n[C1] Cloudflare API トークン確認");
+  const { ok, res, error } = await safeFetch(
+    "https://api.cloudflare.com/client/v4/user/tokens/verify",
+    { headers: { "Authorization": `Bearer ${apiToken}` } }
+  );
+  if (!check("Cloudflare API へ到達できる", ok, error)) return;
+
+  const resText = await res.text();
+  let data;
+  try { data = JSON.parse(resText); } catch {
+    check("JSON レスポンス", false, `status=${res.status} body=${resText.slice(0, 120)}`);
+    return;
+  }
+  if (!check("HTTP 200（認証成功）", res.status === 200, `status=${res.status}`)) {
+    if (res.status === 401 || res.status === 403) fail("CLOUDFLARE_API_TOKEN が無効・期限切れの可能性（要更新）");
+    return;
+  }
+  check("success: true",  data.success === true);
+  check("status: active", data.result?.status === "active", `status=${data.result?.status ?? "(空)"}`);
+}
+
 // ─── チェック B1: Bluesky 認証確認 ───────────────────────────────────────────
 async function checkBlueskyAuth(identifier, appPassword) {
   console.log("\n[B1] Bluesky 認証確認");
@@ -429,14 +498,21 @@ async function main() {
   const bskyId        = process.env.BLUESKY_IDENTIFIER;
   const bskyPass      = process.env.BLUESKY_APP_PASSWORD;
   const discordUrl    = process.env.DISCORD_WEBHOOK_URL;
+  const suzuriKey     = process.env.SUZURI_API_KEY;
+  const mastoUrl      = process.env.MASTODON_INSTANCE_URL;
+  const mastoToken    = process.env.MASTODON_ACCESS_TOKEN;
+  const cfToken       = process.env.CLOUDFLARE_API_TOKEN;
 
-  if (!apiKey && !workerUrl && !bskyId && !discordUrl) {
+  if (!apiKey && !workerUrl && !bskyId && !discordUrl && !suzuriKey && !mastoUrl && !cfToken) {
     console.error("エラー: 環境変数が設定されていません\n");
     console.error("使い方:");
     console.error("  GEMINI_API_KEY=xxx node scripts/health-check.js");
     console.error("  WORKER_URL=https://... BYPASS_TOKEN=xxx node scripts/health-check.js");
     console.error("  BLUESKY_IDENTIFIER=xxx BLUESKY_APP_PASSWORD=xxx node scripts/health-check.js");
     console.error("  DISCORD_WEBHOOK_URL=https://... node scripts/health-check.js");
+    console.error("  SUZURI_API_KEY=xxx node scripts/health-check.js");
+    console.error("  MASTODON_INSTANCE_URL=https://... MASTODON_ACCESS_TOKEN=xxx node scripts/health-check.js");
+    console.error("  CLOUDFLARE_API_TOKEN=xxx node scripts/health-check.js");
     process.exit(1);
   }
 
@@ -461,6 +537,20 @@ async function main() {
 
   if (discordUrl) {
     await checkDiscordWebhook(discordUrl);
+  }
+
+  if (suzuriKey) {
+    await checkSuzuriAuth(suzuriKey);
+  }
+
+  if (mastoUrl && mastoToken) {
+    await checkMastodonAuth(mastoUrl, mastoToken);
+  } else if (mastoUrl || mastoToken) {
+    warn("MASTODON_INSTANCE_URL と MASTODON_ACCESS_TOKEN の両方が必要です（スキップ）");
+  }
+
+  if (cfToken) {
+    await checkCloudflareToken(cfToken);
   }
 
   // Bot 投稿テキスト生成は常に実行（外部通信なし）
