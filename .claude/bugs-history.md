@@ -205,4 +205,14 @@
 - **場所**: `worker/r2-storage.js` `updateMetaInR2()` `collectMaterialIds()` / `worker/index.js` `scheduled()` `/suzuri-create` `/resume-hires/:id` / `scripts/audit-suzuri-materials.mjs`
 - **教訓**: 1つの論理エンティティ（画像1件）が複数の外部リソース（SUZURIマテリアル）を作成しうる設計では、ID集約フィールドは最初から配列で持つ。単数フィールドの「最後に書き込んだ値だけ残る」という性質は、複数の呼び出し元が非同期・別タイミングで書き込む構成と相性が悪い
 
+### 25. 季節補充フォールバックのvisualHintが花以外の季節要素にも「花びら」を指示し季節と矛盾する画像になる（2026-06）
+
+- **症状**: ユーザーから「6月中旬なのに生成画像に桜の花びらのようなものが舞っていて季節と合わない」と報告。該当画像のテーマは6/16〜6/30の季節補充フォールバック「苔の季節」
+- **原因**: `generateResearchPool()`の季節補充ブロック（リサーチプールが3件未満の日に発動）が、`SEASONAL_FLOWERS`の全24エントリに対して`` `${flowerName} flowers, Japanese garden, soft petals, gentle breeze` ``という単一テンプレートで`visualHint`を生成していた。苔は花を咲かせない植物のため「flowers」「soft petals」という指示は実体と矛盾し、Gemini画像生成が代わりに「日本庭園で舞う柔らかい花びら」の中で最も学習データに近い桜の花びらを補完してしまっていた。同根の不一致が紅葉（葉を花扱い）・銀杏（葉を花扱い）・千両（実を花扱い）にも存在
+- **影響**: 6月下旬（苔）・11月下旬（紅葉）・12月上旬（銀杏）・12月下旬（千両）にリサーチプールが3件未満になった日、生成画像のビジュアルが季節・実際の植物と矛盾する確率が上がる
+- **修正**: `SEASONAL_FLOWERS`の各エントリに実際の見た目を記述したASCII英語`visual`フィールドを追加し、単一テンプレートを廃止。新規`getSeasonalFlowerVisual(dateStr)`で該当エントリの`visual`を取得し、`generateResearchPool()`の補充ブロックで`visualHint`に直接使用する
+- **テスト**: `scripts/test-bot.mjs`に`getSeasonalFlowerVisual()`の正常系（境界値）・苔/紅葉/銀杏/千両が「flower」「petal」を含まないことの回帰チェック・全24エントリがASCIIのみであることの検証を追加
+- **場所**: `worker/index.js` `SEASONAL_FLOWERS` `getSeasonalFlowerVisual()` `generateResearchPool()`
+- **教訓**: 複数バリアントを持つ定数テーブル（季節要素・商品種別等）に対して「全件共通の文言テンプレート」を適用する設計は、テーブルの要素数が増えるほど一部要素の実体と矛盾するリスクが高まる。各要素が本質的に異なる見た目・性質を持ちうる場合は、テンプレートではなく要素ごとのフィールドとして明示的に持たせる
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）

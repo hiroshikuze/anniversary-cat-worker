@@ -18,7 +18,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id,
 } from "../worker/bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -2029,6 +2029,43 @@ console.log("\n[getSeasonalFlower]");
   assert("12-01 → 銀杏", getSeasonalFlower("2026-12-01") === "銀杏");
   assert("12-16 → 千両", getSeasonalFlower("2026-12-16") === "千両");
   assert("12-31 → 千両（境界値）", getSeasonalFlower("2026-12-31") === "千両");
+}
+
+// ---------------------------------------------------------------------------
+// getSeasonalFlowerVisual - 季節要素ごとの実際の見た目をASCII英語で返す
+// Bug#25: 全エントリ共通の "flowers, ... soft petals, ..." テンプレートが
+// 苔・紅葉・銀杏・千両のように花が主役でない要素にも花びらを指示してしまい、
+// 画像生成モデルが季節と矛盾するビジュアル（苔のテーマで桜の花びら等）を補完していた。
+// ---------------------------------------------------------------------------
+console.log("\n[getSeasonalFlowerVisual]");
+{
+  // ── 正常系: 花が主役の要素は flower/petal 系の語を含む ──
+  assert("01-01 → 寒椿: camellia を含む", getSeasonalFlowerVisual("2026-01-01").includes("camellia"));
+  assert("04-01 → 染井吉野: cherry blossoms を含む", getSeasonalFlowerVisual("2026-04-01").includes("cherry blossoms"));
+
+  // ── 境界値: 苔（花を咲かせない）は flower/petal を含まない（Bug#25の回帰チェック）──
+  assert("06-16 → 苔: moss を含む", getSeasonalFlowerVisual("2026-06-16").includes("moss"));
+  assert("06-16 → 苔: flower を含まない", !getSeasonalFlowerVisual("2026-06-16").includes("flower"));
+  assert("06-16 → 苔: petal を含まない", !getSeasonalFlowerVisual("2026-06-16").includes("petal"));
+  assert("06-30 → 苔（境界値）: petal を含まない", !getSeasonalFlowerVisual("2026-06-30").includes("petal"));
+
+  // ── 境界値: 紅葉・銀杏（葉）・千両（実）も flower/petal を含まない ──
+  assert("11-16 → 紅葉: leaves を含む",        getSeasonalFlowerVisual("2026-11-16").includes("leaves"));
+  assert("11-16 → 紅葉: petal を含まない",      !getSeasonalFlowerVisual("2026-11-16").includes("petal"));
+  assert("12-01 → 銀杏: leaves を含む",        getSeasonalFlowerVisual("2026-12-01").includes("leaves"));
+  assert("12-01 → 銀杏: flower を含まない",     !getSeasonalFlowerVisual("2026-12-01").includes("flower"));
+  assert("12-16 → 千両: berries を含む",       getSeasonalFlowerVisual("2026-12-16").includes("berries"));
+  assert("12-16 → 千両（境界値）: flower を含まない", !getSeasonalFlowerVisual("2026-12-16").includes("flower"));
+
+  // ── エラー系: 全24エントリがASCIIのみ（Pollinationsプロンプトの非ASCIIフィルター要件と整合）──
+  const allDates = [
+    "2026-01-01", "2026-01-16", "2026-02-01", "2026-02-15", "2026-03-01", "2026-03-16",
+    "2026-04-01", "2026-04-16", "2026-05-01", "2026-05-16", "2026-06-01", "2026-06-16",
+    "2026-07-01", "2026-07-16", "2026-08-01", "2026-08-16", "2026-09-01", "2026-09-16",
+    "2026-10-01", "2026-10-16", "2026-11-01", "2026-11-16", "2026-12-01", "2026-12-16",
+  ];
+  const allAscii = allDates.every(d => /^[\x20-\x7E]*$/.test(getSeasonalFlowerVisual(d)));
+  assert("全24エントリがASCIIのみ", allAscii);
 }
 
 // ---------------------------------------------------------------------------
