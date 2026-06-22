@@ -46,7 +46,11 @@ jobs:
       - name: Run health check
         run: node scripts/health-check.js
         env:
-          GEMINI_API_KEY:        ${{ secrets.GEMINI_API_KEY }}
-          BLUESKY_IDENTIFIER:    ${{ secrets.BLUESKY_IDENTIFIER }}
-          BLUESKY_APP_PASSWORD:  ${{ secrets.BLUESKY_APP_PASSWORD }}
-          DISCORD_WEBHOOK_URL:   ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GEMINI_API_KEY:         ${{ secrets.GEMINI_API_KEY }}
+          BLUESKY_IDENTIFIER:     ${{ secrets.BLUESKY_IDENTIFIER }}
+          BLUESKY_APP_PASSWORD:   ${{ secrets.BLUESKY_APP_PASSWORD }}
+          DISCORD_WEBHOOK_URL:    ${{ secrets.DISCORD_WEBHOOK_URL }}
+          SUZURI_API_KEY:         ${{ secrets.SUZURI_API_KEY }}
+          MASTODON_INSTANCE_URL:  ${{ secrets.MASTODON_INSTANCE_URL }}
+          MASTODON_ACCESS_TOKEN:  ${{ secrets.MASTODON_ACCESS_TOKEN }}
+          CLOUDFLARE_API_TOKEN:   ${{ secrets.CLOUDFLARE_API_TOKEN }}

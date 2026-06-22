@@ -1333,3 +1333,17 @@ npx @playwright/mcp@latest
 ### 着手タイミング
 
 自宅Windows環境でClaude Code CLIまたはデスクトップアプリをセットアップするタイミング。
+
+## health-check.jsへのFAL_KEY検証追加（未着手・2026-06）
+
+### 背景
+
+health-check.jsにSUZURI/Mastodon/Cloudflareのキー検証を追加した際（2026-06）、fal.aiのFAL_KEYも同様に検証対象へ加える案を検討した。
+
+### 見送った理由
+
+fal.aiの公式ドキュメント（`docs.fal.ai`・`fal.ai/docs`）がサンドボックスから403でアクセスできず、安全に呼び出せる軽量エンドポイント（例: モデル一覧・ユーザー情報取得等）のパスを一次情報で確認できなかった。WebSearchの二次情報では「通常スコープのAPIキーでモデル検索系エンドポイントにアクセスできる」という手がかりはあったが、確証度が低く誤判定（false positive/negative）のリスクを避けて見送った。
+
+### 着手タイミング
+
+実際にcurlやfal.aiダッシュボードでエンドポイント仕様を確認できるタイミング（自宅環境等、サンドボックス外でfal.ai公式ドキュメントにアクセスできるとき）。確認後、`worker/fal.js`の`Authorization: Key`形式に合わせて`checkFalAuth(falKey)`を`scripts/health-check.js`に追加する。

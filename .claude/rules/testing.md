@@ -25,6 +25,24 @@
 - テストケースは「正常系」「境界値」「エラー系」の3パターンを書く
 - 新しい関数を追加したら対応するテストを`scripts/test-bot.mjs`に追加する
 
+## health-check.jsのシークレット検証項目（2026-06追加）
+
+`scripts/health-check.js`は、Cloudflare Workers/GitHub Actionsに設定した各APIキー・トークンが有効かどうかをCI上で検証する。キー更新時の設定ミス（typo・期限切れ・スコープ不足）を即座に検知する目的。
+
+| 関数 | 検証対象 | 必要な環境変数 |
+| --- | --- | --- |
+| `checkGeminiReachable` / `checkImageModels` / `checkResearch` | Gemini API | `GEMINI_API_KEY` |
+| `checkBlueskyAuth` | Bluesky AT Protocol認証 | `BLUESKY_IDENTIFIER` `BLUESKY_APP_PASSWORD` |
+| `checkDiscordWebhook` | Discord Webhook | `DISCORD_WEBHOOK_URL` |
+| `checkSuzuriAuth` | SUZURI API認証（`GET /api/v1/items`） | `SUZURI_API_KEY` |
+| `checkMastodonAuth` | Mastodon API認証（`GET /api/v1/accounts/verify_credentials`） | `MASTODON_INSTANCE_URL` `MASTODON_ACCESS_TOKEN` |
+| `checkCloudflareToken` | Cloudflare APIトークン（`GET /client/v4/user/tokens/verify`） | `CLOUDFLARE_API_TOKEN` |
+
+- いずれも対応する環境変数が未設定の場合は検証をスキップする（CI失敗にしない）。`MASTODON_*`は片方のみ設定時に警告を出す（既存の`BLUESKY_*`と同じパターン）
+- 認証失敗（401/403）はCI失敗として扱う。キーのローテーション・期限切れ・スコープ変更時に即座に気づける
+- これらの関数に`scripts/test-bot.mjs`の単体テストは追加しない。`checkBlueskyAuth`・`checkDiscordWebhook`・`checkGeminiReachable`等の既存の同種関数も単体テストを持たない。本スクリプトは「GitHub Actionsのみ・外部API必要」（本セクション冒頭の表参照）に分類されたE2E専用スクリプトであり、モックでロジックを検証してもキー自体の有効性確認という目的を果たせないため
+- `FAL_KEY`（fal.ai）の検証は未実装（2026-06時点）。fal.aiの公式ドキュメントがサンドボックスから403でアクセス不可だったため、エンドポイント仕様を一次情報で確認できておらず、誤判定リスクを避けて見送った。将来追加する場合は実際のcurl実行でエンドポイントを確認してから実装する
+
 ## 問題発生時の手順
 
 1. ユーザーにCloudflare WorkersのLogsタブ（Begin log stream）を確認してもらう
