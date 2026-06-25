@@ -157,31 +157,34 @@ function toJSTDateStringWorker(date) {
 // visual: その季節要素の実際の見た目をASCII英語で記述したvisualHint用フィールド。
 // 苔・紅葉・銀杏・千両は花を咲かせない（または花が主役でない）ため flowers/petals を含めない
 // （Bug#25: 全件共通の "flowers, ... soft petals, ..." テンプレートが季節と矛盾する画像の原因だった）
+// style: Gemini画像生成のStyle指示用の季節カラー（ASCII英語）。
+// 旧"light pink and beige tones"固定文言が年間を通じて桜を連想させていた問題の修正
+// （Bug#26: テーマ・visualHintに花の言及がない日でもGeminiが桜の花びらを装飾として補完していた）
 const SEASONAL_FLOWERS = [
-  { startMd: "01-01", endMd: "01-15", name: "寒椿",   visual: "winter camellia blossoms, deep red petals, snow-dusted garden" },
-  { startMd: "01-16", endMd: "01-31", name: "水仙",   visual: "narcissus flowers, white and yellow blooms, winter garden" },
-  { startMd: "02-01", endMd: "02-14", name: "蝋梅",   visual: "wintersweet blossoms, pale yellow flowers, bare winter branches" },
-  { startMd: "02-15", endMd: "02-28", name: "梅",     visual: "plum blossoms, pink and white flowers, early spring branches" },
-  { startMd: "03-01", endMd: "03-15", name: "菜の花", visual: "rapeseed flowers, bright yellow blooms, spring countryside field" },
-  { startMd: "03-16", endMd: "03-31", name: "彼岸桜", visual: "higan cherry blossoms, soft pink petals, drifting spring breeze" },
-  { startMd: "04-01", endMd: "04-15", name: "染井吉野", visual: "cherry blossoms, pink petals falling, Japanese garden breeze" },
-  { startMd: "04-16", endMd: "04-30", name: "藤",     visual: "wisteria flowers, hanging purple clusters, trellis garden" },
-  { startMd: "05-01", endMd: "05-15", name: "杜若",   visual: "iris flowers, purple blooms, pond-side garden" },
-  { startMd: "05-16", endMd: "05-31", name: "皐月",   visual: "satsuki azalea blossoms, vivid pink flowers, garden hedge" },
-  { startMd: "06-01", endMd: "06-15", name: "紫陽花", visual: "hydrangea flowers, blue and purple blooms, rainy season garden" },
-  { startMd: "06-16", endMd: "06-30", name: "苔",     visual: "lush green moss, mossy stones, quiet shaded garden" },
-  { startMd: "07-01", endMd: "07-15", name: "蓮",     visual: "lotus flowers, pink blooms, pond with green leaves" },
-  { startMd: "07-16", endMd: "07-31", name: "桔梗",   visual: "balloon flowers, purple star-shaped blooms, summer garden" },
-  { startMd: "08-01", endMd: "08-15", name: "向日葵", visual: "sunflowers, bright yellow blooms, summer field" },
-  { startMd: "08-16", endMd: "08-31", name: "百日紅", visual: "crape myrtle blossoms, vivid pink flowers, late summer garden" },
-  { startMd: "09-01", endMd: "09-15", name: "萩",     visual: "bush clover flowers, small purple-pink blooms, autumn garden" },
-  { startMd: "09-16", endMd: "09-30", name: "彼岸花", visual: "red spider lilies, vivid red blooms, autumn rice field" },
-  { startMd: "10-01", endMd: "10-15", name: "秋桜",   visual: "cosmos flowers, pink and white blooms, autumn breeze field" },
-  { startMd: "10-16", endMd: "10-31", name: "金木犀", visual: "fragrant olive blossoms, tiny orange flowers, sweet autumn scent" },
-  { startMd: "11-01", endMd: "11-15", name: "菊",     visual: "chrysanthemum flowers, layered autumn blooms, garden display" },
-  { startMd: "11-16", endMd: "11-30", name: "紅葉",   visual: "autumn maple leaves, red and gold foliage, falling leaves" },
-  { startMd: "12-01", endMd: "12-15", name: "銀杏",   visual: "ginkgo leaves, golden fan-shaped foliage, tree-lined avenue" },
-  { startMd: "12-16", endMd: "12-31", name: "千両",   visual: "nandina red berries, glossy green leaves, winter garden" },
+  { startMd: "01-01", endMd: "01-15", name: "寒椿",   visual: "winter camellia blossoms, deep red petals, snow-dusted garden", style: "deep red and white tones, crisp winter clarity" },
+  { startMd: "01-16", endMd: "01-31", name: "水仙",   visual: "narcissus flowers, white and yellow blooms, winter garden", style: "soft white and pale yellow tones, clean winter brightness" },
+  { startMd: "02-01", endMd: "02-14", name: "蝋梅",   visual: "wintersweet blossoms, pale yellow flowers, bare winter branches", style: "pale yellow and warm brown tones, quiet winter calm" },
+  { startMd: "02-15", endMd: "02-28", name: "梅",     visual: "plum blossoms, pink and white flowers, early spring branches", style: "soft pink and white tones, early spring freshness" },
+  { startMd: "03-01", endMd: "03-15", name: "菜の花", visual: "rapeseed flowers, bright yellow blooms, spring countryside field", style: "warm yellow and soft green tones, spring countryside light" },
+  { startMd: "03-16", endMd: "03-31", name: "彼岸桜", visual: "higan cherry blossoms, soft pink petals, drifting spring breeze", style: "soft pink and pale blue tones, gentle spring breeze" },
+  { startMd: "04-01", endMd: "04-15", name: "染井吉野", visual: "cherry blossoms, pink petals falling, Japanese garden breeze", style: "soft pink and pale blue tones, gentle spring breeze" },
+  { startMd: "04-16", endMd: "04-30", name: "藤",     visual: "wisteria flowers, hanging purple clusters, trellis garden", style: "soft purple and lavender tones, late spring elegance" },
+  { startMd: "05-01", endMd: "05-15", name: "杜若",   visual: "iris flowers, purple blooms, pond-side garden", style: "purple and fresh green tones, early summer calm" },
+  { startMd: "05-16", endMd: "05-31", name: "皐月",   visual: "satsuki azalea blossoms, vivid pink flowers, garden hedge", style: "vivid pink and fresh green tones, early summer brightness" },
+  { startMd: "06-01", endMd: "06-15", name: "紫陽花", visual: "hydrangea flowers, blue and purple blooms, rainy season garden", style: "blue, purple and soft gray tones, rainy season mood" },
+  { startMd: "06-16", endMd: "06-30", name: "苔",     visual: "lush green moss, mossy stones, quiet shaded garden", style: "muted green and soft gray tones, quiet shaded calm" },
+  { startMd: "07-01", endMd: "07-15", name: "蓮",     visual: "lotus flowers, pink blooms, pond with green leaves", style: "soft pink and deep green tones, calm pond atmosphere" },
+  { startMd: "07-16", endMd: "07-31", name: "桔梗",   visual: "balloon flowers, purple star-shaped blooms, summer garden", style: "purple and deep green tones, summer garden depth" },
+  { startMd: "08-01", endMd: "08-15", name: "向日葵", visual: "sunflowers, bright yellow blooms, summer field", style: "vivid yellow and deep blue tones, bright summer energy" },
+  { startMd: "08-16", endMd: "08-31", name: "百日紅", visual: "crape myrtle blossoms, vivid pink flowers, late summer garden", style: "vivid pink and deep green tones, late summer vibrance" },
+  { startMd: "09-01", endMd: "09-15", name: "萩",     visual: "bush clover flowers, small purple-pink blooms, autumn garden", style: "soft purple-pink and beige tones, early autumn warmth" },
+  { startMd: "09-16", endMd: "09-30", name: "彼岸花", visual: "red spider lilies, vivid red blooms, autumn rice field", style: "vivid red and deep green tones, autumn field accent" },
+  { startMd: "10-01", endMd: "10-15", name: "秋桜",   visual: "cosmos flowers, pink and white blooms, autumn breeze field", style: "soft pink and pale blue tones, autumn breeze softness" },
+  { startMd: "10-16", endMd: "10-31", name: "金木犀", visual: "fragrant olive blossoms, tiny orange flowers, sweet autumn scent", style: "warm orange and beige tones, sweet autumn glow" },
+  { startMd: "11-01", endMd: "11-15", name: "菊",     visual: "chrysanthemum flowers, layered autumn blooms, garden display", style: "warm amber and deep red tones, autumn garden richness" },
+  { startMd: "11-16", endMd: "11-30", name: "紅葉",   visual: "autumn maple leaves, red and gold foliage, falling leaves", style: "warm red and golden tones, autumn foliage glow" },
+  { startMd: "12-01", endMd: "12-15", name: "銀杏",   visual: "ginkgo leaves, golden fan-shaped foliage, tree-lined avenue", style: "golden yellow and brown tones, late autumn warmth" },
+  { startMd: "12-16", endMd: "12-31", name: "千両",   visual: "nandina red berries, glossy green leaves, winter garden", style: "deep red and glossy green tones, winter garden accent" },
 ];
 
 /** 日付文字列（YYYY-MM-DD）から季節の花名を返す */
@@ -195,6 +198,13 @@ export function getSeasonalFlowerVisual(dateStr) {
   const md = dateStr.slice(5);
   return SEASONAL_FLOWERS.find(e => md >= e.startMd && md <= e.endMd)?.visual
     ?? "plum blossoms, pink and white flowers, early spring branches";
+}
+
+/** 日付文字列（YYYY-MM-DD）からGeminiプロンプトStyle行用の季節カラー（ASCII記述）を返す */
+export function getSeasonalStyleTone(dateStr) {
+  const md = dateStr.slice(5);
+  return SEASONAL_FLOWERS.find(e => md >= e.startMd && md <= e.endMd)?.style
+    ?? "soft pink and white tones, early spring freshness";
 }
 
 /**
@@ -742,6 +752,29 @@ export function _buildPollinationsPrompt(theme, description, persona, personalit
   return parts.filter(Boolean).join(", ");
 }
 
+// seasonalStyleTone省略時は旧固定文言にフォールバック（呼び出し元が季節カラーを渡さない場合の後方互換）
+export function _buildGeminiPrompt(theme, description, persona, personality, visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "", seasonalStyleTone = "light pink and beige tones") {
+  const promptTheme = themeEn || theme;
+  const promptContext = descriptionEn || description;
+  return (
+    `Create a cute kawaii watercolor style cat character illustration. ` +
+    (persona     ? `Cat appearance: ${persona}. `                      : "") +
+    (personality ? `Cat personality and pose: ${personality}. `        : "") +
+    (emotion     ? `Cat facial expression and emotion: ${emotion}. `   : "") +
+    (eatingAction ? `Cat action: ${eatingAction}. `                    : "") +
+    (guest        ? `Guest animal in the scene: ${guest.appearance}. Guest demeanor: ${guest.personality}. ` : "") +
+    `Theme: ${promptTheme}. ` +
+    (promptContext ? `Context: ${promptContext}. `              : "") +
+    (visualHint   ? `Setting and surrounding atmosphere; the cat may naturally interact with theme-related items (approaching, touching, or holding them as fits the scene): ${visualHint}. ` : "") +
+    `Style: soft pastel colors, ${seasonalStyleTone}, gentle watercolor brushstrokes, ` +
+    `white background, Japanese illustration style. ` +
+    `High quality charming illustration. ` +
+    `IMPORTANT: Do not include any text, letters, words, titles, captions, or typography in the image. ` +
+    `Do not add cherry blossoms, falling flower petals, or other seasonal decorations that are not explicitly mentioned in the Theme, Context, or Setting above.` +
+    (eatingAction ? ` Only the cat has a face and expressions; all food items must be depicted as ordinary objects without faces or eyes.` : "")
+  );
+}
+
 function buildPollinationsUrl(theme, description, persona, personality, model = "flux", visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "") {
   const prompt = _buildPollinationsPrompt(theme, description, persona, personality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn);
   const seed = Math.floor(Math.random() * 1_000_000);
@@ -770,24 +803,9 @@ export async function handleGenerate(body, apiKey) {
   const effectivePersonality = (personality && guest?.guardianModifier)
     ? `${personality}, ${guest.guardianModifier}`
     : personality;
-  // themeEn/descriptionEn が取得できている場合は英語版を使用（Gemini画像生成精度向上）
-  const promptTheme = themeEn || theme;
-  const promptContext = descriptionEn || description;
-  const prompt =
-    `Create a cute kawaii watercolor style cat character illustration. ` +
-    (persona              ? `Cat appearance: ${persona}. `                           : "") +
-    (effectivePersonality ? `Cat personality and pose: ${effectivePersonality}. `    : "") +
-    (emotion              ? `Cat facial expression and emotion: ${emotion}. `        : "") +
-    (eatingAction         ? `Cat action: ${eatingAction}. `                          : "") +
-    (guest                ? `Guest animal in the scene: ${guest.appearance}. Guest demeanor: ${guest.personality}. ` : "") +
-    `Theme: ${promptTheme}. ` +
-    (promptContext ? `Context: ${promptContext}. `              : "") +
-    (visualHint   ? `Setting and surrounding atmosphere; the cat may naturally interact with theme-related items (approaching, touching, or holding them as fits the scene): ${visualHint}. ` : "") +
-    `Style: soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ` +
-    `white background, Japanese illustration style. ` +
-    `High quality charming illustration. ` +
-    `IMPORTANT: Do not include any text, letters, words, titles, captions, or typography in the image.` +
-    (eatingAction ? ` Only the cat has a face and expressions; all food items must be depicted as ordinary objects without faces or eyes.` : "");
+  // Bug#26: 季節カラー（getSeasonalStyleTone）でStyle行の固定文言"light pink and beige tones"を置き換える
+  const seasonalStyleTone = getSeasonalStyleTone(toJSTDateStringWorker(new Date()));
+  const prompt = _buildGeminiPrompt(theme, description, persona, effectivePersonality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, seasonalStyleTone);
 
   async function tryGemini() {
     const candidates = KNOWN_IMAGE_CANDIDATES;
