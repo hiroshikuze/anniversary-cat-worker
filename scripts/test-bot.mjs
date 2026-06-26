@@ -18,7 +18,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id,
 } from "../worker/bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -2069,6 +2069,38 @@ console.log("\n[getSeasonalFlowerVisual]");
 }
 
 // ---------------------------------------------------------------------------
+// getSeasonalStyleTone - Geminiプロンプト Style行用の季節カラーを返す
+// Bug#26: 年間共通の"light pink and beige tones"固定文言がGeminiに桜を連想させていた問題の修正。
+// SEASONAL_FLOWERSのstyleフィールド（既存24エントリの境界を再利用）から季節カラーを取得する。
+// ---------------------------------------------------------------------------
+console.log("\n[getSeasonalStyleTone]");
+{
+  // ── 正常系: 実際にピンク系の花が咲く時期はピンクトーンを維持する（桜の時期は桜があった方がよい）──
+  assert("02-15 → 梅: pink を含む", getSeasonalStyleTone("2026-02-15").includes("pink"));
+  assert("04-01 → 染井吉野: pink を含む", getSeasonalStyleTone("2026-04-01").includes("pink"));
+  assert("07-01 → 蓮: pink を含む", getSeasonalStyleTone("2026-07-01").includes("pink"));
+
+  // ── 境界値: 苔（6月下旬）はpink系を含まない（Bug#26の本来の発生シーン）──
+  assert("06-16 → 苔: green を含む", getSeasonalStyleTone("2026-06-16").includes("green"));
+  assert("06-16 → 苔: pink を含まない", !getSeasonalStyleTone("2026-06-16").includes("pink"));
+  assert("06-30 → 苔（境界値）: pink を含まない", !getSeasonalStyleTone("2026-06-30").includes("pink"));
+
+  // ── 境界値: 紅葉（11月下旬）もpink系を含まない ──
+  assert("11-16 → 紅葉: red を含む", getSeasonalStyleTone("2026-11-16").includes("red"));
+  assert("11-16 → 紅葉: pink を含まない", !getSeasonalStyleTone("2026-11-16").includes("pink"));
+
+  // ── エラー系: 全24エントリがASCIIのみ（Geminiプロンプトに直接埋め込むため）──
+  const allDatesForStyle = [
+    "2026-01-01", "2026-01-16", "2026-02-01", "2026-02-15", "2026-03-01", "2026-03-16",
+    "2026-04-01", "2026-04-16", "2026-05-01", "2026-05-16", "2026-06-01", "2026-06-16",
+    "2026-07-01", "2026-07-16", "2026-08-01", "2026-08-16", "2026-09-01", "2026-09-16",
+    "2026-10-01", "2026-10-16", "2026-11-01", "2026-11-16", "2026-12-01", "2026-12-16",
+  ];
+  const allStyleAscii = allDatesForStyle.every(d => /^[\x20-\x7E]*$/.test(getSeasonalStyleTone(d)));
+  assert("全24エントリのstyleがASCIIのみ", allStyleAscii);
+}
+
+// ---------------------------------------------------------------------------
 // filterAndDedupePool - none除外 + theme重複除去
 // ---------------------------------------------------------------------------
 console.log("\n[filterAndDedupePool]");
@@ -2522,6 +2554,75 @@ console.log("\n[buildMastodonText]");
   assert("lang=en パラメータ付きURLが含まれる（pageUrl指定時）", textWithUrl.includes("lang=en"));
   const textWithoutUrl = buildMastodonText("ねこの日", "猫の記念日", "Cat Day", "A cat day");
   assert("pageUrlなし時: 英語直リンクなし", !textWithoutUrl.includes("lang=en"));
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// _buildGeminiPrompt: 季節カラー反映・ネガティブ指示・既存パラメーターの組み込み
+// Bug#26: Style行の固定文言"light pink and beige tones"を季節カラー（seasonalStyleTone引数）に
+// 置き換え可能にした。明示的に渡されない場合は旧文言にフォールバックする。
+// ────────────────────────────────────────────────────────────────────────────
+console.log("\n[_buildGeminiPrompt]");
+{
+  // ── 正常系: seasonalStyleToneを渡すとStyle行に反映される ──
+  {
+    const prompt = _buildGeminiPrompt(
+      "苔の季節", "苔の美しい季節", "orange tabby cat", "curious wide-eyed pose",
+      "lush green moss, mossy stones, quiet shaded garden", null, null, null,
+      "", "", "muted green and soft gray tones, quiet shaded calm"
+    );
+    assert("seasonalStyleToneがStyle行に含まれる", prompt.includes("muted green and soft gray tones"));
+    assert("固定文言light pinkは含まれない", !prompt.includes("light pink"));
+  }
+
+  // ── 境界値: seasonalStyleTone省略時は旧固定文言にフォールバック（後方互換）──
+  {
+    const prompt = _buildGeminiPrompt(
+      "ねこの日", "猫を愛でる日", "orange tabby cat", "curious wide-eyed pose"
+    );
+    assert("seasonalStyleTone省略時: light pink and beige tonesにフォールバック", prompt.includes("light pink and beige tones"));
+  }
+
+  // ── 正常系: ネガティブ指示が常に含まれる ──
+  {
+    const prompt = _buildGeminiPrompt("ねこの日", "猫を愛でる日", null, null);
+    assert("ネガティブ指示(cherry blossoms)が含まれる", prompt.includes("Do not add cherry blossoms"));
+  }
+
+  // ── 正常系: 春のvisualHintに桜が明示されている場合も除外されず両立する ──
+  {
+    const prompt = _buildGeminiPrompt(
+      "桜の季節", "桜が満開の季節", "orange tabby cat", "curious wide-eyed pose",
+      "cherry blossoms, pink petals falling, Japanese garden breeze", null, null, null,
+      "", "", "soft pink and pale blue tones, gentle spring breeze"
+    );
+    assert("春のvisualHintのcherry blossomsはSetting欄に明示される", prompt.includes("cherry blossoms, pink petals falling"));
+    assert("ネガティブ指示も同時に含まれる（除外対象は明示なき追加のみ）", prompt.includes("Do not add cherry blossoms"));
+  }
+
+  // ── 正常系: themeEn/descriptionEn・persona・personality・emotion・eatingAction・guestがすべて反映される ──
+  {
+    const guest = { appearance: "a small fluffy dog", personality: "playful and energetic" };
+    const prompt = _buildGeminiPrompt(
+      "ねこの日", "猫を愛でる日", "orange tabby cat", "curious wide-eyed pose",
+      "cat paw prints, yarn ball", "eyes wide with surprise", "nibbling a treat", guest,
+      "Cat Day", "A day to celebrate cats", "soft pink and white tones, early spring freshness"
+    );
+    assert("themeEnが使われる(Theme: Cat Day)", prompt.includes("Theme: Cat Day."));
+    assert("descriptionEnが使われる(Context: A day to celebrate cats)", prompt.includes("Context: A day to celebrate cats."));
+    assert("personaが含まれる", prompt.includes("Cat appearance: orange tabby cat."));
+    assert("personalityが含まれる", prompt.includes("Cat personality and pose: curious wide-eyed pose."));
+    assert("emotionが含まれる", prompt.includes("Cat facial expression and emotion: eyes wide with surprise."));
+    assert("eatingActionが含まれる", prompt.includes("Cat action: nibbling a treat."));
+    assert("eatingAction時はfood items無表情指示が付く", prompt.includes("food items must be depicted as ordinary objects"));
+    assert("guestが含まれる", prompt.includes("Guest animal in the scene: a small fluffy dog."));
+  }
+
+  // ── 境界値: theme/description以外すべてnull・空文字でもクラッシュしない ──
+  {
+    const prompt = _buildGeminiPrompt("ねこの日", "", null, null, null, null, null, null, "", "", "");
+    assert("最小入力でもクラッシュしない", typeof prompt === "string");
+    assert("themeのみは反映される(Theme: ねこの日)", prompt.includes("Theme: ねこの日."));
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

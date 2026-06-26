@@ -320,6 +320,20 @@ Setting and surrounding atmosphere; the cat may naturally interact with theme-re
 
 - altテキスト・SUZURI商品説明は**日本語のみ**（`theme`/`description`を使用。変更しない）
 - `themeEn`/`descriptionEn`は`handleGenerate(body)`の`body`経由で受け取る（ボット: `research.themeEn`/`research.descriptionEn`から渡す。ユーザー生成: `/generate`リクエストボディに含めてもよいが必須ではない）
+- プロンプト構築は`_buildGeminiPrompt()`としてexport済み（2026-06）。`_buildPollinationsPrompt()`と同じく純粋関数として切り出し、`handleGenerate()`から呼び出す
+
+### Style行の季節カラー（`getSeasonalStyleTone()`・2026-06追加）
+
+**背景（Bug#26）**: Style行が年間共通の固定文言`light pink and beige tones`だったため、テーマ・visualHintに花の言及がない日でもGeminiが桜の花びらを装飾として補完してしまう問題があった。
+
+```text
+Style: soft pastel colors, {getSeasonalStyleTone(today)}, gentle watercolor brushstrokes, white background, Japanese illustration style.
+```
+
+- `getSeasonalStyleTone(dateStr)`は`SEASONAL_FLOWERS`（既存の24エントリ・`startMd`/`endMd`境界）に追加した`style`フィールド（ASCII英語の色調記述）を返す。季節補充フォールバック専用だった`SEASONAL_FLOWERS`を「年間の色調テーブル」として再利用し、新しい日付テーブルは作らない
+- `today`には`toJSTDateStringWorker(new Date())`を使用。季節補充フォールバック（`generateResearchPool()`）限定ではなく、**すべてのGemini画像生成**（ユーザー生成・ボット投稿問わず）に適用する
+- 実際にピンク系の花が咲く時期（梅・彼岸桜・染井吉野・皐月・蓮・百日紅・秋桜）は`style`もピンク系トーンを維持する。季節と合致する桜表現は引き続き可能
+- ネガティブ指示`Do not add cherry blossoms, falling flower petals, or other seasonal decorations that are not explicitly mentioned in the Theme, Context, or Setting above.`をStyle行の後に追加（保険・デフェンスインデプス）。Theme/Context/Setting欄に明示された場合（例: 春のvisualHintに桜が含まれる）は除外対象にならない
 
 ### visualHintの役割（2026-05変更）
 

@@ -215,4 +215,18 @@
 - **場所**: `worker/index.js` `SEASONAL_FLOWERS` `getSeasonalFlowerVisual()` `generateResearchPool()`
 - **教訓**: 複数バリアントを持つ定数テーブル（季節要素・商品種別等）に対して「全件共通の文言テンプレート」を適用する設計は、テーブルの要素数が増えるほど一部要素の実体と矛盾するリスクが高まる。各要素が本質的に異なる見た目・性質を持ちうる場合は、テンプレートではなく要素ごとのフィールドとして明示的に持たせる
 
+### 26. Gemini生成画像が季節と無関係に桜の花びらを描き込む（2026-06）
+
+- **症状**: ユーザーから「6/26（露天風呂の日）投稿の生成画像に桜の花びららしきものが舞っていて時期として季節と合わない」と報告。当初Bug#25（季節補充フォールバックの`flowers, soft petals`テンプレート）の再発と推測したが、実際のDiscord通知ログを確認した結果、当日のテーマは通常のリサーチプール取得「露天風呂の日」であり`visualHint`にも花・花びら・桜への言及は一切なく、Bug#25とは無関係と判明
+- **原因**: `handleGenerate()`が組み立てるGeminiプロンプトのStyle指示が`` `soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ... Japanese illustration style` ``という年間共通の固定文言だった。「light pink」「Japanese illustration style」「watercolor」の組み合わせが学習データ上の桜イメージと強く結びついており、テーマ・visualHintに花の言及がない場合でもGeminiモデルが装飾として桜の花びらを補完してしまっていた
+- **影響**: 一年を通じて常時発生しうる（季節補充フォールバック発動時のみではない）。桜が季節的に不自然な6月〜2月頃の生成画像で特に目立つ
+- **修正**:
+  - `SEASONAL_FLOWERS`の24エントリ（既存の`startMd`/`endMd`境界を再利用）に`style`フィールド（ASCII英語の色調記述）を追加。新規`getSeasonalStyleTone(dateStr)`で該当エントリの`style`を取得する
+  - `handleGenerate()`のGeminiプロンプト構築を`_buildGeminiPrompt()`として切り出し、固定文言`light pink and beige tones`を`getSeasonalStyleTone(toJSTDateStringWorker(new Date()))`の戻り値に置き換え。季節補充フォールバック限定ではなく**すべてのGemini画像生成**に適用する
+  - 実際に桜・梅・蓮等のピンク系の花が咲く時期（梅・彼岸桜・染井吉野・皐月・蓮・百日紅・秋桜）は`style`もピンク系トーンを維持し、季節と合致する桜表現は引き続き可能にする
+  - 保険として、Theme/Context/Setting欄に明示されていない桜・花びら・季節装飾を追加しないようGeminiプロンプトにネガティブ指示を追加（`SEASONAL_FLOWERS`春エントリのように`visual`/`style`で明示された場合は除外されない）
+- **テスト**: `scripts/test-bot.mjs`に`getSeasonalStyleTone()`の正常系（境界値）・`_buildGeminiPrompt()`の構築ロジック（ネガティブ指示の有無・季節カラー反映）を追加
+- **場所**: `worker/index.js` `SEASONAL_FLOWERS` `getSeasonalStyleTone()` `_buildGeminiPrompt()` `handleGenerate()`
+- **教訓**: 画像生成プロンプトの装飾的な固定文言（色調・画風指定等）も、特定の単語の組み合わせが学習データ上の強いイメージ連想を引き起こす場合がある。テーマに依存しない見た目の指示であっても、季節性のあるサービスでは年間固定にせず可変にする余地を検討する。また、ユーザー報告の症状が過去バグと類似していても、実際の生成ログ（プロンプト全文）を確認せずに過去バグの再発と決めつけない（前回の誤診断: 本バグをBug#25再発と最初に断定した）
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
