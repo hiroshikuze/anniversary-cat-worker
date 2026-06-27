@@ -534,7 +534,8 @@ export async function runBot(env, handleResearch, handleGenerate) {
     console.log(`${prefix} generate 開始`);
     const generated = await handleGenerate(
       { theme: research.theme, description: research.description, visualHint: research.visualHint ?? null, foodItem: research.foodItem ?? null, themeEn: research.themeEn ?? "", descriptionEn: research.descriptionEn ?? "" },
-      apiKey
+      apiKey,
+      env
     );
     console.log(`${prefix} generate 完了 source=${generated.source}`);
 

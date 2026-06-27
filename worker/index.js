@@ -454,17 +454,53 @@ export async function handleResearch(body, apiKey) {
 }
 
 // ---------------------------------------------------------------------------
-// 画像生成モデルを動的に選択（キャッシュなし・毎回確認）
+// 画像生成モデルを動的に選択
 // ---------------------------------------------------------------------------
-// 画像生成 Gemini モデルの既知候補リスト（優先度順）
-// Discovery API 呼び出しは tryGemini() のレイテンシ増加の原因になるため廃止。
-// モデルが廃止された場合は KNOWN_IMAGE_CANDIDATES を直接更新する。
+// 画像生成 Gemini モデルの既知候補リスト（優先度順）。
+// 配列自体は静的・人手メンテナンス（Discovery API 呼び出しは tryGemini() の
+// レイテンシ増加の原因になるため使用しない）。配列内のどのモデルが現在有効かは
+// _resolveImageModel() が RATE_KV に記憶し、実行時の試行順は記憶値が優先される。
+// 候補が全滅した場合は配列に新しいモデルを追記する。
 // 確認先: https://ai.google.dev/gemini-api/docs/models
 const KNOWN_IMAGE_CANDIDATES = [
   "gemini-2.5-flash-image",              // 2026-03 現在の stable（メイン）
   "gemini-2.0-flash-exp",                // フォールバック
   "gemini-2.0-flash-preview-image-generation",  // 廃止済みの可能性あり
 ];
+
+// RATE_KV内のキー。画像生成で現在有効なモデル名を記憶する（TTLなし）
+const IMAGE_MODEL_KV_KEY = "image-model:active";
+
+// 画像生成モデルの記憶・自動フォールバック（2026-06追加）
+// candidates を順に callModel(model) で試行する。callModel が err.cascade=true を
+// 投げた場合のみ次の候補へ進む（404等のモデル廃止のみが対象。429クォータ超過・
+// 画像パートなし等は呼び出し側で即throwし、ここまで伝播しない）。
+// 成功したモデルが remembered と異なれば KV を更新する（候補リストとの整合を保つ）。
+// modelSwitch は「今回の試行で実際にカスケードが発生したか」（成功モデルが
+// order[0]と異なるか）で判定する。KVが空の状態で先頭候補が失敗した場合も
+// 正しくカスケード発生として通知される。
+export async function _resolveImageModel(kv, candidates, callModel) {
+  const remembered = kv ? await kv.get(IMAGE_MODEL_KV_KEY) : null;
+  const order = remembered && candidates.includes(remembered)
+    ? [remembered, ...candidates.filter((m) => m !== remembered)]
+    : candidates;
+
+  let lastError;
+  for (const model of order) {
+    try {
+      const result = await callModel(model);
+      if (kv && model !== remembered) await kv.put(IMAGE_MODEL_KV_KEY, model);
+      const modelSwitch = model !== order[0] ? { from: order[0], to: model } : null;
+      return { ...result, modelSwitch };
+    } catch (e) {
+      if (!e.cascade) throw e;
+      lastError = e;
+    }
+  }
+  const err = new Error(lastError?.message ?? "Gemini: 利用可能な画像モデルが見つかりませんでした");
+  err.allExhausted = true;
+  throw err;
+}
 
 // ---------------------------------------------------------------------------
 // Pollinations.ai フォールバック（base64 画像を返す）
@@ -787,7 +823,7 @@ function buildPollinationsUrl(theme, description, persona, personality, model = 
 // ---------------------------------------------------------------------------
 // /generate  ― Gemini と Pollinations を並列実行し、先に成功した方を返す
 // ---------------------------------------------------------------------------
-export async function handleGenerate(body, apiKey) {
+export async function handleGenerate(body, apiKey, env) {
   const { theme, description } = body;
   if (!theme) throw new Error("theme フィールドが必要です");
 
@@ -807,58 +843,78 @@ export async function handleGenerate(body, apiKey) {
   const seasonalStyleTone = getSeasonalStyleTone(toJSTDateStringWorker(new Date()));
   const prompt = _buildGeminiPrompt(theme, description, persona, effectivePersonality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, seasonalStyleTone);
 
+  async function callModel(model) {
+    // 1モデルあたり最大 15 秒（実測最大 ~10s + 余裕5s）
+    const res = await fetchWithRetry(
+      `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
+        }),
+        signal: AbortSignal.timeout(15_000),
+      }
+    );
+    const resText = await res.text();
+    if (!res.ok) {
+      let msg;
+      try { msg = JSON.parse(resText).error?.message; } catch { msg = resText.slice(0, 120); }
+      msg = msg ?? `Gemini エラー (${res.status})`;
+      // モデルが存在しない / API バージョン非対応 → 次の候補へ
+      if (res.status === 404 || msg.includes("not found") || msg.includes("not supported")) {
+        console.warn(`[generate] model=${model} unavailable(${res.status}): ${msg.slice(0, 100)}`);
+        const err = new Error(msg);
+        err.cascade = true;
+        throw err;
+      }
+      // クォータ超過
+      if (res.status === 429) {
+        console.warn(`[generate] model=${model} quota exceeded: ${msg.slice(0, 100)}`);
+      }
+      // その他のエラー（クォータ超過・安全フィルタ等）は即座に失敗
+      throw new Error(msg);
+    }
+    let data;
+    try { data = JSON.parse(resText); } catch {
+      throw new Error(`Gemini レスポンス解析エラー: ${resText.slice(0, 120)}`);
+    }
+    const parts = data.candidates?.[0]?.content?.parts ?? [];
+    const imagePart = parts.find((p) => p.inlineData);
+    if (!imagePart) {
+      const msg = parts.find((p) => p.text)?.text ?? "";
+      console.warn(`[generate] model=${model} no image part. text="${msg.slice(0, 80)}"`);
+      throw new Error("Gemini: 画像パートなし" + (msg ? `: ${msg.slice(0, 80)}` : ""));
+    }
+    console.log(`[generate] Gemini success model=${model} mimeType=${imagePart.inlineData.mimeType}`);
+    return { imageData: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType || "image/png", source: "gemini" };
+  }
+
   async function tryGemini() {
-    const candidates = KNOWN_IMAGE_CANDIDATES;
     // 無限ループ防止: 最大 4 候補まで
     const MAX_TRIES = 4;
-    let lastError;
-    for (const model of candidates.slice(0, MAX_TRIES)) {
-      // 1モデルあたり最大 15 秒（実測最大 ~10s + 余裕5s）
-      const res = await fetchWithRetry(
-        `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
-          }),
-          signal: AbortSignal.timeout(15_000),
-        }
+    try {
+      const { modelSwitch, ...image } = await _resolveImageModel(
+        env?.RATE_KV, KNOWN_IMAGE_CANDIDATES.slice(0, MAX_TRIES), callModel
       );
-      const resText = await res.text();
-      if (!res.ok) {
-        let msg;
-        try { msg = JSON.parse(resText).error?.message; } catch { msg = resText.slice(0, 120); }
-        msg = msg ?? `Gemini エラー (${res.status})`;
-        // モデルが存在しない / API バージョン非対応 → 次の候補へ
-        if (res.status === 404 || msg.includes("not found") || msg.includes("not supported")) {
-          console.warn(`[generate] model=${model} unavailable(${res.status}): ${msg.slice(0, 100)}`);
-          lastError = new Error(msg);
-          continue;
-        }
-        // クォータ超過
-        if (res.status === 429) {
-          console.warn(`[generate] model=${model} quota exceeded: ${msg.slice(0, 100)}`);
-        }
-        // その他のエラー（クォータ超過・安全フィルタ等）は即座に失敗
-        throw new Error(msg);
+      if (modelSwitch) {
+        await notifyDiscord(
+          env?.DISCORD_WEBHOOK_URL,
+          `🔄 画像生成モデルを切替: ${modelSwitch.from} → ${modelSwitch.to}\n旧モデルが廃止/利用不可になったため自動切替しました`,
+          "🔄"
+        );
       }
-      let data;
-      try { data = JSON.parse(resText); } catch {
-        throw new Error(`Gemini レスポンス解析エラー: ${resText.slice(0, 120)}`);
+      return image;
+    } catch (e) {
+      if (e.allExhausted) {
+        await notifyDiscord(
+          env?.DISCORD_WEBHOOK_URL,
+          `🚨 画像生成モデル全滅: ${KNOWN_IMAGE_CANDIDATES.join(", ")}\n${e.message}\nKNOWN_IMAGE_CANDIDATESに新モデルを追加してください`
+        );
       }
-      const parts = data.candidates?.[0]?.content?.parts ?? [];
-      const imagePart = parts.find((p) => p.inlineData);
-      if (!imagePart) {
-        const msg = parts.find((p) => p.text)?.text ?? "";
-        console.warn(`[generate] model=${model} no image part. text="${msg.slice(0, 80)}"`);
-        throw new Error("Gemini: 画像パートなし" + (msg ? `: ${msg.slice(0, 80)}` : ""));
-      }
-      console.log(`[generate] Gemini success model=${model} mimeType=${imagePart.inlineData.mimeType}`);
-      return { imageData: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType || "image/png", source: "gemini" };
+      throw e;
     }
-    throw lastError ?? new Error("Gemini: 利用可能な画像モデルが見つかりませんでした");
   }
 
   async function tryPollinations() {
@@ -1281,7 +1337,7 @@ ${itemsXml}
             return Response.json({ error: rl.message }, { status: 429, headers: corsH });
           }
         }
-        result = await handleGenerate(body, apiKey);
+        result = await handleGenerate(body, apiKey, env);
 
         // R2保存（best-effort: 失敗しても imageData は返す）
         // SUZURI商品生成はフロントでウォーターマーク合成後に /suzuri-create で行う
