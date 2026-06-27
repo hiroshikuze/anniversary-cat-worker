@@ -18,7 +18,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id,
 } from "../worker/bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -1559,6 +1559,129 @@ const POLLI_IMG   = { source: "pollinations", imageData: "p", mimeType: "image/j
     threw = true;
   }
   assert("両方失敗時はエラーをthrowする", threw);
+}
+
+// ---------------------------------------------------------------------------
+// _resolveImageModel: 画像生成モデルの記憶・自動フォールバック
+// ---------------------------------------------------------------------------
+console.log("\n[_resolveImageModel]");
+
+// ヘルパー: 単一キーのみを扱う最小KVモック（RATE_KVの代替）
+function makeMockKv(initialValue) {
+  let value = initialValue !== undefined ? initialValue : null;
+  let putCount = 0;
+  return {
+    async get() { return value; },
+    async put(_key, v) { value = v; putCount++; },
+    _value() { return value; },
+    _putCount() { return putCount; },
+  };
+}
+
+function cascadeError(msg) {
+  const e = new Error(msg);
+  e.cascade = true;
+  return e;
+}
+
+{
+  // 正常系: KV空 → candidates[0]を使用、modelSwitchはnull（KV書き込みは行われ基準値が確立する）
+  const kv = makeMockKv();
+  const calls = [];
+  const callModel = async (model) => { calls.push(model); return { source: "gemini", model }; };
+  const result = await _resolveImageModel(kv, ["model-a", "model-b"], callModel);
+  assert("KV空: candidates[0]が呼ばれる", calls.length === 1 && calls[0] === "model-a");
+  assert("KV空: modelSwitchはnull", result.modelSwitch === null);
+  assert("KV空: 成功モデルがKVに書き込まれる（基準値確立）", kv._value() === "model-a");
+}
+
+{
+  // 正常系: 記憶済みモデルが成功 → そのモデルを最優先・KV書き込みなし・modelSwitchはnull
+  const kv = makeMockKv("model-b");
+  const calls = [];
+  const callModel = async (model) => { calls.push(model); return { source: "gemini", model }; };
+  const result = await _resolveImageModel(kv, ["model-a", "model-b"], callModel);
+  assert("記憶済みモデル優先: 記憶値が最初に呼ばれる", calls.length === 1 && calls[0] === "model-b");
+  assert("記憶済みモデル成功: modelSwitchはnull", result.modelSwitch === null);
+  assert("記憶済みモデル成功: KVへの再書き込みは発生しない", kv._putCount() === 0);
+}
+
+{
+  // 正常系: 記憶済みモデルがcascadeエラー→次の候補が成功 → KV更新+modelSwitch={from,to}
+  const kv = makeMockKv("model-a");
+  const calls = [];
+  const callModel = async (model) => {
+    calls.push(model);
+    if (model === "model-a") throw cascadeError("model-a not found");
+    return { source: "gemini", model };
+  };
+  const result = await _resolveImageModel(kv, ["model-a", "model-b", "model-c"], callModel);
+  assert("記憶済みモデル失敗: 記憶値→次候補の順で呼ばれる", JSON.stringify(calls) === JSON.stringify(["model-a", "model-b"]));
+  assert("記憶済みモデル失敗: modelSwitchが{from,to}を返す",
+    result.modelSwitch?.from === "model-a" && result.modelSwitch?.to === "model-b");
+  assert("記憶済みモデル失敗: KVが新しいモデルに更新される", kv._value() === "model-b");
+}
+
+{
+  // 境界値: コールドスタート（KV空）かつ最初の候補が即cascade失敗 → KV書き込み+modelSwitchが正しく発火する
+  const kv = makeMockKv();
+  const callModel = async (model) => {
+    if (model === "model-a") throw cascadeError("model-a not found");
+    return { source: "gemini", model };
+  };
+  const result = await _resolveImageModel(kv, ["model-a", "model-b"], callModel);
+  assert("コールドスタート即時カスケード: modelSwitchが発火する",
+    result.modelSwitch?.from === "model-a" && result.modelSwitch?.to === "model-b");
+  assert("コールドスタート即時カスケード: KVが更新される", kv._value() === "model-b");
+}
+
+{
+  // 境界値: 記憶値がcandidatesに存在しない → デフォルト順で試行・成功時は不要な通知をしない
+  const kv = makeMockKv("old-model");
+  const calls = [];
+  const callModel = async (model) => { calls.push(model); return { source: "gemini", model }; };
+  const result = await _resolveImageModel(kv, ["model-a", "model-b"], callModel);
+  assert("記憶値が候補外: candidates[0]から試行される", calls.length === 1 && calls[0] === "model-a");
+  assert("記憶値が候補外: cascadeしていないのでmodelSwitchはnull", result.modelSwitch === null);
+  assert("記憶値が候補外: KVは有効な候補に補正される", kv._value() === "model-a");
+}
+
+{
+  // 境界値: kv=null（env未指定相当）→ ステートレスに動作し、put呼び出しでエラーにならない
+  const callModel = async (model) => ({ source: "gemini", model });
+  const result = await _resolveImageModel(null, ["model-a", "model-b"], callModel);
+  assert("kv=null: 正常に解決される", result.model === "model-a");
+  assert("kv=null: modelSwitchはnull", result.modelSwitch === null);
+}
+
+{
+  // エラー系: 全候補がcascade失敗 → err.allExhausted === true
+  const callModel = async (model) => { throw cascadeError(`${model} not found`); };
+  let caught = null;
+  try {
+    await _resolveImageModel(makeMockKv(), ["model-a", "model-b"], callModel);
+  } catch (e) {
+    caught = e;
+  }
+  assert("全候補失敗: エラーがthrowされる", caught !== null);
+  assert("全候補失敗: allExhausted === true", caught?.allExhausted === true);
+}
+
+{
+  // エラー系: 非cascadeエラー（429相当）→ 即throw・残りの候補を試さない
+  const calls = [];
+  const callModel = async (model) => {
+    calls.push(model);
+    throw new Error(`${model} quota exceeded`);
+  };
+  let caught = null;
+  try {
+    await _resolveImageModel(makeMockKv(), ["model-a", "model-b"], callModel);
+  } catch (e) {
+    caught = e;
+  }
+  assert("非cascadeエラー: 即throwされる", caught !== null && caught.message.includes("quota exceeded"));
+  assert("非cascadeエラー: 残りの候補を試さない", calls.length === 1 && calls[0] === "model-a");
 }
 
 // ---------------------------------------------------------------------------

@@ -288,21 +288,49 @@ Florkiewicz & Scott（2023）の276表情研究（友好的45%・攻撃的37%・
 
 ## Geminiモデル管理
 
-### 画像生成モデル（`worker/index.js`の`KNOWN_CANDIDATES`）
+### 画像生成モデル（`worker/index.js`の`KNOWN_IMAGE_CANDIDATES`）
 
 ```js
-const KNOWN_CANDIDATES = [
+const KNOWN_IMAGE_CANDIDATES = [
   "gemini-2.5-flash-image",              // 2026-03現在のstable（メイン）
-  "gemini-2.0-flash-exp",                // 廃止済みの可能性あり
-  "gemini-2.0-flash-preview-image-generation",  // 廃止済み（404）
+  "gemini-2.0-flash-exp",                // フォールバック
+  "gemini-2.0-flash-preview-image-generation",  // 廃止済みの可能性あり
 ];
 ```
 
-**モデルが404になったら:**
+**全候補が404になったら（`KNOWN_IMAGE_CANDIDATES`全滅）:**
 
-1. Actionsタブでhealth-checkの失敗を確認（またはCloudflareログで`unavailable(404)`を確認）
+1. Discordに`🚨 画像生成モデル全滅`通知が届く（下記「自動切替・記憶」参照）。または Actionsタブでhealth-checkの失敗を確認（Cloudflareログで`unavailable(404)`を確認）
 2. [Google AI for Developers](https://ai.google.dev/gemini-api/docs/models)で現行モデルを確認
-3. `KNOWN_CANDIDATES`の先頭を新しいモデルに更新してpush → Actionsで確認
+3. `KNOWN_IMAGE_CANDIDATES`に新しいモデルを追記してpush → Actionsで確認
+
+`scripts/health-check.js`は`KNOWN_IMAGE_CANDIDATES`と同期させた独立コピーを保持し、`checkImageModels()`で配列の先頭エントリをE2Eチェックする（配列が古い場合は`warn`のみでCI失敗にはしない）。下記の自動切替・記憶機構とは独立しており、実際にKVへ記憶されている稼働モデルではなく配列の静的な内容を見ている点に注意。
+
+### 画像生成モデルの自動切替・記憶（`_resolveImageModel()`・2026-06追加）
+
+`tryGemini()`は`KNOWN_IMAGE_CANDIDATES`を毎回先頭から順に試すのではなく、`RATE_KV`（既存のレート制限用KVを再利用、新規namespaceは作成しない）のキー`image-model:active`に**現在有効なモデル名を記憶**し、次回以降はそのモデルを最優先で試す。
+
+```js
+export async function _resolveImageModel(kv, candidates, callModel) {
+  const remembered = kv ? await kv.get(IMAGE_MODEL_KV_KEY) : null;
+  const order = remembered && candidates.includes(remembered)
+    ? [remembered, ...candidates.filter(m => m !== remembered)]
+    : candidates;
+  // order を順に callModel(model) で試行。
+  // callModel が err.cascade=true を投げた場合のみ次の候補へ。
+  // 成功したモデルが remembered と異なれば KV を更新する。
+  // 成功したモデルが「今回最初に試したモデル」（order[0]。記憶値があればそれ、
+  // なければ candidates[0]）と異なる場合のみ modelSwitch を返す（＝カスケードが
+  // 実際に発生した場合のみ通知対象。KVが空の初回起動でcandidates[0]がそのまま
+  // 成功した場合は通知しない）。
+}
+```
+
+- `callModel(model)`内の404/"not found"/"not supported"判定のみが`err.cascade = true`としてカスケード対象になる。429（クォータ超過）・「画像パートなし」・その他のエラーは**従来通りカスケードしない**（即throw）。クォータ超過を自動切替対象にすると本来のクォータ問題を隠してしまうため意図的に対象外にしている
+- モデルが切り替わった場合: Discordに`🔄 画像生成モデルを切替: {from} → {to}`を通知（`tryGemini()`内で直接`await notifyDiscord()`、`ctx.waitUntil()`化はしない。fal.ai運用通知等の既存パスと同じ規約）
+- `KNOWN_IMAGE_CANDIDATES`の候補すべてが失敗した場合: Discordに`🚨 画像生成モデル全滅`を通知してからエラーをrethrowする（Pollinationsフォールバックは`_twoPhaseRace`側で従来通り機能する）
+- **このKV記憶機構が解決しないこと**: `KNOWN_IMAGE_CANDIDATES`配列自体の更新（新しいモデル名の追記）は引き続き人間が行う。Discovery API（List Models）を`tryGemini()`のホットパスに追加することは過去に廃止した設計判断であり、本機構でも再導入しない（2フェーズレースのレイテンシ予算を侵害するため）
+- 同時並行リクエストが同一の死活変化を同時に検知した場合、Discord通知が2〜3通程度重複する可能性がある。Workers KVにはCAS機構がなく、Durable Objects等の追加インフラなしには排他できないため、この程度の重複は許容している
 
 ### Researchモデル（テキスト用）
 
