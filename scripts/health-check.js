@@ -135,8 +135,9 @@ async function checkResearch(apiKey, allModels) {
       let score = 0;
       if (name.includes("flash"))    score += 20;
       if (!name.includes("preview")) score += 10;
+      if (name.includes("lite"))     score +=  5;
       const ver = name.match(/gemini-(\d+)\.(\d+)/);
-      if (ver) score += parseInt(ver[1]) * 3 + parseInt(ver[2]);
+      if (ver) score -= parseInt(ver[1]) * 3 + parseInt(ver[2]);
       return { name, score };
     })
     .sort((a, b) => b.score - a.score);
@@ -483,6 +484,19 @@ async function checkWorker(workerUrl, bypassToken) {
   const genData = await genRes.json();
   check("HTTP 200",          genRes.status === 200, `status=${genRes.status} ${genData.error ?? ""}`);
   check("imageData あり",    !!genData.imageData,   `source=${genData.source ?? "?"}`);
+
+  console.log("\n[W3] Worker /usage エンドポイント確認");
+  const { ok: usageOk, res: usageRes, error: usageErr } = await safeFetch(`${workerUrl}/usage`);
+  if (!check("Worker /usage 到達", usageOk, usageErr)) return data;
+  const usageData = await usageRes.json();
+  check("HTTP 200", usageRes.status === 200, `status=${usageRes.status}`);
+  if (usageRes.ok) {
+    note(`/usage: ${usageData.days?.length ?? 0} 日分のデータ`);
+    if (usageData.days?.length > 0) {
+      const latest = usageData.days[0];
+      note(`最新 ${latest.date}: textCalls=${latest.textCalls ?? 0} textTokens=${latest.textTokens ?? 0} textModel=${latest.textModel ?? "(未記録)"} imageCalls=${latest.imageCalls ?? 0} imageTokens=${latest.imageTokens ?? 0}`);
+    }
+  }
 
   return data;
 }
