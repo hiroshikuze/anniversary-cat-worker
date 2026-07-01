@@ -18,7 +18,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id,
 } from "../worker/bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -1744,6 +1744,69 @@ console.log("\n[_selectFromCandidates]");
   assert("【回帰】旧スコア式で選ばれていた gemini-3.5-flash が最優先にならない",
     result !== "gemini-3.5-flash");
   assert("【回帰】gemini-2.5-flash-lite が選ばれる", result === "gemini-2.5-flash-lite");
+}
+
+// ---------------------------------------------------------------------------
+// incrementUsageKv: KV日次集計
+// ---------------------------------------------------------------------------
+console.log("\n[incrementUsageKv]");
+
+function makeKvMock() {
+  const store = {};
+  return {
+    store,
+    async get(key) { return store[key] ?? null; },
+    async put(key, val) { store[key] = val; },
+  };
+}
+
+{
+  // 正常系: テキストトークンが集計される
+  const kv = makeKvMock();
+  await incrementUsageKv(kv, "text", 100, "gemini-2.5-flash-lite");
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`usage:${today}`]);
+  assert("textCalls が 1 になる",  stored.textCalls  === 1);
+  assert("textTokens が 100 になる", stored.textTokens === 100);
+  assert("textModel が記録される",  stored.textModel  === "gemini-2.5-flash-lite");
+}
+
+{
+  // 正常系: 画像トークンが集計される
+  const kv = makeKvMock();
+  await incrementUsageKv(kv, "image", 500, "gemini-2.5-flash-image");
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`usage:${today}`]);
+  assert("imageCalls が 1 になる",   stored.imageCalls  === 1);
+  assert("imageTokens が 500 になる", stored.imageTokens === 500);
+  assert("textCalls は undefined",    stored.textCalls   === undefined);
+}
+
+{
+  // 正常系: 複数回の呼び出しで累積される
+  const kv = makeKvMock();
+  await incrementUsageKv(kv, "text", 100, "gemini-2.5-flash-lite");
+  await incrementUsageKv(kv, "text", 200, "gemini-2.5-flash-lite");
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`usage:${today}`]);
+  assert("textCalls が 2 に累積される",   stored.textCalls  === 2);
+  assert("textTokens が 300 に累積される", stored.textTokens === 300);
+}
+
+{
+  // 境界値: tokens が 0 のとき KV に書き込まない
+  const kv = makeKvMock();
+  await incrementUsageKv(kv, "text", 0, "gemini-2.5-flash-lite");
+  const today = new Date().toISOString().slice(0, 10);
+  assert("tokens=0 のとき KV は空のまま", kv.store[`usage:${today}`] === undefined);
+}
+
+{
+  // 境界値: kv が null のとき例外を投げない
+  let threw = false;
+  try { await incrementUsageKv(null, "text", 100, "gemini-2.5-flash-lite"); }
+  catch { threw = true; }
+  assert("kv=null でも例外を投げない", !threw);
 }
 
 // ---------------------------------------------------------------------------

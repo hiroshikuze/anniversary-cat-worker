@@ -166,7 +166,7 @@ async function selectBestModel(apiKey, kv = null, webhookUrl = null) {
 // ---------------------------------------------------------------------------
 // Gemini APIトークン使用量のKV日次集計
 // ---------------------------------------------------------------------------
-async function incrementUsageKv(kv, kind, tokens, model) {
+export async function incrementUsageKv(kv, kind, tokens, model) {
   if (!kv || tokens <= 0) return;
   const today = new Date().toISOString().slice(0, 10); // UTC YYYY-MM-DD
   const key   = `usage:${today}`;
