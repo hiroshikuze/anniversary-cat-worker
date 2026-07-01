@@ -463,12 +463,18 @@ async function checkWorker(workerUrl, bypassToken) {
   });
   if (!check("Worker /research 到達", reached, error)) return null;
 
-  const data = await res.json();
+  const resText = await res.text();
+  let data = {};
+  try { data = JSON.parse(resText); } catch { /**/ }
   check("HTTP 200",           res.status === 200, `status=${res.status} ${data.error ?? ""}`);
   check("theme あり",         !!data.theme,       data.theme ?? "(空)");
   check("description あり",   !!data.description, data.description?.slice(0, 40) ?? "(空)");
-  check("sourceUrl あり",     !!data.sourceUrl,   data.sourceUrl?.slice(0, 60) ?? "(空)");
-  if (data.sourceUrl) await checkSourceUrl(data.sourceUrl);
+  if (data.sourceUrl) {
+    check("sourceUrl あり", true, data.sourceUrl.slice(0, 60));
+    await checkSourceUrl(data.sourceUrl);
+  } else {
+    warn("sourceUrl 空（Gemini 2.5の既知動作。Worker は sourceUrlKind=none として継続）");
+  }
 
   console.log("\n[W2] Worker /generate エンドツーエンド");
   const { ok: genReached, res: genRes, error: genErr } = await safeFetch(

@@ -105,9 +105,14 @@ async function selectBestModel(apiKey, kv = null, webhookUrl = null) {
 
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`,
+      { signal: AbortSignal.timeout(10_000) }
     );
-    const data = await res.json();
+    const resText = await res.text();
+    let data;
+    try { data = JSON.parse(resText); } catch {
+      throw new Error(`[model-select] 非JSONレスポンス: status=${res.status} body=${resText.slice(0, 120)}`);
+    }
 
     const shortNames = (data.models ?? [])
       .filter(m => (m.supportedGenerationMethods ?? []).includes("generateContent"))
