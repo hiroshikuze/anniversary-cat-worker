@@ -364,6 +364,30 @@
 
 ---
 
+### 2026-07 | Gemini APIモデル料金スナップショット（2026-07-01確認・次回調査効率化用）
+
+- **目的**: テキストモデルのコスト最適化作業で調査した公式料金情報を記録する。次回Claudeセッションが再調査せずに判断できるようにする
+- **確認方法**: ユーザーが公式ページのmarkdownを直接貼り付け・信頼度高
+- **Gemini 2.5ファミリー（2026-07-01時点）**:
+
+| モデル | 入力 | 出力（非思考） | 備考 |
+| --- | --- | --- | --- |
+| `gemini-2.5-flash-lite` | $0.10/M | $0.40/M | 最安値・Google Search grounding対応 |
+| `gemini-2.5-flash` | $0.30/M | $2.50/M | flash-lite廃止時のfallback |
+| `gemini-2.5-pro` | $1.25/M | $10.00/M | 状態最先端・リサーチには不要 |
+
+- **gemini-3.5-flash**（PDF確認）: 出力$9.00/M・思考トークン含む。旧スコア式で高スコアになっており「高コストモデルを優先選択」していたのがコスト問題の原因
+- **Google Search grounding無料枠**: 500 RPD（flash/flash-lite共有）
+- **課金先**: Google AI Studio APIキー → Google Cloud請求書ではなく**Google AI Studioの請求**。Google Cloud Consoleに動きがなくても課金されている可能性がある
+- **スコア式（2026-07実装）**: `flash+20 / 非preview+10 / lite+5 / バージョン -= major*3+minor`
+  - flash-lite: 24点 / flash: 19点 / 3.5-flash: 16点 / pro: -1点
+  - 式の意図:「高度な推論不要・コスト最小化」→ lite最優先、低バージョン優先
+- **次回調査が必要なタイミング**: `/usage`エンドポイントのtextTokensが急増した場合・`gemini-2.5-flash-lite`が廃止されてDiscordに切替通知が届いた場合
+- **再調査手順**: Cloudflare KV`text-model:active`の値を確認（`/usage`エンドポイントの`textModel`フィールド）→ Google AI Studio料金ページと照合
+- **教訓**: スコア式の「高バージョン優先」から「低バージョン優先（低コスト）」への変更理由を必ずdocumentに残す。「高バージョン=高コスト」という逆直感は次回誤った方向に戻される可能性が高い
+
+---
+
 ```text
 ### YYYY-MM | タイトル
 - **状況**: 何をしようとしていたか

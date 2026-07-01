@@ -73,7 +73,31 @@ async function checkRateLimit(kv, ip, endpoint) {
 // ---------------------------------------------------------------------------
 let _modelCache = { name: null, expiry: 0 };
 
-async function selectBestModel(apiKey) {
+// RATE_KV内のキー。テキスト生成で現在有効なモデル名を記憶する（TTLなし）
+const TEXT_MODEL_KV_KEY = "text-model:active";
+
+/**
+ * APIが返すモデル名の配列からコスト最適なモデルを選ぶ純粋関数（テスト可能）。
+ * スコアリング哲学: このアプリの研究タスクは高度な推論不要 → コスト最小化優先。
+ *   flash +20 / 非preview +10 / lite +5 / バージョン -= major*3+minor（低バージョン優先）
+ * @param {string[]} shortNames - "models/"プレフィックスなしのモデル名配列
+ * @returns {string}
+ */
+export function _selectFromCandidates(shortNames) {
+  const scored = shortNames.map(name => {
+    let score = 0;
+    if (name.includes("flash"))    score += 20;
+    if (!name.includes("preview")) score += 10;
+    if (name.includes("lite"))     score +=  5;
+    const ver = name.match(/gemini-(\d+)\.(\d+)/);
+    if (ver) score -= parseInt(ver[1]) * 3 + parseInt(ver[2]);
+    return { name, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.name ?? "gemini-2.5-flash-lite";
+}
+
+async function selectBestModel(apiKey, kv = null, webhookUrl = null) {
   const now = Date.now();
   if (_modelCache.name && now < _modelCache.expiry) {
     return _modelCache.name;
@@ -85,33 +109,81 @@ async function selectBestModel(apiKey) {
     );
     const data = await res.json();
 
-    const candidates = (data.models ?? [])
+    const shortNames = (data.models ?? [])
       .filter(m => (m.supportedGenerationMethods ?? []).includes("generateContent"))
       .filter(m => m.name.includes("gemini"))
       .filter(m => !m.name.includes("embedding") && !m.name.includes("aqa"))
       // -exp 単体モデルは無料枠クォータが0のため除外（-exp-image-generation は別途扱う）
-      .filter(m => !/models\/.*-exp$/.test(m.name));
+      .filter(m => !/models\/.*-exp$/.test(m.name))
+      .map(m => m.name.replace("models/", ""));
 
-    const scored = candidates.map(m => {
-      let score = 0;
-      if (m.name.includes("flash"))    score += 20;
-      if (!m.name.includes("preview")) score += 10;
-      const ver = m.name.match(/gemini-(\d+)\.(\d+)/);
-      if (ver) score += parseInt(ver[1]) * 3 + parseInt(ver[2]);
-      return { shortName: m.name.replace("models/", ""), score };
-    });
-
-    scored.sort((a, b) => b.score - a.score);
-    const selected = scored[0]?.shortName ?? "gemini-1.5-flash";
+    const selected = _selectFromCandidates(shortNames);
 
     console.log("[model-select] selected:", selected,
-      "| candidates:", scored.slice(0, 3).map(s => `${s.shortName}(${s.score})`).join(", "));
+      "| top candidates:", shortNames
+        .map(n => {
+          let s = 0;
+          if (n.includes("flash"))    s += 20;
+          if (!n.includes("preview")) s += 10;
+          if (n.includes("lite"))     s +=  5;
+          const v = n.match(/gemini-(\d+)\.(\d+)/);
+          if (v) s -= parseInt(v[1]) * 3 + parseInt(v[2]);
+          return { n, s };
+        })
+        .sort((a, b) => b.s - a.s)
+        .slice(0, 3)
+        .map(x => `${x.n}(${x.s})`)
+        .join(", "));
+
+    // KV記憶：前回と異なればDiscordに通知してKVを更新
+    if (kv) {
+      try {
+        const remembered = await kv.get(TEXT_MODEL_KV_KEY);
+        if (remembered && remembered !== selected) {
+          await notifyDiscord(
+            webhookUrl,
+            `テキストモデルを切替: ${remembered} → ${selected}`,
+            "🔄"
+          );
+          console.log(`[model-select] 切替通知: ${remembered} → ${selected}`);
+        }
+        if (selected !== remembered) {
+          await kv.put(TEXT_MODEL_KV_KEY, selected);
+        }
+      } catch (e) {
+        console.warn("[model-select] KV操作失敗:", e.message);
+      }
+    }
 
     _modelCache = { name: selected, expiry: now + 60 * 60 * 1000 };
     return selected;
   } catch (e) {
     console.warn("[model-select] fallback due to:", e.message);
-    return _modelCache.name ?? "gemini-1.5-flash";
+    return _modelCache.name ?? "gemini-2.5-flash-lite";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gemini APIトークン使用量のKV日次集計
+// ---------------------------------------------------------------------------
+async function incrementUsageKv(kv, kind, tokens, model) {
+  if (!kv || tokens <= 0) return;
+  const today = new Date().toISOString().slice(0, 10); // UTC YYYY-MM-DD
+  const key   = `usage:${today}`;
+  try {
+    const raw    = await kv.get(key);
+    const stored = raw ? JSON.parse(raw) : {};
+    if (kind === "text") {
+      stored.textCalls  = (stored.textCalls  ?? 0) + 1;
+      stored.textTokens = (stored.textTokens ?? 0) + tokens;
+      stored.textModel  = model;
+    } else {
+      stored.imageCalls  = (stored.imageCalls  ?? 0) + 1;
+      stored.imageTokens = (stored.imageTokens ?? 0) + tokens;
+    }
+    await kv.put(key, JSON.stringify(stored), { expirationTtl: 32 * 24 * 60 * 60 });
+  } catch (e) {
+    console.warn("[usage] KV集計失敗:", e.message);
   }
 }
 
@@ -278,7 +350,7 @@ async function generateResearchPool(env) {
 
   // 10件並列生成
   const results = await Promise.allSettled(
-    Array.from({ length: 10 }, () => handleResearch({ date: dateStr }, apiKey))
+    Array.from({ length: 10 }, () => handleResearch({ date: dateStr }, apiKey, env))
   );
 
   const raw          = results.filter(r => r.status === "fulfilled").map(r => r.value);
@@ -350,11 +422,11 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
 // ---------------------------------------------------------------------------
 // /research  ― Gemini + Google Search で今日の記念日を調査
 // ---------------------------------------------------------------------------
-export async function handleResearch(body, apiKey) {
+export async function handleResearch(body, apiKey, env = null) {
   const { date } = body;
   if (!date) throw new Error("date フィールドが必要です");
 
-  const model = await selectBestModel(apiKey);
+  const model = await selectBestModel(apiKey, env?.RATE_KV, env?.DISCORD_WEBHOOK_URL);
 
   const prompt =
     `今日は${date}です。この日の日本の記念日・季節の行事・季節の花を` +
@@ -441,14 +513,18 @@ export async function handleResearch(body, apiKey) {
   result.kanjiChar = normalizeKanjiChar(result.kanjiChar);
   result.sourceUrlKind = sourceUrlKind;
 
+  const totalTokens = data.usageMetadata?.totalTokenCount ?? 0;
   console.log(
     `[research] model=${model}` +
     ` theme="${result.theme}"` +
     ` descLen=${result.description?.length ?? 0}` +
     ` kanjiChar=${result.kanjiChar}` +
     ` sourceUrlKind=${sourceUrlKind}` +
-    ` sourceUrl=${result.sourceUrl ? result.sourceUrl.slice(0, 80) : "(none)"}`
+    ` sourceUrl=${result.sourceUrl ? result.sourceUrl.slice(0, 80) : "(none)"}` +
+    ` tokens=${totalTokens}`
   );
+
+  await incrementUsageKv(env?.RATE_KV, "text", totalTokens, model);
 
   return result;
 }
@@ -887,7 +963,9 @@ export async function handleGenerate(body, apiKey, env) {
       console.warn(`[generate] model=${model} no image part. text="${msg.slice(0, 80)}"`);
       throw new Error("Gemini: 画像パートなし" + (msg ? `: ${msg.slice(0, 80)}` : ""));
     }
-    console.log(`[generate] Gemini success model=${model} mimeType=${imagePart.inlineData.mimeType}`);
+    const imgTokens = data.usageMetadata?.totalTokenCount ?? 0;
+    console.log(`[generate] Gemini success model=${model} mimeType=${imagePart.inlineData.mimeType} tokens=${imgTokens}`);
+    await incrementUsageKv(env?.RATE_KV, "image", imgTokens, model);
     return { imageData: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType || "image/png", source: "gemini" };
   }
 
@@ -1208,6 +1286,25 @@ ${itemsXml}
       });
     }
 
+    // GET: Gemini APIトークン使用量（直近30日・認証なし・統計のみ）
+    if (request.method === "GET" && url.pathname === "/usage") {
+      if (!env.RATE_KV) return Response.json({ error: "KV not available" }, { status: 503, headers: corsH });
+      const days = [];
+      const now = new Date();
+      for (let i = 0; i < 30; i++) {
+        const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+        days.push(d.toISOString().slice(0, 10));
+      }
+      const entries = await Promise.all(
+        days.map(async d => {
+          const raw = await env.RATE_KV.get(`usage:${d}`);
+          return { date: d, ...(raw ? JSON.parse(raw) : {}) };
+        })
+      );
+      const nonEmpty = entries.filter(e => e.textCalls || e.imageCalls);
+      return Response.json({ days: nonEmpty }, { headers: corsH });
+    }
+
     // GET: fal.ai高解像度画像をR2から返す（SUZURI向け安定URL）
     if (request.method === "GET" && url.pathname.startsWith("/hires/")) {
       const id = url.pathname.slice("/hires/".length);
@@ -1327,7 +1424,7 @@ ${itemsXml}
         }
         // プールがない場合はリアルタイムGeminiにフォールバック
         if (!result) {
-          result = await handleResearch(body, apiKey);
+          result = await handleResearch(body, apiKey, env);
         }
       } else if (url.pathname === "/generate") {
         if (!isBypassed(request, env)) {

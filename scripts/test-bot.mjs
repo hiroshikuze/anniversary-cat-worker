@@ -18,7 +18,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id,
 } from "../worker/bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 
 let passed = 0;
@@ -1682,6 +1682,68 @@ function cascadeError(msg) {
   }
   assert("非cascadeエラー: 即throwされる", caught !== null && caught.message.includes("quota exceeded"));
   assert("非cascadeエラー: 残りの候補を試さない", calls.length === 1 && calls[0] === "model-a");
+}
+
+// ---------------------------------------------------------------------------
+// _selectFromCandidates: テキストモデルのコスト最適化スコアリング
+// ---------------------------------------------------------------------------
+console.log("\n[_selectFromCandidates]");
+
+{
+  // 正常系: flash-lite が flash より優先される（liteボーナス+5）
+  const result = _selectFromCandidates(["gemini-2.5-flash", "gemini-2.5-flash-lite"]);
+  assert("flash-lite が flash より優先される", result === "gemini-2.5-flash-lite");
+}
+
+{
+  // 正常系: 低バージョンが高バージョンより優先される（バージョンスコアの反転）
+  const result = _selectFromCandidates(["gemini-3.5-flash", "gemini-2.5-flash"]);
+  assert("gemini-2.5-flash が gemini-3.5-flash より優先される", result === "gemini-2.5-flash");
+}
+
+{
+  // 正常系: flash が pro より優先される（flashボーナス+20）
+  const result = _selectFromCandidates(["gemini-2.5-pro", "gemini-2.5-flash"]);
+  assert("gemini-2.5-flash が gemini-2.5-pro より優先される", result === "gemini-2.5-flash");
+}
+
+{
+  // 正常系: 3モデル全揃い → flash-lite が最優先
+  const result = _selectFromCandidates(["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"]);
+  assert("3モデル全揃い: gemini-2.5-flash-lite が最優先", result === "gemini-2.5-flash-lite");
+}
+
+{
+  // 正常系: flash-lite のみ → flash-lite を返す
+  const result = _selectFromCandidates(["gemini-2.5-flash-lite"]);
+  assert("候補が flash-lite 1件のみ: flash-lite を返す", result === "gemini-2.5-flash-lite");
+}
+
+{
+  // 境界値: preview モデルは非 preview より低スコア
+  const result = _selectFromCandidates(["gemini-2.5-flash-preview", "gemini-2.5-flash-lite"]);
+  assert("preview より非 preview を優先する", result === "gemini-2.5-flash-lite");
+}
+
+{
+  // 境界値: flash-lite が廃止されて flash のみ残った場合
+  const result = _selectFromCandidates(["gemini-3.5-flash", "gemini-2.5-flash"]);
+  assert("flash-lite 廃止時: gemini-2.5-flash に自動フォールバック", result === "gemini-2.5-flash");
+}
+
+{
+  // 境界値: 候補が空 → フォールバック文字列を返す
+  const result = _selectFromCandidates([]);
+  assert("候補が空: フォールバック文字列を返す", typeof result === "string" && result.length > 0);
+}
+
+{
+  // 【回帰】旧スコア式（score += major*3+minor）では gemini-3.5-flash(44) が gemini-2.5-flash(41) に勝っていた
+  // 新スコア式では gemini-2.5-flash が勝つことを確認
+  const result = _selectFromCandidates(["gemini-3.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash"]);
+  assert("【回帰】旧スコア式で選ばれていた gemini-3.5-flash が最優先にならない",
+    result !== "gemini-3.5-flash");
+  assert("【回帰】gemini-2.5-flash-lite が選ばれる", result === "gemini-2.5-flash-lite");
 }
 
 // ---------------------------------------------------------------------------

@@ -332,9 +332,62 @@ export async function _resolveImageModel(kv, candidates, callModel) {
 - **このKV記憶機構が解決しないこと**: `KNOWN_IMAGE_CANDIDATES`配列自体の更新（新しいモデル名の追記）は引き続き人間が行う。Discovery API（List Models）を`tryGemini()`のホットパスに追加することは過去に廃止した設計判断であり、本機構でも再導入しない（2フェーズレースのレイテンシ予算を侵害するため）
 - 同時並行リクエストが同一の死活変化を同時に検知した場合、Discord通知が2〜3通程度重複する可能性がある。Workers KVにはCAS機構がなく、Durable Objects等の追加インフラなしには排他できないため、この程度の重複は許容している
 
-### Researchモデル（テキスト用）
+### Researchモデル（テキスト用）・コスト最適化スコアリング（2026-06更新）
 
-`selectBestModel()`がスコアリングで自動選択。手動設定不要。ログ: `[model-select] selected: gemini-xxx`
+`selectBestModel(apiKey, kv, webhookUrl)`がスコアリングで自動選択。ログ: `[model-select] selected: gemini-xxx`
+
+**スコアリング哲学**: このアプリの研究タスク（記念日をJSONで返す・Google Search grounding使用）は高度な推論を必要としない。コスト最小化を優先してスコア式を設計する。
+
+**スコア計算式（`_selectFromCandidates()`・exportされた純粋関数）:**
+
+```js
+let score = 0;
+if (name.includes("flash"))    score += 20;  // flash = 高速・低コストティア
+if (!name.includes("preview")) score += 10;  // 安定版を優先
+if (name.includes("lite"))     score +=  5;  // lite = 最安値ティア
+const ver = name.match(/gemini-(\d+)\.(\d+)/);
+if (ver) score -= parseInt(ver[1]) * 3 + parseInt(ver[2]);  // 低バージョン優先（低コスト）
+```
+
+**モデル別スコア例（2026-06時点・公式料金ページ確認済み）:**
+
+| モデル | スコア | 有料出力/100万token | 備考 |
+| --- | --- | --- | --- |
+| `gemini-2.5-flash-lite` | 24 | $0.40 | 最安値・最優先 |
+| `gemini-2.5-flash` | 19 | $2.50 | flash-lite廃止時のfallback |
+| `gemini-3.5-flash` | 16 | $9.00 | 思考トークン含む・高コスト |
+| `gemini-2.5-pro` | -1 | $10.00 | flashでないため低スコア |
+
+- `gemini-2.5-flash-lite`はGoogle Search grounding対応（無料枠500 RPD・flashと共有）
+- 旧スコア式（`score += major*3+minor`）は「高バージョン=高コスト優先」になっていたため修正した
+- `-exp$`で終わるモデルは無料枠クォータが0のため除外フィルターを維持する
+
+**KV記憶・Discord通知（`TEXT_MODEL_KV_KEY = "text-model:active"`）:**
+
+- 選択されたモデルを`RATE_KV`の`text-model:active`キーに保存（既存namespaceを再利用）
+- 前回の記録と異なるモデルが選ばれた場合: Discordに`🔄 テキストモデルを切替: {from} → {to}`を通知
+- 通知条件: 「前回記録値≠今回選択値かつ前回記録値が存在する」（記録なし→初回設定は通知しない）
+- KV操作は`selectBestModel()`内でtry/catchし、失敗してもモデル選択自体はブロックしない
+- 同時並行リクエストで通知が数通重複する可能性がある（画像モデルと同じ設計判断・許容）
+
+**`handleResearch()`シグネチャ更新:**
+
+```js
+export async function handleResearch(body, apiKey, env = null)
+```
+
+- `env`を第3引数として追加（省略可能・nullのときKV/Discord通知なしで動作）
+- `selectBestModel(apiKey, env?.RATE_KV, env?.DISCORD_WEBHOOK_URL)`を内部で呼ぶ
+- 呼び出し元: fetchハンドラー・`bot.js runBot()`・`generateResearchPool()`いずれも`env`を渡す
+
+**トークン使用量記録（`usageMetadata`・2026-06追加）:**
+
+GeminiのAPIレスポンスに含まれる`usageMetadata.totalTokenCount`を取得し、日次集計をKVに保存する。
+
+- KVキー: `usage:YYYY-MM-DD`（UTC基準・TTL=32日）
+- 集計フィールド: `textCalls`（回数）・`textTokens`（累計トークン数）・`textModel`（最後に使われたモデル）・`imageCalls`・`imageTokens`
+- `/usage` GETエンドポイントで直近30日分をJSON返却（認証なし・統計のみ）
+- `scripts/health-check.js`の末尾でエンドポイントを呼び、CIログに出力する（将来のClaude CodeセッションがCIログからモデルとトークン数を確認できる）
 
 ### Gemini画像生成プロンプト（`handleGenerate()`・2026-05変更）
 

@@ -526,7 +526,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
     }
     if (!research) {
       console.log(`${prefix} research 開始`);
-      research = await handleResearch({ date: dateStr }, apiKey);
+      research = await handleResearch({ date: dateStr }, apiKey, env);
       console.log(`${prefix} research 完了 theme="${research.theme}"`);
     }
 
