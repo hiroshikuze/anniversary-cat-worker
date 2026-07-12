@@ -253,7 +253,7 @@ const SEASONAL_FLOWERS = [
   { startMd: "05-16", endMd: "05-31", name: "皐月",   visual: "satsuki azalea blossoms, vivid pink flowers, garden hedge", style: "vivid pink and fresh green tones, early summer brightness" },
   { startMd: "06-01", endMd: "06-15", name: "紫陽花", visual: "hydrangea flowers, blue and purple blooms, rainy season garden", style: "blue, purple and soft gray tones, rainy season mood" },
   { startMd: "06-16", endMd: "06-30", name: "苔",     visual: "lush green moss, mossy stones, quiet shaded garden", style: "muted green and soft gray tones, quiet shaded calm" },
-  { startMd: "07-01", endMd: "07-15", name: "蓮",     visual: "lotus flowers, pink blooms, pond with green leaves", style: "soft pink and deep green tones, calm pond atmosphere" },
+  { startMd: "07-01", endMd: "07-15", name: "蓮",     visual: "lotus flowers, pink blooms, pond with green leaves", style: "soft pink and deep green tones, tranquil summer calm" },
   { startMd: "07-16", endMd: "07-31", name: "桔梗",   visual: "balloon flowers, purple star-shaped blooms, summer garden", style: "purple and deep green tones, summer garden depth" },
   { startMd: "08-01", endMd: "08-15", name: "向日葵", visual: "sunflowers, bright yellow blooms, summer field", style: "vivid yellow and deep blue tones, bright summer energy" },
   { startMd: "08-16", endMd: "08-31", name: "百日紅", visual: "crape myrtle blossoms, vivid pink flowers, late summer garden", style: "vivid pink and deep green tones, late summer vibrance" },
@@ -890,7 +890,8 @@ export function _buildGeminiPrompt(theme, description, persona, personality, vis
     `white background, Japanese illustration style. ` +
     `High quality charming illustration. ` +
     `IMPORTANT: Do not include any text, letters, words, titles, captions, or typography in the image. ` +
-    `Do not add cherry blossoms, falling flower petals, or other seasonal decorations that are not explicitly mentioned in the Theme, Context, or Setting above.` +
+    `Do not add cherry blossoms, falling flower petals, or other seasonal decorations that are not explicitly mentioned in the Theme, Context, or Setting above. ` +
+    `Do not render the scene as if painted, printed, or mounted on a plate, dish, fan, tapestry, or any other physical object, and do not add a circular frame, border, or vignette around the subject.` +
     (eatingAction ? ` Only the cat has a face and expressions; all food items must be depicted as ordinary objects without faces or eyes.` : "")
   );
 }

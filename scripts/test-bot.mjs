@@ -2385,6 +2385,12 @@ console.log("\n[getSeasonalStyleTone]");
   ];
   const allStyleAscii = allDatesForStyle.every(d => /^[\x20-\x7E]*$/.test(getSeasonalStyleTone(d)));
   assert("全24エントリのstyleがASCIIのみ", allStyleAscii);
+
+  // ── 回帰: Bug#27（丸皿画像・原因未確定）対応。蓮エントリのStyle行から具体的情景名詞"pond"を除去し、
+  //    他エントリと同じ「色調＋抽象的雰囲気語」パターンに統一。pinkトーンは維持する ──
+  assert("07-01 → 蓮: pond を含まない", !getSeasonalStyleTone("2026-07-01").includes("pond"));
+  assert("07-15 → 蓮（境界値）: pond を含まない", !getSeasonalStyleTone("2026-07-15").includes("pond"));
+  assert("07-01 → 蓮: pond除去後もpinkは維持", getSeasonalStyleTone("2026-07-01").includes("pink"));
 }
 
 // ---------------------------------------------------------------------------
@@ -2873,6 +2879,13 @@ console.log("\n[_buildGeminiPrompt]");
   {
     const prompt = _buildGeminiPrompt("ねこの日", "猫を愛でる日", null, null);
     assert("ネガティブ指示(cherry blossoms)が含まれる", prompt.includes("Do not add cherry blossoms"));
+  }
+
+  // ── 回帰: Bug#27（丸皿画像・原因未確定）対応。物理オブジェクト化・円形フレーム化の禁止指示が常に含まれる ──
+  {
+    const prompt = _buildGeminiPrompt("ねこの日", "猫を愛でる日", null, null);
+    assert("ネガティブ指示(plate/dish)が含まれる", prompt.includes("Do not render the scene as if painted, printed, or mounted on a plate, dish, fan, tapestry"));
+    assert("ネガティブ指示(circular frame)が含まれる", prompt.includes("do not add a circular frame, border, or vignette"));
   }
 
   // ── 正常系: 春のvisualHintに桜が明示されている場合も除外されず両立する ──

@@ -425,6 +425,7 @@ Style: soft pastel colors, {getSeasonalStyleTone(today)}, gentle watercolor brus
 - `today`には`toJSTDateStringWorker(new Date())`を使用。季節補充フォールバック（`generateResearchPool()`）限定ではなく、**すべてのGemini画像生成**（ユーザー生成・ボット投稿問わず）に適用する
 - 実際にピンク系の花が咲く時期（梅・彼岸桜・染井吉野・皐月・蓮・百日紅・秋桜）は`style`もピンク系トーンを維持する。季節と合致する桜表現は引き続き可能
 - ネガティブ指示`Do not add cherry blossoms, falling flower petals, or other seasonal decorations that are not explicitly mentioned in the Theme, Context, or Setting above.`をStyle行の後に追加（保険・デフェンスインデプス）。Theme/Context/Setting欄に明示された場合（例: 春のvisualHintに桜が含まれる）は除外対象にならない
+- **物理オブジェクト化・円形フレーム化の禁止（Bug#27・2026-07追加）**: 上記ネガティブ指示に続けて`Do not render the scene as if painted, printed, or mounted on a plate, dish, fan, tapestry, or any other physical object, and do not add a circular frame, border, or vignette around the subject.`を追加。生成画像が丸皿・団扇等の工芸品風にレンダリングされ、SUZURI連携（缶バッジ/アクキーの二重クロップ・Tシャツ/ステッカーの余白汚染）に悪影響を及ぼす問題への対処。**原因は未確定**（蓮エントリ`07-01`〜`07-15`のStyle行に唯一含まれていた`pond`語を疑ったが、報告事例のTheme/Context/Setting側には蓮・池を連想させる語がなく断定できなかった）のため、原因非依存で効果のあるネガティブ指示を主策とした。蓮エントリの`style`からは`pond`語を除去し他エントリと同じ「色調＋抽象的雰囲気語」パターンに統一済み（`"soft pink and deep green tones, tranquil summer calm"`）。詳細は`bugs-history.md`のBug#27参照
 
 ### visualHintの役割（2026-05変更）
 
