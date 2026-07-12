@@ -171,7 +171,7 @@ async function selectBestModel(apiKey, kv = null, webhookUrl = null) {
 // ---------------------------------------------------------------------------
 // Gemini APIトークン使用量のKV日次集計
 // ---------------------------------------------------------------------------
-export async function incrementUsageKv(kv, kind, tokens, model) {
+export async function incrementUsageKv(kv, kind, tokens, model, resolvedModel = null) {
   if (!kv || tokens <= 0) return;
   const today = new Date().toISOString().slice(0, 10); // UTC YYYY-MM-DD
   const key   = `usage:${today}`;
@@ -182,9 +182,12 @@ export async function incrementUsageKv(kv, kind, tokens, model) {
       stored.textCalls  = (stored.textCalls  ?? 0) + 1;
       stored.textTokens = (stored.textTokens ?? 0) + tokens;
       stored.textModel  = model;
+      if (resolvedModel) stored.textModelResolved = resolvedModel;
     } else {
       stored.imageCalls  = (stored.imageCalls  ?? 0) + 1;
       stored.imageTokens = (stored.imageTokens ?? 0) + tokens;
+      stored.imageModel  = model;
+      if (resolvedModel) stored.imageModelResolved = resolvedModel;
     }
     await kv.put(key, JSON.stringify(stored), { expirationTtl: 32 * 24 * 60 * 60 });
   } catch (e) {
@@ -529,7 +532,7 @@ export async function handleResearch(body, apiKey, env = null) {
     ` tokens=${totalTokens}`
   );
 
-  await incrementUsageKv(env?.RATE_KV, "text", totalTokens, model);
+  await incrementUsageKv(env?.RATE_KV, "text", totalTokens, model, data.modelVersion ?? null);
 
   return result;
 }
@@ -971,7 +974,7 @@ export async function handleGenerate(body, apiKey, env) {
     }
     const imgTokens = data.usageMetadata?.totalTokenCount ?? 0;
     console.log(`[generate] Gemini success model=${model} mimeType=${imagePart.inlineData.mimeType} tokens=${imgTokens}`);
-    await incrementUsageKv(env?.RATE_KV, "image", imgTokens, model);
+    await incrementUsageKv(env?.RATE_KV, "image", imgTokens, model, data.modelVersion ?? null);
     return { imageData: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType || "image/png", source: "gemini" };
   }
 

@@ -1772,14 +1772,53 @@ function makeKvMock() {
 }
 
 {
-  // 正常系: 画像トークンが集計される
+  // 正常系: 画像トークンが集計される（imageModelも記録される）
   const kv = makeKvMock();
   await incrementUsageKv(kv, "image", 500, "gemini-2.5-flash-image");
   const today = new Date().toISOString().slice(0, 10);
   const stored = JSON.parse(kv.store[`usage:${today}`]);
   assert("imageCalls が 1 になる",   stored.imageCalls  === 1);
   assert("imageTokens が 500 になる", stored.imageTokens === 500);
+  assert("imageModel が記録される",  stored.imageModel  === "gemini-2.5-flash-image");
   assert("textCalls は undefined",    stored.textCalls   === undefined);
+}
+
+{
+  // 正常系: resolvedModel 指定時は textModelResolved が記録される
+  const kv = makeKvMock();
+  await incrementUsageKv(kv, "text", 100, "gemini-flash-lite-latest", "gemini-2.5-flash-lite-001");
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`usage:${today}`]);
+  assert("textModel はエイリアス名のまま",     stored.textModel         === "gemini-flash-lite-latest");
+  assert("textModelResolved に解決済み名が入る", stored.textModelResolved === "gemini-2.5-flash-lite-001");
+}
+
+{
+  // 正常系: resolvedModel 指定時は imageModelResolved が記録される
+  const kv = makeKvMock();
+  await incrementUsageKv(kv, "image", 500, "gemini-2.5-flash-image", "gemini-2.5-flash-image-001");
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`usage:${today}`]);
+  assert("imageModelResolved に解決済み名が入る", stored.imageModelResolved === "gemini-2.5-flash-image-001");
+}
+
+{
+  // 境界値: resolvedModel 未指定（省略）のときは textModelResolved を書き込まない
+  const kv = makeKvMock();
+  await incrementUsageKv(kv, "text", 100, "gemini-2.5-flash-lite");
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`usage:${today}`]);
+  assert("resolvedModel 未指定なら textModelResolved は undefined", stored.textModelResolved === undefined);
+}
+
+{
+  // 境界値: 一度 resolvedModel が記録された後、次回 resolvedModel なしで呼んでも前回値を保持する
+  const kv = makeKvMock();
+  await incrementUsageKv(kv, "text", 100, "gemini-flash-lite-latest", "gemini-2.5-flash-lite-001");
+  await incrementUsageKv(kv, "text", 100, "gemini-flash-lite-latest");
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`usage:${today}`]);
+  assert("resolvedModel 省略時も前回値を保持する", stored.textModelResolved === "gemini-2.5-flash-lite-001");
 }
 
 {

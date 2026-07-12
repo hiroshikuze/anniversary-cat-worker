@@ -381,14 +381,23 @@ export async function handleResearch(body, apiKey, env = null)
 - `selectBestModel(apiKey, env?.RATE_KV, env?.DISCORD_WEBHOOK_URL)`を内部で呼ぶ
 - 呼び出し元: fetchハンドラー・`bot.js runBot()`・`generateResearchPool()`いずれも`env`を渡す
 
-**トークン使用量記録（`usageMetadata`・2026-06追加）:**
+**トークン使用量記録（`usageMetadata`・2026-06追加、モデル解決名の記録は2026-07追加）:**
 
 GeminiのAPIレスポンスに含まれる`usageMetadata.totalTokenCount`を取得し、日次集計をKVに保存する。
 
 - KVキー: `usage:YYYY-MM-DD`（UTC基準・TTL=32日）
-- 集計フィールド: `textCalls`（回数）・`textTokens`（累計トークン数）・`textModel`（最後に使われたモデル）・`imageCalls`・`imageTokens`
+- 集計フィールド: `textCalls`（回数）・`textTokens`（累計トークン数）・`textModel`・`textModelResolved`・`imageCalls`・`imageTokens`・`imageModel`・`imageModelResolved`
 - `/usage` GETエンドポイントで直近30日分をJSON返却（認証なし・統計のみ）
 - `scripts/health-check.js`の末尾でエンドポイントを呼び、CIログに出力する（将来のClaude CodeセッションがCIログからモデルとトークン数を確認できる）
+
+**`textModel`/`imageModel` と `textModelResolved`/`imageModelResolved` の違い（2026-07追加）:**
+
+`selectBestModel()`/`_resolveImageModel()`が選ぶモデル名（`textModel`・`imageModel`）は`gemini-flash-lite-latest`のような**エイリアス名**の場合があり、実際にどのバージョン（2.5・3.5等）が使われたかはこの文字列だけでは判別できない。GeminiのAPIレスポンス（`generateContent`）には`modelVersion`フィールド（実際に使用された解決済みモデル名を返す。[公式ドキュメント](https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse)で確認済み）が含まれるため、これを`textModelResolved`/`imageModelResolved`として追加保存する。
+
+- `handleResearch()`と画像生成の`callModel()`はそれぞれ`data.modelVersion`を取得し、`incrementUsageKv(kv, kind, tokens, model, resolvedModel)`の第5引数として渡す
+- `resolvedModel`が取得できない場合（レスポンスにフィールドが存在しない等）は該当日の`textModelResolved`/`imageModelResolved`を更新しない（前回値を保持）
+- 画像生成モデルは以前`incrementUsageKv()`の`model`引数を受け取っていながらKVに保存していなかった（記録漏れ）。今回`imageModel`として保存するよう修正した
+- 過去に記録済みの日次データ（`imageModel`/`textModelResolved`/`imageModelResolved`が存在しない古いエントリ）は再集計しない。新しい呼び出し分から順次記録される
 
 ### Gemini画像生成プロンプト（`handleGenerate()`・2026-05変更）
 
