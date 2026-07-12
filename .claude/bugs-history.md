@@ -229,4 +229,16 @@
 - **場所**: `worker/index.js` `SEASONAL_FLOWERS` `getSeasonalStyleTone()` `_buildGeminiPrompt()` `handleGenerate()`
 - **教訓**: 画像生成プロンプトの装飾的な固定文言（色調・画風指定等）も、特定の単語の組み合わせが学習データ上の強いイメージ連想を引き起こす場合がある。テーマに依存しない見た目の指示であっても、季節性のあるサービスでは年間固定にせず可変にする余地を検討する。また、ユーザー報告の症状が過去バグと類似していても、実際の生成ログ（プロンプト全文）を確認せずに過去バグの再発と決めつけない（前回の誤診断: 本バグをBug#25再発と最初に断定した）
 
+### 27. Gemini生成画像が丸皿（陶器プレート）風にレンダリングされる（2026-07・原因未確定）
+
+- **症状**: ユーザーから「7/13投稿（テーマ: ナイスの日）の生成画像が、水彩画イラストではなく濃い緑背景の上に置かれた白縁の丸皿のように見える。SUZURI連携に悪影響」と報告
+- **調査**: 実際のGeminiプロンプト全文（Discord通知ログ）を確認したところ、Theme/Context/Setting（`Nice Day` / `cat, thumbs up, sunny sky, flowers, bright colors, happy, cheerful`）は完全にテーマ通りで、生成された絵の内容（猫+柴犬・晴れた空・花・サムズアップ）とも一致していた。問題は内容ではなく構図・フォーマット（円形の皿状レンダリング）のみ
+- **当初の仮説と再評価**: `SEASONAL_FLOWERS`の`07-01`〜`07-15`（蓮）エントリのStyle行`"soft pink and deep green tones, calm pond atmosphere"`が唯一Style行に具体的情景名詞「pond」を含む例外であることを原因と推測したが、ユーザーからの指摘で「Theme/Context/Setting側には蓮・池を連想させる語が一切ない」ことを見落としていたと気づいた。画像の配色（ピンクの花・深緑背景）はStyle行の色指定と一致しており影響自体はあったと考えられるが、「pondという単語が円形皿化の直接原因」と断定する根拠（他エントリでの非発生の確認・A/Bテスト等）はなく、**本バグは原因未確定のまま記録する**
+- **対処（原因非依存のDefense-in-depth）**: `_buildGeminiPrompt()`の既存ネガティブ指示文に、物理オブジェクト化・円形フレーム化を明示的に禁止する一文を追加（`Do not render the scene as if painted, printed, or mounted on a plate, dish, fan, tapestry, or any other physical object, and do not add a circular frame, border, or vignette around the subject.`）。原因がpond語であってもなくても、円形/工芸品風レンダリング自体を直接抑止する
+- **副次対応**: 蓮エントリのStyle行から「pond」を除去し他23エントリと同じ「色調＋抽象的雰囲気語」パターンに統一（`"soft pink and deep green tones, tranquil summer calm"`）。ただしこれは確定原因の除去ではなく念のための一貫性改善という位置づけ
+- **テスト**: `scripts/test-bot.mjs`に`_buildGeminiPrompt()`の新ネガティブ指示文検証・`getSeasonalStyleTone("2026-07-01")`のpond不在/pink維持の回帰テストを追加
+- **場所**: `worker/index.js` `SEASONAL_FLOWERS` `_buildGeminiPrompt()`
+- **今後の観測ポイント**: 蓮期間（07-01〜07-15）以外の日に同種の丸皿化が再発した場合、pond語は原因ではなく別要因（モデルの確率的挙動・`Japanese illustration style`自体等）と判明する。その場合は本エントリを更新すること
+- **教訓**: 1件の観測結果から特定の単語を原因と断定しかけた。傍証（配色の一致）と直接因果（円形皿化の原因）を混同していた。ユーザーに「本当にそれが原因か」と問われて初めて、Theme/Context/Setting側に該当語が存在しないことを確認していなかったと気づいた。外部APIで検証手段がない場合は、原因を断定せず「効果はあるが原因非依存の対策」を優先し、ドキュメントにも確度を明記する
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
