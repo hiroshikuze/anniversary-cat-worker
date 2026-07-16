@@ -4,7 +4,7 @@
   "description": "AI-powered daily cat illustration generator inspired by today's anniversary.",
   "type": "module",
   "scripts": {
-    "test": "node scripts/test-bot.mjs"
+    "test": "node scripts/test-bot.mjs && node scripts/test-suzuri.mjs"
   },
   "repository": {
     "type": "git",

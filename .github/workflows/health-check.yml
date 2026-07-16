@@ -18,6 +18,8 @@ jobs:
         run: npm ci
       - name: Run bot unit tests
         run: node scripts/test-bot.mjs
+      - name: Run suzuri unit tests
+        run: node scripts/test-suzuri.mjs
       - name: Frontend feature presence check
         run: |
           check() { grep -q "$1" frontend/index.html || { echo "❌ Missing: $1"; exit 1; }; }

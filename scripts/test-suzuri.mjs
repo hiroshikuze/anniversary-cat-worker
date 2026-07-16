@@ -70,6 +70,10 @@ console.log("\n[createSuzuriProducts: 正常系]");
 
   const origFetch = globalThis.fetch;
   globalThis.fetch = async (url, options) => {
+    // fetchAvailableItemIds() の在庫確認GETは /materials POST とは別に呼ばれるため区別する
+    if (url.includes("/api/v1/items")) {
+      return { ok: true, text: async () => JSON.stringify({ items: [1, 11, 17, 147].map(id => ({ id, available: true })) }) };
+    }
     assert("POSTエンドポイントが正しい", url.includes("/api/v1/materials"));
     assert("Authorizationヘッダーが付いている", options.headers?.["Authorization"] === "Bearer test-key");
     const body = JSON.parse(options.body);
@@ -79,7 +83,7 @@ console.log("\n[createSuzuriProducts: 正常系]");
     assert("sticker(itemId=11)が含まれる", body.products.some(p => p.itemId === 11));
     assert("can-badge(itemId=17)が含まれる", body.products.some(p => p.itemId === 17));
     assert("acrylic-keychain(itemId=147)が含まれる", body.products.some(p => p.itemId === 147));
-    return { ok: true, json: async () => mockResponse };
+    return { ok: true, text: async () => JSON.stringify(mockResponse) };
   };
 
   const result = await createSuzuriProducts(
@@ -116,11 +120,10 @@ console.log("\n[createSuzuriProducts: API key未設定]");
 console.log("\n[createSuzuriProducts: APIエラー]");
 {
   const origFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({
-    ok: false,
-    status: 422,
-    json: async () => ({ message: "Validation failed" }),
-  });
+  globalThis.fetch = async (url) => {
+    if (url.includes("/api/v1/items")) return { ok: false, status: 422 }; // fail-open: fetchAvailableItemIds()内でres.text()は呼ばれない
+    return { ok: false, status: 422, text: async () => JSON.stringify({ message: "Validation failed" }) };
+  };
 
   await assertThrows(
     "API 422エラー時は例外を投げる",
@@ -128,6 +131,42 @@ console.log("\n[createSuzuriProducts: APIエラー]");
   );
 
   globalThis.fetch = origFetch;
+}
+
+// ---------------------------------------------------------------------------
+// createSuzuriProducts - POST /materials は5xxでリトライする（Bug#28）
+// ---------------------------------------------------------------------------
+console.log("\n[createSuzuriProducts: リトライ]");
+{
+  const mockResponse = {
+    material: { id: 999, title: "テスト" },
+    products: [
+      { item: { id: 1,   name: "t-shirt"          }, sampleUrl: "https://suzuri.jp/x/t-shirt",          sampleImageUrl: "https://img.suzuri.jp/1.webp" },
+      { item: { id: 11,  name: "sticker"           }, sampleUrl: "https://suzuri.jp/x/sticker",          sampleImageUrl: "https://img.suzuri.jp/2.webp" },
+      { item: { id: 17,  name: "can-badge"         }, sampleUrl: "https://suzuri.jp/x/can-badge",        sampleImageUrl: "https://img.suzuri.jp/3.webp" },
+      { item: { id: 147, name: "acrylic-keychain"  }, sampleUrl: "https://suzuri.jp/x/acrylic-keychain", sampleImageUrl: "https://img.suzuri.jp/4.webp" },
+    ],
+  };
+
+  let materialsCalls = 0;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url.includes("/api/v1/items")) return { ok: true, text: async () => JSON.stringify({ items: [1, 11, 17, 147].map(id => ({ id, available: true })) }) };
+    materialsCalls++;
+    if (materialsCalls < 3) return { ok: false, status: 503, text: async () => JSON.stringify({ message: "temporarily unavailable" }) };
+    return { ok: true, text: async () => JSON.stringify(mockResponse) };
+  };
+
+  const result = await createSuzuriProducts(
+    "https://example.com/image.png",
+    "テスト記念日",
+    { SUZURI_API_KEY: "test-key" }
+  );
+
+  globalThis.fetch = origFetch;
+
+  assert("5xx→成功: /materialsに3回リトライして成功する", materialsCalls === 3);
+  assert("5xx→成功: materialIdが返る", result.materialId === 999);
 }
 
 // ---------------------------------------------------------------------------

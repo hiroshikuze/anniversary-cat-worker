@@ -5,6 +5,9 @@
 - 関数は単一責務か → 複数の役割を持つ関数は分割する
 - 外部APIエラーは`throw new Error("説明: status=xxx")`形式で投げているか
 - `fetch`にはタイムアウト（`AbortSignal.timeout(ms)`）を設定しているか
+- **新規に外部通信（`fetch`）を追加する際は、`worker/http-utils.js`の`fetchWithRetry()`でリトライ可能か必ず検討する**（2026-07追加。外部通信リトライ監査Bug#28参照）
+  - 意図的に非対応とする場合（例: 二重実行のリスクがある投稿系API）は、その理由をコード内コメントで明記する
+  - リトライを追加する場合は、CLAUDE.mdルール7（Docs→Tests→Code）に従いドキュメント更新・テスト追加を先に行う
 - **外部HTTP通信後は必ず`res.text()`で受けてから`JSON.parse()`する**（`res.json()`直呼びは禁止）
 
   理由: CDN・ロードバランサー・Cloudflare自身が502などを平文・HTMLで返す場合、`res.json()`は`SyntaxError`を投げてクラッシュする（過去バグ: Bug#19）。

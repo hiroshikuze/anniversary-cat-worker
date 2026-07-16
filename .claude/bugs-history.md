@@ -241,4 +241,24 @@
 - **今後の観測ポイント**: 蓮期間（07-01〜07-15）以外の日に同種の丸皿化が再発した場合、pond語は原因ではなく別要因（モデルの確率的挙動・`Japanese illustration style`自体等）と判明する。その場合は本エントリを更新すること
 - **教訓**: 1件の観測結果から特定の単語を原因と断定しかけた。傍証（配色の一致）と直接因果（円形皿化の原因）を混同していた。ユーザーに「本当にそれが原因か」と問われて初めて、Theme/Context/Setting側に該当語が存在しないことを確認していなかったと気づいた。外部APIで検証手段がない場合は、原因を断定せず「効果はあるが原因非依存の対策」を優先し、ドキュメントにも確度を明記する
 
+### 28. 外部通信リトライ監査で4つのギャップを発見・修正（2026-07）
+
+- **状況**: ユーザーから「外部への通信箇所すべてにリトライ対策済みか」と質問を受け、`worker/*.js`・`frontend/index.html`の全`fetch()`呼び出しを監査した
+- **発見したギャップ**:
+  1. `worker/index.js` `/suzuri-create`の`ctx.waitUntil()`内fal.aiポーリングループ（3回×5秒）が、例外発生時に`catch`節で即座に`break`しており、1回の一時的な通信不良で残り試行を放棄し低画質base64フォールバックに落ちていた
+  2. `worker/suzuri.js` `createSuzuriProducts()`の`POST /materials`にリトライがなかった
+  3. フロントエンド`loadSharedImage()`の`/image/:id`取得（共有URL・ボット投稿の閲覧という主要導線）にリトライがなかった
+  4. `worker/index.js` `/proxy-image`ハンドラーにリトライがなかった
+- **調査中に判明した前提課題**: ギャップ2の修正テストを`scripts/test-suzuri.mjs`に追加しようとしたところ、同ファイルが`npm test`にも`.github/workflows/health-check.yml`にも接続されておらず**CIで一度も実行されていない**ことが判明。実際に単体実行すると、`createSuzuriProducts()`が`coding.md`規約に従い`res.text()`→`JSON.parse()`で読む実装に変わっていたのに対し、テストのモックが`res.json()`のみを実装しており`res.text is not a function`で例外落ちして**現に失敗する**状態だった。また同テストのモックは`/items`（在庫確認）と`/materials`（登録）の2つのfetch呼び出しを区別せず同一アサーションを適用しており、1件目（`/items`宛）で常にアサーションが失敗していた
+- **修正**:
+  - `worker/http-utils.js`を新設し、5xxに加えて`fetch()`自体が投げるネットワーク例外（DNS失敗・接続断等）も指数バックオフでリトライする共通`fetchWithRetry()`を実装（`worker/index.js`の旧版は5xxのみ対応だった）。循環import回避のため独立ファイルとした
+  - fal.aiポーリングループを`_pollFalAndGetTexture()`として抽出・export（`_twoPhaseRace()`と同じ依存注入パターン）。例外時は`continue`し残り試行を継続するよう修正
+  - `worker/suzuri.js`・`/proxy-image`に`fetchWithRetry()`を適用
+  - フロントエンド`apiFetch()`を汎用化してGETに対応させ、`loadSharedImage()`の`/image/:id`取得をリトライ対応
+  - `scripts/test-suzuri.mjs`のモックを`res.text()`ベースに修復し、`/items`と`/materials`を区別するよう修正した上で`package.json`の`test`スクリプトと`health-check.yml`に接続
+- **テスト**: `scripts/test-bot.mjs`に`fetchWithRetry()`・`_pollFalAndGetTexture()`の正常系/境界値/エラー系テストを追加。`scripts/test-suzuri.mjs`に`createSuzuriProducts()`のリトライ回帰テストを追加
+- **場所**: `worker/http-utils.js`（新規）・`worker/index.js`・`worker/suzuri.js`・`frontend/index.html`・`scripts/test-suzuri.mjs`・`package.json`・`.github/workflows/health-check.yml`
+- **恒久対応**: `.claude/rules/coding.md`に「新規に外部通信を追加する際はリトライ可否を検討する」チェック項目を追加し、今後同種の見落としを構造的に防ぐ
+- **教訓**: テストファイルを新設・変更しても、実行コマンド（`npm test`・CIワークフロー）に接続されているかを別途確認しないと「書いたのに一度も実行されていない」状態になりうる。ユニットテストを追加・修正した際は必ず`npm test`を実行して実際に走ることを確認する
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）

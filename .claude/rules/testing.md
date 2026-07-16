@@ -5,6 +5,7 @@
 | スクリプト | 実行方法 | 外部API | 用途 |
 | --- | --- | --- | --- |
 | `scripts/test-bot.mjs` | `npm test` | 不要 | bluesky-bot.js / r2-storage.js / ウォーターマーク座標計算のロジック検証 |
+| `scripts/test-suzuri.mjs` | `npm test`（2026-07よりCI接続） | 不要 | worker/suzuri.jsユニットテスト（商品生成・削除・リトライ） |
 | `scripts/test-suzuri-api.mjs` | `node scripts/test-suzuri-api.mjs` | SUZURI API | SUZURI API動作確認（実商品が生成される） |
 | `scripts/health-check.js` | GitHub Actionsのみ | 必要 | 本番Worker・Gemini APIのE2Eチェック |
 | `scripts/test-gemini-image-timing.mjs` | `GEMINI_API_KEY=xxx node scripts/test-gemini-image-timing.mjs` | Gemini API | Gemini画像生成の所要時間計測（競合設計の根拠取得用） |

@@ -29,6 +29,7 @@ anniversary-cat-worker/
 │   ├── bot.js                        ← Bluesky/Mastodon Botロジック・Discord通知（旧 bluesky-bot.js）
 │   ├── fal.js                        ← fal.ai ESRGAN 2xアップスケーリング（Queue API）
 │   ├── suzuri.js                     ← SUZURI API連携（商品生成・削除）
+│   ├── http-utils.js                 ← 共通HTTPユーティリティ（fetchWithRetry・2026-07追加）
 │   └── r2-storage.js                 ← Cloudflare R2ストレージ操作
 ├── frontend/
 │   ├── index.html                    ← フロントエンド（PWA対応、JP/EN切り替え）
@@ -38,7 +39,7 @@ anniversary-cat-worker/
 └── scripts/
     ├── health-check.js               ← E2E診断（GitHub Actionsのみ実行）
     ├── test-bot.mjs                  ← ユニットテスト（外部API不要）← npm test
-    ├── test-suzuri.mjs               ← worker/suzuri.jsユニットテスト（外部API不要）
+    ├── test-suzuri.mjs               ← worker/suzuri.jsユニットテスト（外部API不要）← npm test（2026-07よりCI接続）
     ├── test-suzuri-api.mjs           ← SUZURI API動作確認（実商品が生成される）
     ├── test-fal-models.mjs           ← fal.aiモデル比較（FAL_KEY必要）
     ├── test-gemini-image-timing.mjs  ← Gemini画像生成の所要時間計測（GEMINI_API_KEY必要）
@@ -180,6 +181,46 @@ createSuzuriProducts(imageUrl, theme, env, slugFilter = null, backTexture = null
 - `description`・`r2Id`はフロントから`/suzuri-create`のリクエストボディで受け取り、`/resume-hires`ではR2メタから取得する
 - can-badge/acrylic-keychainグループの呼び出しでは`backTexture=null`を渡す（Tシャツへの背面印刷は右グループのみ）
 - 全商品に`resizeMode: "contain"`を設定（画像がアスペクト比を保ったまま収まる）
+
+---
+
+## 外部通信のリトライ方針（`fetchWithRetry()`・2026-07追加）
+
+**背景（Bug#28）**: 外部通信箇所を監査した結果、Gemini API呼び出し以外の多くの箇所にリトライがなく、一時的な通信不良で即座にエラー・機能低下（低画質フォールバック等）になる設計だった。
+
+### `worker/http-utils.js` `fetchWithRetry(url, options, maxRetries=3, baseDelayMs=1000)`
+
+5xxエラーと`fetch()`自体が投げるネットワーク例外（DNS失敗・接続断等）の両方を指数バックオフで最大`maxRetries`回リトライする共通ヘルパー。`worker/index.js`の旧`fetchWithRetry()`（非export・5xxのみ対応）を置き換える形で新設した。
+
+- 429（クォータ超過）はリトライしても無駄なため即座にレスポンスを返す
+- `AbortError`（`AbortSignal.timeout()`によるタイムアウト）はリトライしても同じ結果になるため即座にthrowする
+- `baseDelayMs`は`_twoPhaseRace()`の`priorityMs`と同じ狙いのテスト用引数。本番は省略時1000ms（既存動作と同一）
+- `worker/index.js`と`worker/suzuri.js`の両方から使うため独立ファイルとして新設（`worker/index.js`が`worker/suzuri.js`をimportしているため循環import回避）
+
+### リトライ対象一覧
+
+| 箇所 | 状態 |
+| --- | --- |
+| Gemini `/research`・画像生成（`worker/index.js`） | `fetchWithRetry()`使用（従来から） |
+| `worker/suzuri.js` `createSuzuriProducts()`の`POST /materials` | `fetchWithRetry()`使用（2026-07追加） |
+| `worker/index.js` `/proxy-image`ハンドラー | `fetchWithRetry()`使用（2026-07追加） |
+| フロントエンド`/research`・`/generate`・`/suzuri-create`（`apiFetch()`） | 従来からリトライあり |
+| フロントエンド`loadSharedImage()`の`/image/:id`取得 | `apiFetch()`のGET対応により2026-07追加 |
+
+### 意図的にリトライ対象外の箇所
+
+| 箇所 | 理由 |
+| --- | --- |
+| Bluesky/Mastodon投稿（`worker/bot.js`） | 外側リトライは二重投稿のリスクがあるため意図的に非リトライ（`/generate`側の冗長化で担保）。既存コメントに明記済み |
+| Discord Webhook通知全般 | 通知失敗時はログ出力のみで処理をブロックしないbest-effort設計 |
+
+### fal.aiポーリングループの早期break修正（`_pollFalAndGetTexture()`）
+
+`/suzuri-create`の`ctx.waitUntil()`内でfal.ai Queueを3回×5秒ポーリングする処理を`_pollFalAndGetTexture(falRequestId, env, r2Id, workerOrigin, deps)`としてexport・切り出した（`_twoPhaseRace()`と同じ「依存関数を引数で受け取る」パターン）。
+
+- **修正前の問題**: ポーリング中に例外（一時的な通信不良等）が発生すると`catch`節で即座に`break`しており、3回の試行予算のうち1回でも失敗すると残りの試行を放棄し、低画質base64フォールバックに落ちていた
+- **修正後**: 例外時は`console.warn`でログを出すのみで、残りのポーリング試行を継続する。3回すべて失敗・タイムアウトした場合のみ最終的にbase64フォールバックする
+- `deps`引数（`getFalResultFn`・`fetchFn`・`waitFn`・`pollIntervalMs`・`maxAttempts`）はテスト用。本番呼び出しは省略時のデフォルト値（実際の`getFalResult`・`fetch`・5秒間隔・3回）で動作する
 
 ---
 

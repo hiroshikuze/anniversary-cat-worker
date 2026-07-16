@@ -709,16 +709,16 @@
     // ----------------------------------------------------------
     // 指数バックオフ付きフェッチ
     // ----------------------------------------------------------
-    async function apiFetch(path, body, maxRetries = 3) {
+    async function apiFetch(path, body, maxRetries = 3, method = "POST") {
       const url = WORKER_URL + path;
-      const headers = { "Content-Type": "application/json" };
+      const headers = {};
       const bypassToken = localStorage.getItem("bypassToken");
       if (bypassToken) headers["X-Bypass-Token"] = bypassToken;
-      const options = {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      };
+      const options = { method, headers };
+      if (method !== "GET") {
+        headers["Content-Type"] = "application/json";
+        options.body = JSON.stringify(body);
+      }
 
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         let res;
@@ -738,7 +738,9 @@
         if (res.status === 429) {
           const msg = data.error || `${t("httpError")}429)`;
           if (path === "/generate") setRateLimited(msg);
-          throw new Error(msg);
+          const err = new Error(msg);
+          err.status = 429;
+          throw err;
         }
 
         // リトライ対象: サーバーエラー
@@ -747,7 +749,9 @@
           continue;
         }
 
-        throw new Error(data.error || `${t("httpError")}${res.status})`);
+        const err = new Error(data.error || `${t("httpError")}${res.status})`);
+        err.status = res.status;
+        throw err;
       }
     }
 
@@ -1143,13 +1147,7 @@
 
       showGenerate("loading");
       try {
-        const res = await fetch(`${WORKER_URL}/image/${id}`);
-        if (res.status === 404) {
-          showGenerate("expired");
-          return;
-        }
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+        const data = await apiFetch(`/image/${id}`, null, 3, "GET");
 
         researchData = { theme: data.theme, description: data.description, sourceUrl: data.sourceUrl, themeEn: data.themeEn ?? "", descriptionEn: data.descriptionEn ?? "", themeKana: data.themeKana ?? "", descriptionKana: data.descriptionKana ?? "" };
 
@@ -1203,6 +1201,10 @@
 
         showGenerate("result");
       } catch (err) {
+        if (err.status === 404) {
+          showGenerate("expired");
+          return;
+        }
         setErrText(err.message);
         showGenerate("error");
       }
