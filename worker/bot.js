@@ -62,6 +62,36 @@ export function buildThemeTag(theme) {
   return `#${normalized.slice(0, 30)}`;
 }
 
+// ---------------------------------------------------------------------------
+// CTA行（重み付き確率でランダム選択・「Bot感」低減のため2026-07追加）
+// ---------------------------------------------------------------------------
+// CAT_PERSONALITIES/CAT_EMOTIONS（worker/index.js）と同じ「重み付き配列 + pick関数」パターン。
+// 各バリアントは日本語版(ja)・英語版(en)をペアで保持し、Bluesky/Mastodonで同じトーンになるようにする。
+// [0]（weight最大）はbuildPostText/buildMastodonTextのcta引数デフォルト値と一致させ、
+// cta省略時に従来と完全に同一の文言を返す（後方互換）。
+const CTA_VARIANTS = [
+  { weight: 40, ja: "あなたも今日の #にゃんバーサリー を作ってみませんか？",
+                en: "Why don't you try making your own #Nyaniversary today?" },
+  { weight: 15, ja: "あなたの記念日も、猫と一緒に描いてみませんか？",
+                en: "Why not have a cat celebrate your own anniversary too?" },
+  { weight: 15, ja: "今日という日を、あなただけの猫イラストにしてみませんか？",
+                en: "Why not turn today into your own one-of-a-kind cat illustration?" },
+  { weight: 15, ja: "この子みたいな猫、あなたの記念日にも登場させてみませんか？",
+                en: "Why not have a cat like this star in your own anniversary?" },
+  { weight: 15, ja: "あなたの大切な日も #にゃんバーサリー にしてみませんか？",
+                en: "Why not make your own special day a #Nyaniversary too?" },
+];
+
+export function pickCta() {
+  const total = CTA_VARIANTS.reduce((s, c) => s + c.weight, 0);
+  let r = Math.random() * total;
+  for (const c of CTA_VARIANTS) {
+    r -= c.weight;
+    if (r <= 0) return c;
+  }
+  return CTA_VARIANTS[0];
+}
+
 /**
  * Bluesky 投稿テキストを生成する。
  * Bluesky の上限は 300 grapheme。この形式では最大 ~210 grapheme 程度に収まる。
@@ -69,19 +99,20 @@ export function buildThemeTag(theme) {
  * @param {string} description
  * @param {string} [pageUrl] - 個別作品URL（?id=bot/YYYY-MM-DD）。SITE_URLと同値の場合は📸行を省略
  * @param {string|null} [guestSnsTag] - ゲスト動物の英語タグ（例: "#dog"）。null の場合は省略
+ * @param {{ja: string, en: string}} [cta] - CTA行（pickCta()の戻り値）。省略時は固定文言（後方互換）
  */
-export function buildPostText(theme, description, pageUrl = SITE_URL, guestSnsTag = null) {
+export function buildPostText(theme, description, pageUrl = SITE_URL, guestSnsTag = null, cta = CTA_VARIANTS[0]) {
   const header      = theme.endsWith("の日")
     ? `今日は「${theme}」！🐱`
     : `今日は「${theme}」の日！🐱`;
   const body        = description ? `\n${description}` : "";
   const artworkLine = pageUrl !== SITE_URL ? `\n\n📸 ${pageUrl}` : "";
-  const cta         = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${SITE_URL}`;
+  const ctaLine     = `\n\n${cta.ja}\n${SITE_URL}`;
   const themeTag    = buildThemeTag(theme);
   const baseTags    = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
   const allTags     = guestSnsTag ? `${baseTags} ${guestSnsTag}` : baseTags;
   const tags        = `\n\n${allTags}`;
-  return header + body + artworkLine + cta + tags;
+  return header + body + artworkLine + ctaLine + tags;
 }
 
 /**
@@ -94,8 +125,9 @@ export function buildPostText(theme, description, pageUrl = SITE_URL, guestSnsTa
  * @param {string} [descriptionEn]
  * @param {string} [pageUrl]
  * @param {string|null} [guestSnsTag] - ゲスト動物の英語タグ（例: "#dog"）。null の場合は省略
+ * @param {{ja: string, en: string}} [cta] - CTA行（pickCta()の戻り値）。省略時は固定文言（後方互換）
  */
-export function buildMastodonText(theme, description, themeEn = "", descriptionEn = "", pageUrl = SITE_URL, guestSnsTag = null) {
+export function buildMastodonText(theme, description, themeEn = "", descriptionEn = "", pageUrl = SITE_URL, guestSnsTag = null, cta = CTA_VARIANTS[0]) {
   const safeThemeEn = (themeEn ?? "").replace(/[^\x20-\x7E]/g, "").trim();
   const safeDescEn  = (descriptionEn ?? "").replace(/[^\x20-\x7E]/g, "").trim();
 
@@ -111,19 +143,19 @@ export function buildMastodonText(theme, description, themeEn = "", descriptionE
   if (!safeThemeEn) {
     const header           = theme.endsWith("の日") ? `今日は「${theme}」！🐱` : `今日は「${theme}」の日！🐱`;
     const jpDesc           = description ? `\n${description}` : "";
-    const cta              = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${SITE_URL}`;
+    const ctaLine          = `\n\n${cta.ja}\n${SITE_URL}`;
     const baseFallbackTags = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
     const fallbackTags     = guestSnsTag ? `${baseFallbackTags} ${guestSnsTag}` : baseFallbackTags;
-    return header + jpDesc + artworkLine + cta + `\n\n${fallbackTags}`;
+    return header + jpDesc + artworkLine + ctaLine + `\n\n${fallbackTags}`;
   }
 
   const enHeader = `Today is "${safeThemeEn}"!`;
   const enDesc   = safeDescEn ? `\n${safeDescEn}` : "";
-  const enCta    = `\n\nWhy don't you try making your own #Nyaniversary today?`;
+  const enCta    = `\n\n${cta.en}`;
 
   const jaHeader = theme.endsWith("の日") ? `今日は「${theme}」！🐱` : `今日は「${theme}」の日！🐱`;
   const jaDesc   = description ? `\n${description}` : "";
-  const jaCta    = `\n\nあなたも今日の #にゃんバーサリー を作ってみませんか？\n${SITE_URL}`;
+  const jaCta    = `\n\n${cta.ja}\n${SITE_URL}`;
 
   return enHeader + enDesc + enArtworkLine + enCta + "\n\n" + jaHeader + jaDesc + artworkLine + jaCta + `\n\n${tagStr}`;
 }
@@ -583,11 +615,12 @@ export async function runBot(env, handleResearch, handleGenerate) {
 
     const themeTag    = buildThemeTag(research.theme);
     const guestSnsTag = generated.guest?.snsTag ?? null;
-    const text        = buildPostText(research.theme, research.description ?? "", pageUrl, guestSnsTag);
+    const cta         = pickCta();
+    const text        = buildPostText(research.theme, research.description ?? "", pageUrl, guestSnsTag, cta);
     const mastoText   = buildMastodonText(
       research.theme, research.description ?? "",
       research.themeEn ?? "", research.descriptionEn ?? "",
-      pageUrl, guestSnsTag
+      pageUrl, guestSnsTag, cta
     );
     const desc     = research.description ?? "";
     const altText  = desc

@@ -15,7 +15,7 @@ import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptio
 
 import {
   buildPostText, buildMastodonText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
-  shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id,
+  shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta,
 } from "../worker/bot.js";
 
 import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv } from "../worker/index.js";
@@ -3146,6 +3146,92 @@ console.log("\n[buildMastodonText: guestSnsTag]");
   const text = buildMastodonText("ねこの日", "説明文", "Cat Day", "A cat day", undefined, null);
   assert("guestSnsTag null: 文字列 'null' が含まれない", !text.includes("null"));
   assert("guestSnsTag null: #cat は含まれる", text.includes("#cat"));
+}
+
+// ---------------------------------------------------------------------------
+// pickCta（CTA行のローテーション・重み付き5パターン。Bot感低減のため2026-07追加）
+// ---------------------------------------------------------------------------
+console.log("\n[pickCta]");
+{
+  const CTA_DEFAULT_JA = "あなたも今日の #にゃんバーサリー を作ってみませんか？";
+  const CTA_DEFAULT_EN = "Why don't you try making your own #Nyaniversary today?";
+
+  const results = Array.from({ length: 300 }, () => pickCta());
+  assert("{ja, en} 形式のオブジェクトを返す",
+    results.every(c => typeof c.ja === "string" && typeof c.en === "string"));
+
+  const jaSeen = new Set(results.map(c => c.ja));
+  assert(`300回試行で複数パターンが出現する（実測: ${jaSeen.size}種）`, jaSeen.size > 1);
+
+  const defaultCount = results.filter(c => c.ja === CTA_DEFAULT_JA).length;
+  assert(`デフォルト文言（weight最大）が最頻出寄り (実測: ${defaultCount}/300)`, defaultCount > 300 * 0.25);
+
+  const defaultPair = results.find(c => c.ja === CTA_DEFAULT_JA);
+  assert("デフォルトja とデフォルトen が対になる", defaultPair.en === CTA_DEFAULT_EN);
+}
+
+{
+  // 1000回試行で複数パターンが出現すること（全5パターン到達を緩めに確認）
+  const seen = new Set();
+  for (let i = 0; i < 1000; i++) seen.add(pickCta().ja);
+  assert(`1000回試行で複数パターンが出現する (実測: ${seen.size}種)`, seen.size >= 4);
+}
+
+// ---------------------------------------------------------------------------
+// buildPostText: cta引数
+// ---------------------------------------------------------------------------
+console.log("\n[buildPostText: cta引数]");
+{
+  const customCta = { ja: "テスト用CTA文言です", en: "Test CTA text" };
+  const text = buildPostText("ねこの日", "説明文", undefined, null, customCta);
+  assert("カスタムcta.jaが本文に反映される", text.includes("テスト用CTA文言です"));
+  assert("デフォルトCTA文言は含まれない", !text.includes("あなたも今日の #にゃんバーサリー を作ってみませんか？"));
+}
+{
+  // cta省略時は現行の固定文言のまま（後方互換）
+  const text = buildPostText("ねこの日", "説明文");
+  assert("cta省略時はデフォルト文言のまま", text.includes("あなたも今日の #にゃんバーサリー を作ってみませんか？"));
+}
+
+// ---------------------------------------------------------------------------
+// buildMastodonText: cta引数
+// ---------------------------------------------------------------------------
+console.log("\n[buildMastodonText: cta引数]");
+{
+  const customCta = { ja: "テスト用CTA文言です", en: "Test CTA text" };
+  const text = buildMastodonText("ねこの日", "説明文", "Cat Day", "A cat day", undefined, null, customCta);
+  assert("カスタムcta.enが英語セクションに反映される", text.includes("Test CTA text"));
+  assert("カスタムcta.jaが日本語セクションに反映される", text.includes("テスト用CTA文言です"));
+  assert("デフォルトCTA文言は含まれない", !text.includes("あなたも今日の #にゃんバーサリー を作ってみませんか？"));
+}
+{
+  // themeEn 空のフォールバックでも cta.ja が反映される
+  const customCta = { ja: "テスト用CTA文言です", en: "Test CTA text" };
+  const text = buildMastodonText("ねこの日", "説明文", "", "", undefined, null, customCta);
+  assert("themeEn 空フォールバック: カスタムcta.jaが反映される", text.includes("テスト用CTA文言です"));
+}
+{
+  // cta省略時は現行の固定文言のまま（後方互換）
+  const text = buildMastodonText("ねこの日", "説明文", "Cat Day", "A cat day");
+  assert("cta省略時: デフォルト英語CTAのまま", text.includes("Why don't you try making your own #Nyaniversary today?"));
+  assert("cta省略時: デフォルト日本語CTAのまま", text.includes("あなたも今日の #にゃんバーサリー を作ってみませんか？"));
+}
+
+// ---------------------------------------------------------------------------
+// CTA全パターン: 300 grapheme境界値ガード（Bluesky上限を壊さないことの確認）
+// ---------------------------------------------------------------------------
+console.log("\n[CTA全パターン: grapheme境界値]");
+{
+  const longTheme       = "世界パンダ保護と環境未来を考える日";
+  const longDescription = "パンダの保護と地球環境の未来について、家族や友人と一緒に考えるきっかけとなる記念日です。";
+  let maxGraphemes = 0;
+  for (let i = 0; i < 100; i++) {
+    const cta       = pickCta();
+    const text       = buildPostText(longTheme, longDescription, undefined, null, cta);
+    const graphemes  = [...new Intl.Segmenter().segment(text)].length;
+    maxGraphemes = Math.max(maxGraphemes, graphemes);
+  }
+  assert(`全CTAパターンで300 grapheme以内 (実測最大: ${maxGraphemes})`, maxGraphemes <= 300);
 }
 
 // ---------------------------------------------------------------------------

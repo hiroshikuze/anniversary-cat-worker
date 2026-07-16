@@ -471,7 +471,7 @@ Style: soft pastel colors, {getSeasonalStyleTone(today)}, gentle watercolor brus
 
 📸 {artworkUrl}                  ← R2保存成功時のみ挿入（?id=bot/YYYY-MM-DD）
 
-あなたも今日の #にゃんバーサリー を作ってみませんか？
+{cta.ja}                         ← pickCta()で選択されたCTA行（下記「CTA行のローテーション」参照）
 https://hiroshikuze.github.io/anniversary-cat-worker/
 
 #{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー #{guestSnsTag}
@@ -491,14 +491,14 @@ Today is "{themeEn}"!
 
 📸 {artworkUrl}&lang=en          ← R2保存成功時のみ挿入（?id=bot/YYYY-MM-DD&lang=en）
 
-Why don't you try making your own #Nyaniversary today?
+{cta.en}                         ← 同じpickCta()結果の英語版（Blueskyと同一トーンで対になる）
 
 今日は「{theme}」！🐱
 {description}
 
 📸 {artworkUrl}                  ← R2保存成功時のみ挿入（?id=bot/YYYY-MM-DD）
 
-あなたも今日の #にゃんバーサリー を作ってみませんか？
+{cta.ja}
 https://hiroshikuze.github.io/anniversary-cat-worker/
 
 #{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #Nyaniversary #にゃんバーサリー #{guestSnsTag}
@@ -510,6 +510,15 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 - `artworkUrl`は`pageUrl !== SITE_URL`のとき（R2保存成功）のみ英語・日本語の両方に挿入。失敗時は両方省略
 - 想定文字数: ~450文字（artworkUrlあり時・Mastodon標準上限500文字以内）
 - altテキスト・SUZURI商品説明は**日本語のみ**（変更しない）
+
+**CTA行のローテーション（`pickCta()`・2026-07追加）:**
+
+CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言ではなく、`worker/bot.js`の`CTA_VARIANTS`配列（重み付き5パターン）から`pickCta()`が毎回ランダムに1件選ぶ。テーマ・説明文・ハッシュタグ・URL等の必須情報は変更しない。目的は同一文言の反復による「Bot感」の低減（過去の投稿が毎回一字一句同じCTAだったため）。
+
+- 設計は`CAT_PERSONALITIES`/`CAT_EMOTIONS`（`worker/index.js`）と同じ「重み付き配列 + pick関数」パターン
+- `pickCta()`は`runBot()`内で**1回だけ**呼び出し、`buildPostText()`と`buildMastodonText()`の両方に同じ結果を渡す（同じ投稿でBluesky版・Mastodon版のCTAトーンが食い違わないようにするため）
+- `CTA_VARIANTS[0]`（現行の固定文言・weight 40%）が`buildPostText()`/`buildMastodonText()`双方の`cta`引数のデフォルト値。デフォルト値のまま呼び出した場合は従来と完全に同一の文言を返す（後方互換）
+- 各バリアントは日本語版（`ja`）・英語版（`en`）をペアで保持し、トーンを揃える
 
 **「の日」重複防止ロジック（`buildPostText`）:**
 
