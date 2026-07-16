@@ -7,6 +7,8 @@
  *   SUZURI_API_KEY  ... SUZURIのAPIキー（Developer Center で取得）
  */
 
+import { fetchWithRetry } from "./http-utils.js";
+
 const SUZURI_API_BASE = "https://suzuri.jp/api/v1";
 
 function buildDescription(theme, description, r2Id, nowMs = Date.now(), guestSuzuriTag = null) {
@@ -144,7 +146,7 @@ export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = nu
     throw new Error("SUZURI: 在庫のある商品がありません");
   }
 
-  const res = await fetch(`${SUZURI_API_BASE}/materials`, {
+  const res = await fetchWithRetry(`${SUZURI_API_BASE}/materials`, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${env.SUZURI_API_KEY}`,

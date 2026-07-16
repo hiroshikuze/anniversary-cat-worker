@@ -13,6 +13,7 @@ import { runBot, notifyDiscord } from "./bot.js";
 import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2, collectMaterialIds } from "./r2-storage.js";
 import { createSuzuriProducts, deleteSuzuriMaterial } from "./suzuri.js";
 import { submitFalJob, getFalResult } from "./fal.js";
+import { fetchWithRetry } from "./http-utils.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -407,24 +408,6 @@ async function generateResearchPool(env) {
   }
 
   console.log(`[pool] ${todayJst} 完了 ${entries.length}件`);
-}
-
-// ---------------------------------------------------------------------------
-// 指数バックオフ付きフェッチ（Worker 内 → Google API）
-// ---------------------------------------------------------------------------
-async function fetchWithRetry(url, options, maxRetries = 3) {
-  for (let i = 0; i < maxRetries; i++) {
-    const res = await fetch(url, options);
-    // 429 quota exceeded はリトライしても無駄なので即リターン
-    if (res.status === 429) return res;
-    if (res.status >= 500 && i < maxRetries - 1) {
-      await new Promise((r) =>
-        setTimeout(r, Math.pow(2, i) * 1000 + Math.random() * 500)
-      );
-      continue;
-    }
-    return res;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1107,7 +1090,7 @@ async function handleProxyImage(request, corsH) {
     return new Response("Invalid URL", { status: 403, headers: corsH });
   }
 
-  const imageRes = await fetch(targetUrl);
+  const imageRes = await fetchWithRetry(targetUrl, {}, 3);
   return new Response(imageRes.body, {
     status: 200,
     headers: {
@@ -1116,6 +1099,56 @@ async function handleProxyImage(request, corsH) {
       "Cache-Control": "public, max-age=3600",
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// fal.ai Queueをポーリングし、完了すればR2に保存してsuzuriTexture URLを返す。
+// 3回のポーリング中に例外（一時的な通信不良等）が発生しても残り試行を継続する
+// （Bug#28: 修正前は catch 節で即座に break しており、1回の失敗で残り試行を放棄していた）。
+// deps はテスト用の依存注入（本番は省略時デフォルト値で動作）。
+// ---------------------------------------------------------------------------
+export async function _pollFalAndGetTexture(falRequestId, env, r2Id, workerOrigin, deps = {}) {
+  const {
+    getFalResultFn = getFalResult,
+    fetchFn        = fetch,
+    waitFn         = (ms) => new Promise((r) => setTimeout(r, ms)),
+    pollIntervalMs = 5_000,
+    maxAttempts    = 3,
+  } = deps;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    await waitFn(pollIntervalMs);
+    try {
+      const result = await getFalResultFn(falRequestId, env);
+      if (result.status === "COMPLETED" && result.cdnUrl) {
+        const cdnRes = await fetchFn(result.cdnUrl, { signal: AbortSignal.timeout(10_000) });
+        console.log(`[suzuri-create] CDN fetch status=${cdnRes.status}`);
+        if (cdnRes.ok) {
+          const buf = await cdnRes.arrayBuffer();
+          console.log(`[suzuri-create] CDN byteLength=${buf.byteLength}`);
+          if (buf.byteLength > 0 && buf.byteLength <= 20_000_000 && r2Id && env.IMAGE_BUCKET) {
+            await env.IMAGE_BUCKET.put(`${r2Id}/hires.png`, buf, {
+              httpMetadata: { contentType: "image/png" },
+            });
+            const suzuriTexture = `${workerOrigin}/hires/${r2Id}`;
+            console.log(`[suzuri-create] hires R2保存完了 → ${suzuriTexture}`);
+            return suzuriTexture;
+          } else if (buf.byteLength > 20_000_000) {
+            console.warn(`[suzuri-create] hires 20MB超のためbase64フォールバック byteLength=${buf.byteLength}`);
+            await notifyDiscord(env.DISCORD_WEBHOOK_URL,
+              `fal.ai 出力画像が20MB超（SUZURI上限超過）\nbyteLength=${buf.byteLength}\nモデルの出力サイズを確認してください`);
+          }
+        }
+        return null;
+      }
+      if (result.status === "FAILED" || result.status === "error") return null;
+      // IN_QUEUE or IN_PROGRESS: 次のポーリングへ
+    } catch (e) {
+      console.warn(`[suzuri-create] poll ${i + 1} 失敗: ${e.message}`);
+      // 一時的な通信不良の可能性があるため諦めず残り試行を継続する
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1551,41 +1584,9 @@ ${itemsXml}
           // → 15秒以内に完了すれば高解像度 SUZURI、それ以外は base64 フォールバック
           ctx.waitUntil((async () => {
             console.log(`[suzuri-create] bg開始 falRequestId=${falRequestId ?? "none"}`);
-            let suzuriTexture = null;
-
-            if (falRequestId) {
-              for (let i = 0; i < 3; i++) {
-                await new Promise(r => setTimeout(r, 5_000));
-                try {
-                  const result = await getFalResult(falRequestId, env);
-                  if (result.status === "COMPLETED" && result.cdnUrl) {
-                    const cdnRes = await fetch(result.cdnUrl, { signal: AbortSignal.timeout(10_000) });
-                    console.log(`[suzuri-create] CDN fetch status=${cdnRes.status}`);
-                    if (cdnRes.ok) {
-                      const buf = await cdnRes.arrayBuffer();
-                      console.log(`[suzuri-create] CDN byteLength=${buf.byteLength}`);
-                      if (buf.byteLength > 0 && buf.byteLength <= 20_000_000 && r2Id && env.IMAGE_BUCKET) {
-                        await env.IMAGE_BUCKET.put(`${r2Id}/hires.png`, buf, {
-                          httpMetadata: { contentType: "image/png" },
-                        });
-                        suzuriTexture = `${workerOrigin}/hires/${r2Id}`;
-                        console.log(`[suzuri-create] hires R2保存完了 → ${suzuriTexture}`);
-                      } else if (buf.byteLength > 20_000_000) {
-                        console.warn(`[suzuri-create] hires 20MB超のためbase64フォールバック byteLength=${buf.byteLength}`);
-                        await notifyDiscord(env.DISCORD_WEBHOOK_URL,
-                          `fal.ai 出力画像が20MB超（SUZURI上限超過）\nbyteLength=${buf.byteLength}\nモデルの出力サイズを確認してください`);
-                      }
-                    }
-                    break;
-                  }
-                  if (result.status === "FAILED" || result.status === "error") break;
-                  // IN_QUEUE or IN_PROGRESS: 次のポーリングへ
-                } catch (e) {
-                  console.warn(`[suzuri-create] poll ${i + 1} 失敗: ${e.message}`);
-                  break;
-                }
-              }
-            }
+            let suzuriTexture = falRequestId
+              ? await _pollFalAndGetTexture(falRequestId, env, r2Id, workerOrigin)
+              : null;
 
             if (!suzuriTexture) {
               // ポーリング3回未完了またはFAILED → フォールバック画像で継続するが運営に通知

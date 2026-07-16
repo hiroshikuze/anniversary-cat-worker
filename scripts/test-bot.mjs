@@ -15,11 +15,12 @@ import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptio
 
 import {
   buildPostText, buildMastodonText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
-  shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id,
+  shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta,
 } from "../worker/bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, _pollFalAndGetTexture } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
+import { fetchWithRetry } from "../worker/http-utils.js";
 
 let passed = 0;
 let failed = 0;
@@ -1508,6 +1509,181 @@ console.log("\n[getFalResult]");
   const result = await getFalResult("req-123", { FAL_KEY: "key" });
   globalThis.fetch = origFetch;
   assert("CDN URL なし: error を返す", result.status === "error");
+}
+
+// ---------------------------------------------------------------------------
+// fetchWithRetry: 5xx・ネットワーク例外を指数バックオフでリトライする共通ヘルパー
+// テスト用に baseDelayMs を短くして動作を検証する（Bug#28）
+// ---------------------------------------------------------------------------
+console.log("\n[fetchWithRetry]");
+
+{
+  // 正常系: 初回成功時はリトライなしでレスポンスを返す
+  let calls = 0;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => { calls++; return { ok: true, status: 200 }; };
+  const res = await fetchWithRetry("https://example.com", {}, 3, 5);
+  globalThis.fetch = origFetch;
+  assert("正常系: 1回のみ呼ばれる", calls === 1);
+  assert("正常系: レスポンスを返す", res.status === 200);
+}
+
+{
+  // 正常系: 5xx→成功のケースでリトライして最終的に成功レスポンスを返す
+  let calls = 0;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    calls++;
+    if (calls < 3) return { ok: false, status: 500 };
+    return { ok: true, status: 200 };
+  };
+  const res = await fetchWithRetry("https://example.com", {}, 3, 5);
+  globalThis.fetch = origFetch;
+  assert("5xx→成功: 3回呼ばれる", calls === 3);
+  assert("5xx→成功: 最終的に成功レスポンスを返す", res.ok === true);
+}
+
+{
+  // 境界値: 429は5xxと違い即座に返す（リトライしない）
+  let calls = 0;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => { calls++; return { ok: false, status: 429 }; };
+  const res = await fetchWithRetry("https://example.com", {}, 3, 5);
+  globalThis.fetch = origFetch;
+  assert("429: 1回のみ呼ばれる（リトライしない）", calls === 1);
+  assert("429: レスポンスをそのまま返す", res.status === 429);
+}
+
+{
+  // 境界値: maxRetries回まで5xxが続いた場合は最後のレスポンスをそのまま返す
+  let calls = 0;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => { calls++; return { ok: false, status: 503 }; };
+  const res = await fetchWithRetry("https://example.com", {}, 3, 5);
+  globalThis.fetch = origFetch;
+  assert("5xx継続: maxRetries回(3回)で打ち切る", calls === 3);
+  assert("5xx継続: 最後のレスポンスを返す", res.status === 503);
+}
+
+{
+  // エラー系: ネットワーク例外（fetchがthrow）時もリトライし、最終的に例外をthrowする
+  let calls = 0;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => { calls++; throw new Error("network down"); };
+  let threw = false;
+  try { await fetchWithRetry("https://example.com", {}, 3, 5); } catch { threw = true; }
+  globalThis.fetch = origFetch;
+  assert("ネットワーク例外: maxRetries回(3回)リトライする", calls === 3);
+  assert("ネットワーク例外: 最終的に例外をthrowする", threw);
+}
+
+{
+  // エラー系: ネットワーク例外→成功のケースは正しくリトライして成功する
+  let calls = 0;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    calls++;
+    if (calls < 2) throw new Error("transient network error");
+    return { ok: true, status: 200 };
+  };
+  const res = await fetchWithRetry("https://example.com", {}, 3, 5);
+  globalThis.fetch = origFetch;
+  assert("ネットワーク例外→成功: 2回で成功する", calls === 2);
+  assert("ネットワーク例外→成功: 成功レスポンスを返す", res.ok === true);
+}
+
+{
+  // 境界値: AbortError（タイムアウト）は即throwしリトライしない
+  let calls = 0;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    calls++;
+    const err = new Error("aborted");
+    err.name = "AbortError";
+    throw err;
+  };
+  let threw = false;
+  try { await fetchWithRetry("https://example.com", {}, 3, 5); } catch { threw = true; }
+  globalThis.fetch = origFetch;
+  assert("AbortError: 1回のみ呼ばれる（リトライしない）", calls === 1);
+  assert("AbortError: 例外をthrowする", threw);
+}
+
+// ---------------------------------------------------------------------------
+// _pollFalAndGetTexture: fal.ai Queueポーリング（Bug#28: 例外時の早期break修正）
+// テスト用に deps（getFalResultFn/fetchFn/waitFn/pollIntervalMs/maxAttempts）を注入する
+// ---------------------------------------------------------------------------
+console.log("\n[_pollFalAndGetTexture]");
+
+function makeR2BucketMock() {
+  const store = {};
+  return {
+    put: async (key, buf) => { store[key] = buf; },
+    store,
+  };
+}
+
+{
+  // 正常系: 1回目でCOMPLETEDならR2に保存しURLを返す
+  const bucket = makeR2BucketMock();
+  const env = { IMAGE_BUCKET: bucket };
+  const getFalResultFn = async () => ({ status: "COMPLETED", cdnUrl: "https://cdn.fal.ai/x.png" });
+  const fetchFn = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(100) });
+  const waitFn = async () => {};
+  const texture = await _pollFalAndGetTexture("req-1", env, "user/abc", "https://worker.example", { getFalResultFn, fetchFn, waitFn });
+  assert("正常系: hires URLを返す", texture === "https://worker.example/hires/user/abc");
+  assert("正常系: R2に保存される", bucket.store["user/abc/hires.png"] !== undefined);
+}
+
+{
+  // 正常系: FAILEDは即座にnullを返す（残り試行を消費しない）
+  let calls = 0;
+  const getFalResultFn = async () => { calls++; return { status: "FAILED" }; };
+  const texture = await _pollFalAndGetTexture("req-1", {}, "user/abc", "https://worker.example", {
+    getFalResultFn, fetchFn: async () => ({ ok: false }), waitFn: async () => {},
+  });
+  assert("FAILED: nullを返す", texture === null);
+  assert("FAILED: 1回のみポーリングする", calls === 1);
+}
+
+{
+  // 回帰: Bug#28本体。1回目に例外が発生しても残りの試行を継続し、2回目でCOMPLETEDなら成功する
+  const bucket = makeR2BucketMock();
+  const env = { IMAGE_BUCKET: bucket };
+  let calls = 0;
+  const getFalResultFn = async () => {
+    calls++;
+    if (calls === 1) throw new Error("一時的な通信不良");
+    return { status: "COMPLETED", cdnUrl: "https://cdn.fal.ai/x.png" };
+  };
+  const fetchFn = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(100) });
+  const texture = await _pollFalAndGetTexture("req-1", env, "user/abc", "https://worker.example", {
+    getFalResultFn, fetchFn, waitFn: async () => {},
+  });
+  assert("例外後も継続: 2回ポーリングされる（1回目の例外でbreakしない）", calls === 2);
+  assert("例外後も継続: 最終的に成功しURLを返す", texture === "https://worker.example/hires/user/abc");
+}
+
+{
+  // 境界値: maxAttempts回すべて例外でもクラッシュせずnullを返す
+  let calls = 0;
+  const getFalResultFn = async () => { calls++; throw new Error("network down"); };
+  const texture = await _pollFalAndGetTexture("req-1", {}, "user/abc", "https://worker.example", {
+    getFalResultFn, fetchFn: async () => ({ ok: false }), waitFn: async () => {}, maxAttempts: 3,
+  });
+  assert("全試行例外: maxAttempts回(3回)ポーリングする", calls === 3);
+  assert("全試行例外: 最終的にnullを返す", texture === null);
+}
+
+{
+  // 正常系: IN_PROGRESSのまま試行終了した場合はnullを返す
+  let calls = 0;
+  const getFalResultFn = async () => { calls++; return { status: "IN_PROGRESS" }; };
+  const texture = await _pollFalAndGetTexture("req-1", {}, "user/abc", "https://worker.example", {
+    getFalResultFn, fetchFn: async () => ({ ok: false }), waitFn: async () => {}, maxAttempts: 3,
+  });
+  assert("IN_PROGRESS継続: maxAttempts回(3回)ポーリングする", calls === 3);
+  assert("IN_PROGRESS継続: 最終的にnullを返す", texture === null);
 }
 
 // ---------------------------------------------------------------------------
@@ -3146,6 +3322,92 @@ console.log("\n[buildMastodonText: guestSnsTag]");
   const text = buildMastodonText("ねこの日", "説明文", "Cat Day", "A cat day", undefined, null);
   assert("guestSnsTag null: 文字列 'null' が含まれない", !text.includes("null"));
   assert("guestSnsTag null: #cat は含まれる", text.includes("#cat"));
+}
+
+// ---------------------------------------------------------------------------
+// pickCta（CTA行のローテーション・重み付き5パターン。Bot感低減のため2026-07追加）
+// ---------------------------------------------------------------------------
+console.log("\n[pickCta]");
+{
+  const CTA_DEFAULT_JA = "あなたも今日の #にゃんバーサリー を作ってみませんか？";
+  const CTA_DEFAULT_EN = "Why don't you try making your own #Nyaniversary today?";
+
+  const results = Array.from({ length: 300 }, () => pickCta());
+  assert("{ja, en} 形式のオブジェクトを返す",
+    results.every(c => typeof c.ja === "string" && typeof c.en === "string"));
+
+  const jaSeen = new Set(results.map(c => c.ja));
+  assert(`300回試行で複数パターンが出現する（実測: ${jaSeen.size}種）`, jaSeen.size > 1);
+
+  const defaultCount = results.filter(c => c.ja === CTA_DEFAULT_JA).length;
+  assert(`デフォルト文言（weight最大）が最頻出寄り (実測: ${defaultCount}/300)`, defaultCount > 300 * 0.25);
+
+  const defaultPair = results.find(c => c.ja === CTA_DEFAULT_JA);
+  assert("デフォルトja とデフォルトen が対になる", defaultPair.en === CTA_DEFAULT_EN);
+}
+
+{
+  // 1000回試行で複数パターンが出現すること（全5パターン到達を緩めに確認）
+  const seen = new Set();
+  for (let i = 0; i < 1000; i++) seen.add(pickCta().ja);
+  assert(`1000回試行で複数パターンが出現する (実測: ${seen.size}種)`, seen.size >= 4);
+}
+
+// ---------------------------------------------------------------------------
+// buildPostText: cta引数
+// ---------------------------------------------------------------------------
+console.log("\n[buildPostText: cta引数]");
+{
+  const customCta = { ja: "テスト用CTA文言です", en: "Test CTA text" };
+  const text = buildPostText("ねこの日", "説明文", undefined, null, customCta);
+  assert("カスタムcta.jaが本文に反映される", text.includes("テスト用CTA文言です"));
+  assert("デフォルトCTA文言は含まれない", !text.includes("あなたも今日の #にゃんバーサリー を作ってみませんか？"));
+}
+{
+  // cta省略時は現行の固定文言のまま（後方互換）
+  const text = buildPostText("ねこの日", "説明文");
+  assert("cta省略時はデフォルト文言のまま", text.includes("あなたも今日の #にゃんバーサリー を作ってみませんか？"));
+}
+
+// ---------------------------------------------------------------------------
+// buildMastodonText: cta引数
+// ---------------------------------------------------------------------------
+console.log("\n[buildMastodonText: cta引数]");
+{
+  const customCta = { ja: "テスト用CTA文言です", en: "Test CTA text" };
+  const text = buildMastodonText("ねこの日", "説明文", "Cat Day", "A cat day", undefined, null, customCta);
+  assert("カスタムcta.enが英語セクションに反映される", text.includes("Test CTA text"));
+  assert("カスタムcta.jaが日本語セクションに反映される", text.includes("テスト用CTA文言です"));
+  assert("デフォルトCTA文言は含まれない", !text.includes("あなたも今日の #にゃんバーサリー を作ってみませんか？"));
+}
+{
+  // themeEn 空のフォールバックでも cta.ja が反映される
+  const customCta = { ja: "テスト用CTA文言です", en: "Test CTA text" };
+  const text = buildMastodonText("ねこの日", "説明文", "", "", undefined, null, customCta);
+  assert("themeEn 空フォールバック: カスタムcta.jaが反映される", text.includes("テスト用CTA文言です"));
+}
+{
+  // cta省略時は現行の固定文言のまま（後方互換）
+  const text = buildMastodonText("ねこの日", "説明文", "Cat Day", "A cat day");
+  assert("cta省略時: デフォルト英語CTAのまま", text.includes("Why don't you try making your own #Nyaniversary today?"));
+  assert("cta省略時: デフォルト日本語CTAのまま", text.includes("あなたも今日の #にゃんバーサリー を作ってみませんか？"));
+}
+
+// ---------------------------------------------------------------------------
+// CTA全パターン: 300 grapheme境界値ガード（Bluesky上限を壊さないことの確認）
+// ---------------------------------------------------------------------------
+console.log("\n[CTA全パターン: grapheme境界値]");
+{
+  const longTheme       = "世界パンダ保護と環境未来を考える日";
+  const longDescription = "パンダの保護と地球環境の未来について、家族や友人と一緒に考えるきっかけとなる記念日です。";
+  let maxGraphemes = 0;
+  for (let i = 0; i < 100; i++) {
+    const cta       = pickCta();
+    const text       = buildPostText(longTheme, longDescription, undefined, null, cta);
+    const graphemes  = [...new Intl.Segmenter().segment(text)].length;
+    maxGraphemes = Math.max(maxGraphemes, graphemes);
+  }
+  assert(`全CTAパターンで300 grapheme以内 (実測最大: ${maxGraphemes})`, maxGraphemes <= 300);
 }
 
 // ---------------------------------------------------------------------------
