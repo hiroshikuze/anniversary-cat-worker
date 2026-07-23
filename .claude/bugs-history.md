@@ -261,4 +261,15 @@
 - **恒久対応**: `.claude/rules/coding.md`に「新規に外部通信を追加する際はリトライ可否を検討する」チェック項目を追加し、今後同種の見落としを構造的に防ぐ
 - **教訓**: テストファイルを新設・変更しても、実行コマンド（`npm test`・CIワークフロー）に接続されているかを別途確認しないと「書いたのに一度も実行されていない」状態になりうる。ユニットテストを追加・修正した際は必ず`npm test`を実行して実際に走ることを確認する
 
+### 29. 共有URL閲覧中のエラー再試行が元の画像ではなく新規生成に置き換わる（2026-07・Issue#149）
+
+- **症状**: ユーザー報告（Issue#149）「cronで定期生成されたボット画像ページ（`?id=bot/YYYY-MM-DD`）を閲覧中、読み込み中に通信が不安定になりエラー画面が表示された。再試行したところ、元のボット生成画像ではなくまったく別の新規生成画像に置き換わった」
+- **原因**: `frontend/index.html`の`#g-error`（エラー画面）の再試行ボタンが`onclick="startResearch()"`にハードコードされていた。`startResearch()`は常に新規記念日リサーチ→新規画像生成を開始する関数のため、`loadSharedImage(id)`（共有URL・ボット画像の読み込み）が通信不良で失敗して`#g-error`画面に遷移した場合でも、無条件で無関係な新規画像が生成されてしまっていた
+- **既存の正しいパターンとの比較**: 同ファイル内の`#g-result`（結果画面）のセカンダリボタンは`updateResultButtons()`が`showGenerate("result")`のたびに`isSharedView`フラグを見て`.onclick`をJSで動的に切り替える設計になっており、エラー画面だけがこのパターンに追随していなかった
+- **調査時に確認した非該当箇所**: `#g-waiting`（初期画面）の`startResearch()`固定は正常（まだ何も生成していない状態で保持すべきコンテンツがない）。`#g-expired`（期限切れ画面）の`startResearch()`固定も正常（R2側で14日経過し実データが削除済みのため、新規生成以外に選択肢がない。ボタン文言も「再試行」ではなく「作る」）
+- **修正**: `updateResultButtons()`と同じ設計で`updateErrorRetryButton()`を新設し、`showGenerate("error")`時に呼び出す。`isSharedView === true`（共有URL閲覧中のエラー）なら`loadSharedImage(currentSharedId)`を再実行、`false`（通常生成中のエラー）なら従来通り`startResearch()`を実行するよう`.onclick`を動的に設定する。HTML側の`onclick="startResearch()"`固定値は削除
+- **テスト**: フロントエンドのDOM依存ロジックのためNode環境でのユニットテスト不可（`testing.md`の既存制約と同じ）。目視確認とする
+- **場所**: `frontend/index.html` `showGenerate()` `updateErrorRetryButton()`（新設）
+- **教訓**: 「共有URL閲覧中かどうか」で分岐が必要な画面遷移は`#g-result`だけでなく、同じUIコンポーネント（ボタン）を複数の文脈（通常生成・共有URL閲覧）で共有する画面すべてに存在しうる。新しい状態遷移・エラー画面を追加する際は、既存の`isSharedView`分岐パターン（`updateResultButtons()`）を横展開する必要がないか確認する
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）

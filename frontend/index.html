@@ -253,7 +253,7 @@
         <div class="bg-red-50 border border-red-100 rounded-2xl p-4 mb-3">
           <p class="text-sm text-red-500" id="g-error-text"></p>
         </div>
-        <button onclick="startResearch()"
+        <button
           class="w-full btn-secondary py-2 px-4 rounded-xl text-sm font-medium" data-i18n="retryBtn">
           🔄 再試行する
         </button>
@@ -765,6 +765,16 @@
         document.getElementById("g-" + s).classList.toggle("hidden", s !== state);
       });
       if (state === "result") updateResultButtons();
+      if (state === "error") updateErrorRetryButton();
+    }
+
+    // 共有URL閲覧中のエラーは元の共有画像を再取得し、通常生成中のエラーは新規生成をやり直す（Issue#149）
+    function updateErrorRetryButton() {
+      const btn = document.querySelector("#g-error .btn-secondary");
+      if (!btn) return;
+      btn.onclick = isSharedView
+        ? function () { loadSharedImage(currentSharedId); }
+        : startResearch;
     }
 
     // 共有URLか通常生成かでresultボタンを切り替える
