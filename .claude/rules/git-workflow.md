@@ -20,6 +20,8 @@
 | `main`へのpush（`frontend/**`変更時） | GitHub Pagesへ自動デプロイ |
 | `main`または`claude/**`へのpush | ヘルスチェック + ユニットテスト自動実行 |
 
+**CI上のNode.jsバージョン（2026-07更新）**: `deploy-worker.yml`・`health-check.yml`ともに`24`（Active LTS。EOL 2028-04-30）を明示的にpinしている。Cloudflare Worker本体（`workerd`ランタイム）はNode.jsを使わないため、Node.jsが関与するのはCIのビルド・テストツール実行のみ。以前は`22`（Maintenance LTS・EOL 2027-04-30）を使用していたが、Active LTSへの更新に伴い変更した。次回確認時は[nodejs/release](https://github.com/nodejs/release#release-schedule)で最新スケジュールを確認すること。
+
 ## 初回セットアップ（デプロイ）
 
 ```bash
