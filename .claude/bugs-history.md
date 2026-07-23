@@ -272,4 +272,17 @@
 - **場所**: `frontend/index.html` `showGenerate()` `updateErrorRetryButton()`（新設）
 - **教訓**: 「共有URL閲覧中かどうか」で分岐が必要な画面遷移は`#g-result`だけでなく、同じUIコンポーネント（ボタン）を複数の文脈（通常生成・共有URL閲覧）で共有する画面すべてに存在しうる。新しい状態遷移・エラー画面を追加する際は、既存の`isSharedView`分岐パターン（`updateResultButtons()`）を横展開する必要がないか確認する
 
+### 30. Geminiがtheme等のプレーンテキストフィールドにruby HTMLを混入させBluesky投稿が失敗（2026-07）
+
+- **症状**: 深夜のリサーチプール生成Discord通知で、テーマ一覧の1件に`<ruby>劇画<rt>げきが</rt></ruby>の<ruby>日<rt>ひ</rt></ruby>`という生のHTMLタグが表示されているとユーザーから報告。さらに同日7:00 JSTの平日Bot投稿で、このプールエントリが実際に選ばれ`❌ Bluesky投稿失敗: ... grapheme too big (maximum 300, got 325)`が発生。Mastodonは文字数上限（500）に収まったため成功したが、投稿本文には同じ壊れたHTMLタグがそのまま露出していたと推定される。共有URLページ（`?id=bot/2026-07-24`）のテーマ表示・保存画像のファイル名にも同じ破損が伝播していた
+- **原因**: `handleResearch()`のGeminiプロンプトは`theme`（プレーンテキスト）と`themeKana`（ruby HTML付き）を明確に指示で分けているが、`result.theme`/`result.description`/`result.themeEn`/`result.descriptionEn`に対するサニタイズ・検証が一切なく、Geminiが誤って`theme`にも`themeKana`と同じruby HTML文字列を返した際にそのまま通過していた。10並列生成のうち1件でこの誤りが発生し、`filterAndDedupePool()`の文字列一致による重複除去も素通りしてプールに保存された
+- **影響範囲**: リサーチプール（Discord通知・R2保存）→ 平日Bot投稿（Bluesky/Mastodon本文）→ 共有URLページの表示・保存画像ファイル名まで、`theme`/`description`を利用する全経路に伝播する。とくにBluesky投稿は`worker/bot.js`の設計上リトライしない（二重投稿防止のため）ため、一度失敗するとその日の投稿は失われる
+- **修正**:
+  - `worker/index.js` `handleResearch()`内でGeminiレスポンスをパースした直後に`theme`/`description`/`themeEn`/`descriptionEn`からHTMLタグを除去する`stripHtmlTags()`を追加・適用（`themeKana`/`descriptionKana`はruby HTMLが仕様上必要なため対象外）。副次効果として、タグ除去後は文字列が一致するようになり`filterAndDedupePool()`の重複除去も正しく機能するようになる
+  - 追加の安全網として、`worker/bot.js` `buildPostText()`/`buildMastodonText()`に実行時のgrapheme数チェックを追加。Bluesky（300）/Mastodon（500）の上限を超える場合はheader・URL・CTA・ハッシュタグを保持したままdescription部分のみ切り詰める。根本原因の修正だけでなく、将来別の予期しない原因でtheme/descriptionが長くなった場合にも投稿失敗を防ぐ
+- **手動復旧**: 既存のR2保存済みデータ（`bot/2026-07-24/meta.json`等）は今回の修正では自動的に直らない。Cloudflareダッシュボード（またはwrangler CLI）から該当オブジェクトの`theme`フィールドを手動で書き換える必要がある
+- **テスト**: `scripts/test-bot.mjs`に`handleResearch()`のHTMLタグ除去（対象4フィールド・themeKana/descriptionKanaは対象外）、`buildPostText()`/`buildMastodonText()`のgrapheme上限安全網（正常系・境界値・上限超過時のheader/URL保持）を追加
+- **場所**: `worker/index.js` `handleResearch()`（新規`stripHtmlTags()`）・`worker/bot.js` `buildPostText()` `buildMastodonText()`
+- **教訓**: LLMの構造化出力は「プロンプトで指示した通りの形式で返る」ことを前提にせず、各フィールドの型・形式を検証・サニタイズしてから使う。とくに複数フィールドが似た内容（`theme`と`themeKana`のように同じ情報の別表現）を持つ場合、LLMが取り違えて同じ値を別フィールドに複製するリスクがある。また外部SNS APIへの投稿のような「失敗すると機会が失われ取り返せない」操作は、入力値の想定外の長さ・形式に対する実行時の安全網を根本修正とは別に用意しておく
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）

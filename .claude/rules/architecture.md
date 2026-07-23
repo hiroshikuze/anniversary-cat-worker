@@ -422,6 +422,10 @@ export async function handleResearch(body, apiKey, env = null)
 - `selectBestModel(apiKey, env?.RATE_KV, env?.DISCORD_WEBHOOK_URL)`を内部で呼ぶ
 - 呼び出し元: fetchハンドラー・`bot.js runBot()`・`generateResearchPool()`いずれも`env`を渡す
 
+**プレーンテキストフィールドのサニタイズ（`stripHtmlTags()`・2026-07追加・Bug#30）:**
+
+Geminiが`theme`/`description`/`themeEn`/`descriptionEn`（プレーンテキスト前提のフィールド）に、本来`themeKana`/`descriptionKana`用のruby HTMLを誤って混入させることがある（実測: 10並列生成中1件で発生）。Gemini JSONレスポンスをパースした直後にこの4フィールドへ`stripHtmlTags()`（`<[^>]*>`除去）を適用し、`themeKana`/`descriptionKana`（ruby HTML必須）は対象外とする。副次効果として、タグ除去後は文字列表現が揃うため`filterAndDedupePool()`の重複除去も正しく機能するようになる。
+
 **トークン使用量記録（`usageMetadata`・2026-06追加、モデル解決名の記録は2026-07追加）:**
 
 GeminiのAPIレスポンスに含まれる`usageMetadata.totalTokenCount`を取得し、日次集計をKVに保存する。
@@ -551,6 +555,15 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 - `artworkUrl`は`pageUrl !== SITE_URL`のとき（R2保存成功）のみ英語・日本語の両方に挿入。失敗時は両方省略
 - 想定文字数: ~450文字（artworkUrlあり時・Mastodon標準上限500文字以内）
 - altテキスト・SUZURI商品説明は**日本語のみ**（変更しない）
+
+**投稿文字数の実行時安全網（2026-07追加・Bug#30）:**
+
+`theme`/`description`が想定外に長い・破損している場合（Gemini出力の異常等）でも、Bluesky/Mastodonの上限超過で投稿自体が失敗しないよう実行時チェックを追加した。
+
+- `buildPostText()`: header（`今日は「{theme}」の日！🐱`）とfooter（artworkUrl・CTA・SITE_URL・ハッシュタグ）を必ず保持し、300 grapheme予算から残りを`description`に割り当てて超過分を切り詰める。header・URL・タグが削られることはない
+- `buildMastodonText()`: 最終的な組み立て文字列全体を500 graphemeで切り詰める（Mastodonは英日二言語で構成が複雑なため、Bluesky版のような部分ごとの予算配分ではなく全体の末尾切り詰めで対応）
+- `Intl.Segmenter`でgrapheme数を計測する既存のテストパターン（`scripts/test-bot.mjs`）と同じ方式を本番コードにも適用
+- Bluesky投稿は二重投稿防止のため意図的にリトライしない設計（「意図的にリトライ対象外の箇所」参照）なので、一度の投稿失敗でその日の投稿機会が失われる。この安全網は根本原因（Bug#30のHTMLタグ混入等）の修正とは独立した多重防御
 
 **CTA行のローテーション（`pickCta()`・2026-07追加）:**
 
