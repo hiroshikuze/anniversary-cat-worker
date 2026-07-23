@@ -410,6 +410,16 @@ async function generateResearchPool(env) {
   console.log(`[pool] ${todayJst} 完了 ${entries.length}件`);
 }
 
+// プレーンテキスト前提のフィールドからHTMLタグを除去する（Bug#30）
+// <rt>（ふりがな）・<rp>（フォールバック括弧）は中身ごと除去し、残りのタグは
+// 中身のテキストを残したままタグのみ除去する（<ruby>劇画<rt>げきが</rt></ruby> → 劇画）
+function stripHtmlTags(str) {
+  return str
+    .replace(/<rt>[\s\S]*?<\/rt>/gi, "")
+    .replace(/<rp>[\s\S]*?<\/rp>/gi, "")
+    .replace(/<[^>]*>/g, "");
+}
+
 // ---------------------------------------------------------------------------
 // /research  ― Gemini + Google Search で今日の記念日を調査
 // ---------------------------------------------------------------------------
@@ -465,6 +475,13 @@ export async function handleResearch(body, apiKey, env = null) {
       description: rawText.slice(0, 50),
       sourceUrl: "",
     };
+  }
+
+  // Bug#30: Geminiがtheme等のプレーンテキストフィールドにthemeKana用のruby HTMLを
+  // 誤って混入させることがあるため除去する。themeKana/descriptionKanaはruby HTMLが
+  // 仕様上必要なため対象外。
+  for (const field of ["theme", "description", "themeEn", "descriptionEn"]) {
+    if (typeof result[field] === "string") result[field] = stripHtmlTags(result[field]);
   }
 
   const queries =

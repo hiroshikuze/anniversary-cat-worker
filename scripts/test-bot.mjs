@@ -3411,6 +3411,54 @@ console.log("\n[CTA全パターン: grapheme境界値]");
 }
 
 // ---------------------------------------------------------------------------
+// buildPostText / buildMastodonText: grapheme上限の実行時安全網（Bug#30）
+// theme/description異常時でもheader・URL・CTA・タグを保持したまま上限内に収める
+// ---------------------------------------------------------------------------
+console.log("\n[buildPostText / buildMastodonText: grapheme安全網]");
+
+function graphemeCount(text) {
+  return [...new Intl.Segmenter().segment(text)].length;
+}
+
+{
+  // 回帰: ruby HTML混入等でdescriptionが異常に長い場合でも300 grapheme以内に収まる
+  const brokenDescription = "あ".repeat(400);
+  const text = buildPostText("大仏の日", brokenDescription, "https://example.com/?id=bot/2026-07-24");
+  assert("異常に長いdescriptionでも300 grapheme以内", graphemeCount(text) <= 300);
+  assert("headerは保持される", text.includes("今日は「大仏の日」！🐱"));
+  assert("artworkUrlは保持される", text.includes("https://example.com/?id=bot/2026-07-24"));
+  assert("SITE_URLは保持される", text.includes("https://hiroshikuze.github.io/anniversary-cat-worker/"));
+}
+{
+  // 境界値: 通常のtheme/descriptionは従来通り変化しない
+  const text = buildPostText("大仏の日", "東大寺の大仏開眼法要が行われた記念日。");
+  assert("通常時は従来通りの本文", text.startsWith("今日は「大仏の日」！🐱\n東大寺の大仏開眼法要が行われた記念日。"));
+}
+{
+  // 境界値: descriptionが空でもクラッシュしない
+  const text = buildPostText("大仏の日", "");
+  assert("description空でもクラッシュしない", typeof text === "string" && graphemeCount(text) <= 300);
+}
+
+{
+  // 回帰: Mastodon版もdescriptionEn/description異常時に500 grapheme以内に収まる
+  const brokenDescription = "あ".repeat(400);
+  const text = buildMastodonText("大仏の日", brokenDescription, "Great Buddha Day", "x".repeat(400));
+  assert("異常に長いdescription/descriptionEnでも500 grapheme以内", graphemeCount(text) <= 500);
+}
+{
+  // 境界値: themeEn空フォールバック時も500 grapheme以内に収まる
+  const brokenDescription = "あ".repeat(400);
+  const text = buildMastodonText("大仏の日", brokenDescription, "", "");
+  assert("themeEn空フォールバック時も500 grapheme以内", graphemeCount(text) <= 500);
+}
+{
+  // 境界値: 通常のtheme/descriptionは従来通り変化しない
+  const text = buildMastodonText("大仏の日", "東大寺の大仏開眼法要が行われた記念日。", "Great Buddha Day", "Anniversary of the eye-opening ceremony.");
+  assert("通常時は従来通り英語ヘッダーで始まる", text.startsWith('Today is "Great Buddha Day"!'));
+}
+
+// ---------------------------------------------------------------------------
 // handleResearch: themeKana / descriptionKana
 // ---------------------------------------------------------------------------
 console.log("\n[handleResearch: themeKana / descriptionKana]");
@@ -3491,6 +3539,71 @@ function makeResearchFetchMock(researchJson) {
   globalThis.fetch = origFetch;
 
   assert("themeKana 未返却時は undefined", !result2?.themeKana);
+}
+
+// ---------------------------------------------------------------------------
+// handleResearch: プレーンテキストフィールドのHTMLタグ除去（Bug#30）
+// Geminiがtheme等に誤ってruby HTMLを混入させるケースの回帰テスト
+// ---------------------------------------------------------------------------
+console.log("\n[handleResearch: HTMLタグ除去]");
+
+{
+  // 回帰: theme/description/themeEn/descriptionEnにruby HTMLが混入していても除去される
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeResearchFetchMock({
+    theme: "<ruby>劇画<rt>げきが</rt></ruby>の<ruby>日<rt>ひ</rt></ruby>",
+    themeEn: "<b>Gekiga</b> Day",
+    description: "大人向けの<ruby>劇画<rt>げきが</rt></ruby>文化を祝う記念日",
+    descriptionEn: "A day celebrating <i>gekiga</i> culture.",
+    themeKana: "<ruby>劇画<rt>げきが</rt></ruby>の<ruby>日<rt>ひ</rt></ruby>",
+    descriptionKana: "<ruby>劇画<rt>げきが</rt></ruby>文化を祝う<ruby>記念日<rt>きねんび</rt></ruby>",
+    visualHint: "cat reading manga",
+    foodItem: null,
+    kanjiChar: "画",
+    sourceUrl: "https://example.com",
+  });
+
+  let result;
+  try {
+    result = await handleResearch({ date: "2026年7月24日" }, "test-key");
+  } catch (e) {
+    result = null;
+    console.error("  handleResearch threw:", e.message);
+  }
+  globalThis.fetch = origFetch;
+
+  assert("themeからHTMLタグが除去される", result?.theme === "劇画の日");
+  assert("descriptionからHTMLタグが除去される", result?.description === "大人向けの劇画文化を祝う記念日");
+  assert("themeEnからHTMLタグが除去される", result?.themeEn === "Gekiga Day");
+  assert("descriptionEnからHTMLタグが除去される", result?.descriptionEn === "A day celebrating gekiga culture.");
+  assert("themeKanaのruby HTMLは保持される（サニタイズ対象外）", result?.themeKana === "<ruby>劇画<rt>げきが</rt></ruby>の<ruby>日<rt>ひ</rt></ruby>");
+  assert("descriptionKanaのruby HTMLは保持される（サニタイズ対象外）", result?.descriptionKana === "<ruby>劇画<rt>げきが</rt></ruby>文化を祝う<ruby>記念日<rt>きねんび</rt></ruby>");
+}
+
+{
+  // 境界値: HTMLタグを含まない通常のtheme/descriptionは変化しない
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeResearchFetchMock({
+    theme: "大仏の日",
+    themeEn: "Great Buddha Day",
+    description: "東大寺の大仏開眼法要が行われた記念日。",
+    descriptionEn: "Anniversary of the eye-opening ceremony.",
+    visualHint: "large Buddha statue",
+    foodItem: null,
+    kanjiChar: "尊",
+    sourceUrl: "https://example.com",
+  });
+
+  let result;
+  try {
+    result = await handleResearch({ date: "2026年5月21日" }, "test-key");
+  } catch (e) {
+    result = null;
+  }
+  globalThis.fetch = origFetch;
+
+  assert("タグなしのthemeは変化しない", result?.theme === "大仏の日");
+  assert("タグなしのdescriptionは変化しない", result?.description === "東大寺の大仏開眼法要が行われた記念日。");
 }
 
 // ----------------------------------------------------------

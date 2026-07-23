@@ -34,6 +34,24 @@ const BLUESKY_API            = "https://bsky.social/xrpc";
 const SITE_URL               = "https://hiroshikuze.github.io/anniversary-cat-worker/";
 export const BLUESKY_MAX_IMAGE_BYTES = 976_000; // Bluesky上限 1,000,000 bytes に余裕を持たせた値
 
+// 投稿文字数の実行時安全網（Bug#30）。theme/description異常時でも上限超過で投稿失敗しないよう
+// grapheme数で切り詰める。Bluesky投稿は二重投稿防止のため意図的にリトライしない設計のため、
+// 一度の投稿失敗は取り返せない（根本原因の修正とは独立した多重防御）。
+const BLUESKY_MAX_GRAPHEMES  = 300;
+const MASTODON_MAX_GRAPHEMES = 500;
+
+function graphemeLength(text) {
+  return [...new Intl.Segmenter().segment(text)].length;
+}
+
+// textをmax grapheme以内に切り詰める。max以下ならそのまま返す
+function truncateToGraphemes(text, max) {
+  if (max <= 0) return "";
+  const segments = [...new Intl.Segmenter().segment(text)].map((s) => s.segment);
+  if (segments.length <= max) return text;
+  return segments.slice(0, max).join("");
+}
+
 const BLUESKY_SESSION_TIMEOUT_MS = 10_000;
 const BLUESKY_UPLOAD_TIMEOUT_MS  = 10_000;
 const BLUESKY_POST_TIMEOUT_MS    = 10_000;
@@ -105,14 +123,20 @@ export function buildPostText(theme, description, pageUrl = SITE_URL, guestSnsTa
   const header      = theme.endsWith("の日")
     ? `今日は「${theme}」！🐱`
     : `今日は「${theme}」の日！🐱`;
-  const body        = description ? `\n${description}` : "";
   const artworkLine = pageUrl !== SITE_URL ? `\n\n📸 ${pageUrl}` : "";
   const ctaLine     = `\n\n${cta.ja}\n${SITE_URL}`;
   const themeTag    = buildThemeTag(theme);
   const baseTags    = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
   const allTags     = guestSnsTag ? `${baseTags} ${guestSnsTag}` : baseTags;
   const tags        = `\n\n${allTags}`;
-  return header + body + artworkLine + ctaLine + tags;
+  const footer      = artworkLine + ctaLine + tags;
+
+  // Bug#30: theme破損等の想定外要因で300 grapheme上限を超えないよう、header・URL・CTA・
+  // タグは常に保持し、descriptionのみ残り予算に合わせて切り詰める
+  // （descriptionありの場合は区切りの改行1文字分も予算から差し引く）
+  const budget = BLUESKY_MAX_GRAPHEMES - graphemeLength(header + footer) - (description ? 1 : 0);
+  const body   = description ? `\n${truncateToGraphemes(description, budget)}` : "";
+  return header + body + footer;
 }
 
 /**
@@ -146,7 +170,7 @@ export function buildMastodonText(theme, description, themeEn = "", descriptionE
     const ctaLine          = `\n\n${cta.ja}\n${SITE_URL}`;
     const baseFallbackTags = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
     const fallbackTags     = guestSnsTag ? `${baseFallbackTags} ${guestSnsTag}` : baseFallbackTags;
-    return header + jpDesc + artworkLine + ctaLine + `\n\n${fallbackTags}`;
+    return truncateToGraphemes(header + jpDesc + artworkLine + ctaLine + `\n\n${fallbackTags}`, MASTODON_MAX_GRAPHEMES);
   }
 
   const enHeader = `Today is "${safeThemeEn}"!`;
@@ -157,7 +181,11 @@ export function buildMastodonText(theme, description, themeEn = "", descriptionE
   const jaDesc   = description ? `\n${description}` : "";
   const jaCta    = `\n\n${cta.ja}\n${SITE_URL}`;
 
-  return enHeader + enDesc + enArtworkLine + enCta + "\n\n" + jaHeader + jaDesc + artworkLine + jaCta + `\n\n${tagStr}`;
+  // Bug#30: theme/description異常時でも500 grapheme上限を超えないよう全体を切り詰める安全網
+  return truncateToGraphemes(
+    enHeader + enDesc + enArtworkLine + enCta + "\n\n" + jaHeader + jaDesc + artworkLine + jaCta + `\n\n${tagStr}`,
+    MASTODON_MAX_GRAPHEMES
+  );
 }
 
 /**
