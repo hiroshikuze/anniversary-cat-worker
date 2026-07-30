@@ -18,7 +18,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta,
 } from "../worker/bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, _pollFalAndGetTexture } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, _pollFalAndGetTexture } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 
@@ -2529,6 +2529,48 @@ console.log("\n[getSeasonalFlowerVisual]");
   ];
   const allAscii = allDates.every(d => /^[\x20-\x7E]*$/.test(getSeasonalFlowerVisual(d)));
   assert("全24エントリがASCIIのみ", allAscii);
+}
+
+// ---------------------------------------------------------------------------
+// getSeasonalFlowerEn / getSeasonalFlowerKana - 季節補充フォールバックの
+// themeEn/themeKana組み立て用フィールド（Bug#31）
+// ---------------------------------------------------------------------------
+console.log("\n[getSeasonalFlowerEn]");
+{
+  // ── 正常系 ──
+  assert("01-01 → 寒椿: Camellia を含む", getSeasonalFlowerEn("2026-01-01").includes("Camellia"));
+  assert("07-16 → 桔梗: Balloon Flower を含む", getSeasonalFlowerEn("2026-07-16").includes("Balloon Flower"));
+  assert("12-16 → 千両: Nandina を含む", getSeasonalFlowerEn("2026-12-16").includes("Nandina"));
+
+  // ── エラー系: 全24エントリがASCIIのみ ──
+  const allDatesEn = [
+    "2026-01-01", "2026-01-16", "2026-02-01", "2026-02-15", "2026-03-01", "2026-03-16",
+    "2026-04-01", "2026-04-16", "2026-05-01", "2026-05-16", "2026-06-01", "2026-06-16",
+    "2026-07-01", "2026-07-16", "2026-08-01", "2026-08-16", "2026-09-01", "2026-09-16",
+    "2026-10-01", "2026-10-16", "2026-11-01", "2026-11-16", "2026-12-01", "2026-12-16",
+  ];
+  const allAsciiEn = allDatesEn.every(d => /^[\x20-\x7E]*$/.test(getSeasonalFlowerEn(d)));
+  assert("全24エントリがASCIIのみ", allAsciiEn);
+}
+
+console.log("\n[getSeasonalFlowerKana]");
+{
+  // ── 正常系: ruby HTML形式で花の名前を含む ──
+  assert("07-16 → 桔梗: rubyタグを含む", getSeasonalFlowerKana("2026-07-16").includes("<ruby>"));
+  assert("07-16 → 桔梗: 「桔梗」を含む", getSeasonalFlowerKana("2026-07-16").includes("桔梗"));
+  assert("07-16 → 桔梗: 読み「ききょう」を含む", getSeasonalFlowerKana("2026-07-16").includes("ききょう"));
+
+  // ── エラー系: 全24エントリが <ruby>...<rt>...</rt></ruby> 形式で <rp> を含まない ──
+  const allDatesKana = [
+    "2026-01-01", "2026-01-16", "2026-02-01", "2026-02-15", "2026-03-01", "2026-03-16",
+    "2026-04-01", "2026-04-16", "2026-05-01", "2026-05-16", "2026-06-01", "2026-06-16",
+    "2026-07-01", "2026-07-16", "2026-08-01", "2026-08-16", "2026-09-01", "2026-09-16",
+    "2026-10-01", "2026-10-16", "2026-11-01", "2026-11-16", "2026-12-01", "2026-12-16",
+  ];
+  const allValidRuby = allDatesKana.every(d => /<ruby>[^<]+<rt>[^<]+<\/rt><\/ruby>/.test(getSeasonalFlowerKana(d)));
+  assert("全24エントリがruby HTML形式", allValidRuby);
+  const noRp = allDatesKana.every(d => !getSeasonalFlowerKana(d).includes("<rp>"));
+  assert("全24エントリで<rp>を含まない", noRp);
 }
 
 // ---------------------------------------------------------------------------

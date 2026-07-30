@@ -241,31 +241,33 @@ function toJSTDateStringWorker(date) {
 // style: Gemini画像生成のStyle指示用の季節カラー（ASCII英語）。
 // 旧"light pink and beige tones"固定文言が年間を通じて桜を連想させていた問題の修正
 // （Bug#26: テーマ・visualHintに花の言及がない日でもGeminiが桜の花びらを装飾として補完していた）
+// kana: 花の名前のruby HTML（Bug#31・季節補充フォールバックのthemeKana/descriptionKana組み立て用）
+// en: 花の英語名（Bug#31・季節補充フォールバックのthemeEn/descriptionEn組み立て用）
 const SEASONAL_FLOWERS = [
-  { startMd: "01-01", endMd: "01-15", name: "寒椿",   visual: "winter camellia blossoms, deep red petals, snow-dusted garden", style: "deep red and white tones, crisp winter clarity" },
-  { startMd: "01-16", endMd: "01-31", name: "水仙",   visual: "narcissus flowers, white and yellow blooms, winter garden", style: "soft white and pale yellow tones, clean winter brightness" },
-  { startMd: "02-01", endMd: "02-14", name: "蝋梅",   visual: "wintersweet blossoms, pale yellow flowers, bare winter branches", style: "pale yellow and warm brown tones, quiet winter calm" },
-  { startMd: "02-15", endMd: "02-28", name: "梅",     visual: "plum blossoms, pink and white flowers, early spring branches", style: "soft pink and white tones, early spring freshness" },
-  { startMd: "03-01", endMd: "03-15", name: "菜の花", visual: "rapeseed flowers, bright yellow blooms, spring countryside field", style: "warm yellow and soft green tones, spring countryside light" },
-  { startMd: "03-16", endMd: "03-31", name: "彼岸桜", visual: "higan cherry blossoms, soft pink petals, drifting spring breeze", style: "soft pink and pale blue tones, gentle spring breeze" },
-  { startMd: "04-01", endMd: "04-15", name: "染井吉野", visual: "cherry blossoms, pink petals falling, Japanese garden breeze", style: "soft pink and pale blue tones, gentle spring breeze" },
-  { startMd: "04-16", endMd: "04-30", name: "藤",     visual: "wisteria flowers, hanging purple clusters, trellis garden", style: "soft purple and lavender tones, late spring elegance" },
-  { startMd: "05-01", endMd: "05-15", name: "杜若",   visual: "iris flowers, purple blooms, pond-side garden", style: "purple and fresh green tones, early summer calm" },
-  { startMd: "05-16", endMd: "05-31", name: "皐月",   visual: "satsuki azalea blossoms, vivid pink flowers, garden hedge", style: "vivid pink and fresh green tones, early summer brightness" },
-  { startMd: "06-01", endMd: "06-15", name: "紫陽花", visual: "hydrangea flowers, blue and purple blooms, rainy season garden", style: "blue, purple and soft gray tones, rainy season mood" },
-  { startMd: "06-16", endMd: "06-30", name: "苔",     visual: "lush green moss, mossy stones, quiet shaded garden", style: "muted green and soft gray tones, quiet shaded calm" },
-  { startMd: "07-01", endMd: "07-15", name: "蓮",     visual: "lotus flowers, pink blooms, pond with green leaves", style: "soft pink and deep green tones, tranquil summer calm" },
-  { startMd: "07-16", endMd: "07-31", name: "桔梗",   visual: "balloon flowers, purple star-shaped blooms, summer garden", style: "purple and deep green tones, summer garden depth" },
-  { startMd: "08-01", endMd: "08-15", name: "向日葵", visual: "sunflowers, bright yellow blooms, summer field", style: "vivid yellow and deep blue tones, bright summer energy" },
-  { startMd: "08-16", endMd: "08-31", name: "百日紅", visual: "crape myrtle blossoms, vivid pink flowers, late summer garden", style: "vivid pink and deep green tones, late summer vibrance" },
-  { startMd: "09-01", endMd: "09-15", name: "萩",     visual: "bush clover flowers, small purple-pink blooms, autumn garden", style: "soft purple-pink and beige tones, early autumn warmth" },
-  { startMd: "09-16", endMd: "09-30", name: "彼岸花", visual: "red spider lilies, vivid red blooms, autumn rice field", style: "vivid red and deep green tones, autumn field accent" },
-  { startMd: "10-01", endMd: "10-15", name: "秋桜",   visual: "cosmos flowers, pink and white blooms, autumn breeze field", style: "soft pink and pale blue tones, autumn breeze softness" },
-  { startMd: "10-16", endMd: "10-31", name: "金木犀", visual: "fragrant olive blossoms, tiny orange flowers, sweet autumn scent", style: "warm orange and beige tones, sweet autumn glow" },
-  { startMd: "11-01", endMd: "11-15", name: "菊",     visual: "chrysanthemum flowers, layered autumn blooms, garden display", style: "warm amber and deep red tones, autumn garden richness" },
-  { startMd: "11-16", endMd: "11-30", name: "紅葉",   visual: "autumn maple leaves, red and gold foliage, falling leaves", style: "warm red and golden tones, autumn foliage glow" },
-  { startMd: "12-01", endMd: "12-15", name: "銀杏",   visual: "ginkgo leaves, golden fan-shaped foliage, tree-lined avenue", style: "golden yellow and brown tones, late autumn warmth" },
-  { startMd: "12-16", endMd: "12-31", name: "千両",   visual: "nandina red berries, glossy green leaves, winter garden", style: "deep red and glossy green tones, winter garden accent" },
+  { startMd: "01-01", endMd: "01-15", name: "寒椿",   visual: "winter camellia blossoms, deep red petals, snow-dusted garden", style: "deep red and white tones, crisp winter clarity", kana: "<ruby>寒椿<rt>かんつばき</rt></ruby>", en: "Winter Camellia" },
+  { startMd: "01-16", endMd: "01-31", name: "水仙",   visual: "narcissus flowers, white and yellow blooms, winter garden", style: "soft white and pale yellow tones, clean winter brightness", kana: "<ruby>水仙<rt>すいせん</rt></ruby>", en: "Narcissus" },
+  { startMd: "02-01", endMd: "02-14", name: "蝋梅",   visual: "wintersweet blossoms, pale yellow flowers, bare winter branches", style: "pale yellow and warm brown tones, quiet winter calm", kana: "<ruby>蝋梅<rt>ろうばい</rt></ruby>", en: "Wintersweet" },
+  { startMd: "02-15", endMd: "02-28", name: "梅",     visual: "plum blossoms, pink and white flowers, early spring branches", style: "soft pink and white tones, early spring freshness", kana: "<ruby>梅<rt>うめ</rt></ruby>", en: "Plum Blossom" },
+  { startMd: "03-01", endMd: "03-15", name: "菜の花", visual: "rapeseed flowers, bright yellow blooms, spring countryside field", style: "warm yellow and soft green tones, spring countryside light", kana: "<ruby>菜<rt>な</rt></ruby>の<ruby>花<rt>はな</rt></ruby>", en: "Rapeseed Blossom" },
+  { startMd: "03-16", endMd: "03-31", name: "彼岸桜", visual: "higan cherry blossoms, soft pink petals, drifting spring breeze", style: "soft pink and pale blue tones, gentle spring breeze", kana: "<ruby>彼岸桜<rt>ひがんざくら</rt></ruby>", en: "Higan Cherry Blossom" },
+  { startMd: "04-01", endMd: "04-15", name: "染井吉野", visual: "cherry blossoms, pink petals falling, Japanese garden breeze", style: "soft pink and pale blue tones, gentle spring breeze", kana: "<ruby>染井吉野<rt>そめいよしの</rt></ruby>", en: "Somei Yoshino Cherry Blossom" },
+  { startMd: "04-16", endMd: "04-30", name: "藤",     visual: "wisteria flowers, hanging purple clusters, trellis garden", style: "soft purple and lavender tones, late spring elegance", kana: "<ruby>藤<rt>ふじ</rt></ruby>", en: "Wisteria" },
+  { startMd: "05-01", endMd: "05-15", name: "杜若",   visual: "iris flowers, purple blooms, pond-side garden", style: "purple and fresh green tones, early summer calm", kana: "<ruby>杜若<rt>かきつばた</rt></ruby>", en: "Iris" },
+  { startMd: "05-16", endMd: "05-31", name: "皐月",   visual: "satsuki azalea blossoms, vivid pink flowers, garden hedge", style: "vivid pink and fresh green tones, early summer brightness", kana: "<ruby>皐月<rt>さつき</rt></ruby>", en: "Satsuki Azalea" },
+  { startMd: "06-01", endMd: "06-15", name: "紫陽花", visual: "hydrangea flowers, blue and purple blooms, rainy season garden", style: "blue, purple and soft gray tones, rainy season mood", kana: "<ruby>紫陽花<rt>あじさい</rt></ruby>", en: "Hydrangea" },
+  { startMd: "06-16", endMd: "06-30", name: "苔",     visual: "lush green moss, mossy stones, quiet shaded garden", style: "muted green and soft gray tones, quiet shaded calm", kana: "<ruby>苔<rt>こけ</rt></ruby>", en: "Moss" },
+  { startMd: "07-01", endMd: "07-15", name: "蓮",     visual: "lotus flowers, pink blooms, pond with green leaves", style: "soft pink and deep green tones, tranquil summer calm", kana: "<ruby>蓮<rt>はす</rt></ruby>", en: "Lotus" },
+  { startMd: "07-16", endMd: "07-31", name: "桔梗",   visual: "balloon flowers, purple star-shaped blooms, summer garden", style: "purple and deep green tones, summer garden depth", kana: "<ruby>桔梗<rt>ききょう</rt></ruby>", en: "Balloon Flower" },
+  { startMd: "08-01", endMd: "08-15", name: "向日葵", visual: "sunflowers, bright yellow blooms, summer field", style: "vivid yellow and deep blue tones, bright summer energy", kana: "<ruby>向日葵<rt>ひまわり</rt></ruby>", en: "Sunflower" },
+  { startMd: "08-16", endMd: "08-31", name: "百日紅", visual: "crape myrtle blossoms, vivid pink flowers, late summer garden", style: "vivid pink and deep green tones, late summer vibrance", kana: "<ruby>百日紅<rt>さるすべり</rt></ruby>", en: "Crape Myrtle" },
+  { startMd: "09-01", endMd: "09-15", name: "萩",     visual: "bush clover flowers, small purple-pink blooms, autumn garden", style: "soft purple-pink and beige tones, early autumn warmth", kana: "<ruby>萩<rt>はぎ</rt></ruby>", en: "Bush Clover" },
+  { startMd: "09-16", endMd: "09-30", name: "彼岸花", visual: "red spider lilies, vivid red blooms, autumn rice field", style: "vivid red and deep green tones, autumn field accent", kana: "<ruby>彼岸花<rt>ひがんばな</rt></ruby>", en: "Red Spider Lily" },
+  { startMd: "10-01", endMd: "10-15", name: "秋桜",   visual: "cosmos flowers, pink and white blooms, autumn breeze field", style: "soft pink and pale blue tones, autumn breeze softness", kana: "<ruby>秋桜<rt>こすもす</rt></ruby>", en: "Cosmos" },
+  { startMd: "10-16", endMd: "10-31", name: "金木犀", visual: "fragrant olive blossoms, tiny orange flowers, sweet autumn scent", style: "warm orange and beige tones, sweet autumn glow", kana: "<ruby>金木犀<rt>きんもくせい</rt></ruby>", en: "Fragrant Olive" },
+  { startMd: "11-01", endMd: "11-15", name: "菊",     visual: "chrysanthemum flowers, layered autumn blooms, garden display", style: "warm amber and deep red tones, autumn garden richness", kana: "<ruby>菊<rt>きく</rt></ruby>", en: "Chrysanthemum" },
+  { startMd: "11-16", endMd: "11-30", name: "紅葉",   visual: "autumn maple leaves, red and gold foliage, falling leaves", style: "warm red and golden tones, autumn foliage glow", kana: "<ruby>紅葉<rt>もみじ</rt></ruby>", en: "Autumn Maple Leaves" },
+  { startMd: "12-01", endMd: "12-15", name: "銀杏",   visual: "ginkgo leaves, golden fan-shaped foliage, tree-lined avenue", style: "golden yellow and brown tones, late autumn warmth", kana: "<ruby>銀杏<rt>いちょう</rt></ruby>", en: "Ginkgo" },
+  { startMd: "12-16", endMd: "12-31", name: "千両",   visual: "nandina red berries, glossy green leaves, winter garden", style: "deep red and glossy green tones, winter garden accent", kana: "<ruby>千両<rt>せんりょう</rt></ruby>", en: "Nandina" },
 ];
 
 /** 日付文字列（YYYY-MM-DD）から季節の花名を返す */
@@ -286,6 +288,18 @@ export function getSeasonalStyleTone(dateStr) {
   const md = dateStr.slice(5);
   return SEASONAL_FLOWERS.find(e => md >= e.startMd && md <= e.endMd)?.style
     ?? "soft pink and white tones, early spring freshness";
+}
+
+/** 日付文字列（YYYY-MM-DD）から季節要素の英語名を返す（Bug#31: 季節補充フォールバックのthemeEn用） */
+export function getSeasonalFlowerEn(dateStr) {
+  const md = dateStr.slice(5);
+  return SEASONAL_FLOWERS.find(e => md >= e.startMd && md <= e.endMd)?.en ?? "Plum Blossom";
+}
+
+/** 日付文字列（YYYY-MM-DD）から季節要素の名前のruby HTMLを返す（Bug#31: 季節補充フォールバックのthemeKana用） */
+export function getSeasonalFlowerKana(dateStr) {
+  const md = dateStr.slice(5);
+  return SEASONAL_FLOWERS.find(e => md >= e.startMd && md <= e.endMd)?.kana ?? "<ruby>梅<rt>うめ</rt></ruby>";
 }
 
 /**
@@ -374,9 +388,15 @@ async function generateResearchPool(env) {
   let supplemented = false;
   if (entries.length < 3) {
     const flowerName = getSeasonalFlower(todayJst);
+    const flowerEn    = getSeasonalFlowerEn(todayJst);
+    const flowerKana  = getSeasonalFlowerKana(todayJst);
     entries = [...entries, {
       theme:              `${flowerName}の季節`,
+      themeEn:            `${flowerEn} Season`,
       description:        `今の季節を彩る${flowerName}`,
+      descriptionEn:      `${flowerEn} is the highlight of this season.`,
+      themeKana:          `${flowerKana}の<ruby>季節<rt>きせつ</rt></ruby>`,
+      descriptionKana:    `<ruby>今<rt>いま</rt></ruby>の<ruby>季節<rt>きせつ</rt></ruby>を<ruby>彩<rt>いろど</rt></ruby>る${flowerKana}`,
       visualHint:         getSeasonalFlowerVisual(todayJst),
       foodItem:           null,
       kanjiChar:          null,
