@@ -472,6 +472,19 @@ Style: soft pastel colors, {getSeasonalStyleTone(today)}, gentle watercolor brus
 - ネガティブ指示`Do not add cherry blossoms, falling flower petals, or other seasonal decorations that are not explicitly mentioned in the Theme, Context, or Setting above.`をStyle行の後に追加（保険・デフェンスインデプス）。Theme/Context/Setting欄に明示された場合（例: 春のvisualHintに桜が含まれる）は除外対象にならない
 - **物理オブジェクト化・円形フレーム化の禁止（Bug#27・2026-07追加）**: 上記ネガティブ指示に続けて`Do not render the scene as if painted, printed, or mounted on a plate, dish, fan, tapestry, or any other physical object, and do not add a circular frame, border, or vignette around the subject.`を追加。生成画像が丸皿・団扇等の工芸品風にレンダリングされ、SUZURI連携（缶バッジ/アクキーの二重クロップ・Tシャツ/ステッカーの余白汚染）に悪影響を及ぼす問題への対処。**原因は未確定**（蓮エントリ`07-01`〜`07-15`のStyle行に唯一含まれていた`pond`語を疑ったが、報告事例のTheme/Context/Setting側には蓮・池を連想させる語がなく断定できなかった）のため、原因非依存で効果のあるネガティブ指示を主策とした。蓮エントリの`style`からは`pond`語を除去し他エントリと同じ「色調＋抽象的雰囲気語」パターンに統一済み（`"soft pink and deep green tones, tranquil summer calm"`）。詳細は`bugs-history.md`のBug#27参照
 
+**季節補充フォールバックのkana/英語フィールド（`getSeasonalFlowerKana()`/`getSeasonalFlowerEn()`・2026-07追加・Bug#31）:**
+
+`generateResearchPool()`の季節補充フォールバック（当日のリサーチプールが3件未満のときに`SEASONAL_FLOWERS`から直接組み立てるエントリ）は、Geminiを呼ばないため通常エントリが持つ`themeKana`/`descriptionKana`/`themeEn`/`descriptionEn`が欠落しており、かなモード・英語モードで日本語表示にフォールバックしていた。
+
+- `SEASONAL_FLOWERS`の各エントリに`kana`（花の名前のruby HTML、例: 桔梗→`<ruby>桔梗<rt>ききょう</rt></ruby>`）・`en`（花の英語名、例: `Balloon Flower`）フィールドを追加。`visual`/`style`と同じ人手管理パターンで、Gemini API呼び出しは追加しない
+- `getSeasonalFlowerKana(dateStr)`/`getSeasonalFlowerEn(dateStr)`を`getSeasonalFlowerVisual()`と同じ形で新設
+- 季節補充フォールバックのオブジェクトは`theme`/`description`の固定テンプレート（「の季節」「今の季節を彩る」）部分のふりがなと組み合わせて以下を組み立てる:
+  - `themeKana`: `${flowerKana}の<ruby>季節<rt>きせつ</rt></ruby>`
+  - `descriptionKana`: `<ruby>今<rt>いま</rt></ruby>の<ruby>季節<rt>きせつ</rt></ruby>を<ruby>彩<rt>いろど</rt></ruby>る${flowerKana}`
+  - `themeEn`: `${flowerEn} Season`
+  - `descriptionEn`: `${flowerEn} is the highlight of this season.`（苔・紅葉・銀杏・千両等「花が咲かない」季節要素にも使えるよう「bloom」等の開花表現は避ける。Bug#25と同じ配慮）
+- `themeKana`/`descriptionKana`は`<rp>`フォールバック括弧を付けない。Geminiが生成する`themeKana`の既存例（プロンプト内サンプル・`handleResearch()`のテスト用フィクスチャ）と表記を揃えるため
+
 ### visualHintの役割（2026-05変更）
 
 旧役割: テーマが日本語のみのときPollinationsプロンプトのASCII化で内容が失われる問題を補完（「日本語回避」）。

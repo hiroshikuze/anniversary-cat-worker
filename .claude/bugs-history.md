@@ -285,4 +285,14 @@
 - **場所**: `worker/index.js` `handleResearch()`（新規`stripHtmlTags()`）・`worker/bot.js` `buildPostText()` `buildMastodonText()`
 - **教訓**: LLMの構造化出力は「プロンプトで指示した通りの形式で返る」ことを前提にせず、各フィールドの型・形式を検証・サニタイズしてから使う。とくに複数フィールドが似た内容（`theme`と`themeKana`のように同じ情報の別表現）を持つ場合、LLMが取り違えて同じ値を別フィールドに複製するリスクがある。また外部SNS APIへの投稿のような「失敗すると機会が失われ取り返せない」操作は、入力値の想定外の長さ・形式に対する実行時の安全網を根本修正とは別に用意しておく
 
+### 31. 季節補充フォールバックにthemeKana/descriptionKana/themeEn/descriptionEnが欠落しかなモード・英語モードで日本語にフォールバックする（2026-07）
+
+- **症状**: ユーザー報告「かなモード設定中のスクリーンショットで、桔梗の季節（7/16〜7/31・季節補充フォールバック発動日）にふりがなが付かなかった」
+- **原因**: `generateResearchPool()`の季節補充ブロック（当日のリサーチプールが3件未満のときに発動。`worker/index.js` 373〜389行目）が生成するフォールバックエントリのオブジェクトリテラルは、Geminiを一切呼ばず`theme`/`description`のみを直接組み立てており、`themeKana`/`descriptionKana`（かなモード用ruby HTML）と`themeEn`/`descriptionEn`（英語モード用）が最初から存在しなかった。通常のGemini生成エントリはこれら6フィールドすべてを含むため、季節補充フォールバックの日だけ`themeKana`等が`undefined`になり、フロントエンドの「既存データにthemeKanaがない場合は日本語にフォールバック」という既存の後方互換ロジックが働いて、ふりがな・英語表示なしの日本語表示になっていた
+- **影響範囲**: かなモード（`?lang=kana`）と英語モード（`?lang=en`）の両方。季節補充フォールバックは通常10%の確率でのみ選ばれる低頻度の分岐だが、リサーチプールが3件未満になる日（Gemini検索結果が乏しい日）には必ず発動する
+- **修正**: `SEASONAL_FLOWERS`配列の既存24エントリ（`visual`/`style`と同じ人手管理パターン）に、花の名前のふりがな用`kana`フィールド（ruby HTML、例: 桔梗→`<ruby>桔梗<rt>ききょう</rt></ruby>`）と英語名`en`フィールド（例: `Balloon Flower`）を追加。新規`getSeasonalFlowerKana(dateStr)`/`getSeasonalFlowerEn(dateStr)`を`getSeasonalFlowerVisual()`と同じパターンで新設し、`generateResearchPool()`の季節補充フォールバックで`theme`/`description`の固定テンプレート部分（「の季節」「今の季節を彩る」）のふりがなと組み合わせて`themeKana`/`descriptionKana`/`themeEn`/`descriptionEn`を組み立てる。GeminiのAPI呼び出しは追加しない（実行時コストゼロ・24種類の固定パターンのため事前に人手で用意可能）
+- **テスト**: `scripts/test-bot.mjs`に`getSeasonalFlowerKana()`/`getSeasonalFlowerEn()`の全24エントリ検証（kanaはruby HTML形式・enはASCIIのみ）を追加。`generateResearchPool()`自体は非exportのため既存の`getSeasonalFlowerVisual()`等と同じ方針でgetter関数単位のテストに留める
+- **場所**: `worker/index.js` `SEASONAL_FLOWERS` `getSeasonalFlowerKana()`（新設） `getSeasonalFlowerEn()`（新設） `generateResearchPool()`
+- **教訓**: 通常経路（Gemini API呼び出し）とフォールバック経路（固定値の直接組み立て）が同じデータ構造（`theme`/`description`等のフィールド一式）を返す設計では、通常経路にフィールドを追加した際にフォールバック経路が追随しているか確認する。今回はかなモード追加（`themeKana`/`descriptionKana`）・英語モード追加（`themeEn`/`descriptionEn`）のどちらの実装時にも季節補充フォールバックへの反映が漏れていた
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
