@@ -33,6 +33,8 @@ async function ensurePhoton() {
 const BLUESKY_API            = "https://bsky.social/xrpc";
 const SITE_URL               = "https://hiroshikuze.github.io/anniversary-cat-worker/";
 export const BLUESKY_MAX_IMAGE_BYTES = 976_000; // Bluesky上限 1,000,000 bytes に余裕を持たせた値
+// Bug#32: TextEncoderのインスタンス生成コストを避けるためモジュールスコープで使い回す
+const ENCODER = new TextEncoder();
 
 // 投稿文字数の実行時安全網（Bug#30）。theme/description異常時でも上限超過で投稿失敗しないよう
 // grapheme数で切り詰める。Bluesky投稿は二重投稿防止のため意図的にリトライしない設計のため、
@@ -40,14 +42,20 @@ export const BLUESKY_MAX_IMAGE_BYTES = 976_000; // Bluesky上限 1,000,000 bytes
 const BLUESKY_MAX_GRAPHEMES  = 300;
 const MASTODON_MAX_GRAPHEMES = 500;
 
+// Bug#32: Intl.Segmenterのインスタンス生成コストを避けるためモジュールスコープで使い回す
+const SEGMENTER = new Intl.Segmenter();
+
 function graphemeLength(text) {
-  return [...new Intl.Segmenter().segment(text)].length;
+  return [...SEGMENTER.segment(text)].length;
 }
 
 // textをmax grapheme以内に切り詰める。max以下ならそのまま返す
 function truncateToGraphemes(text, max) {
   if (max <= 0) return "";
-  const segments = [...new Intl.Segmenter().segment(text)].map((s) => s.segment);
+  // Bug#32: text.length（UTF-16コード単位数）は書記素数の上界のため、
+  // コード単位数だけで上限内と判定できる場合はSegmenterによる全文書記素分割を省略する
+  if (text.length <= max) return text;
+  const segments = [...SEGMENTER.segment(text)].map((s) => s.segment);
   if (segments.length <= max) return text;
   return segments.slice(0, max).join("");
 }
@@ -195,7 +203,7 @@ export function buildMastodonText(theme, description, themeEn = "", descriptionE
  * @param {string[]} [additionalTags] - 固定リスト以外に検索するタグ（例: テーマタグ）
  */
 export function buildHashtagFacets(text, additionalTags = []) {
-  const encoder = new TextEncoder();
+  const encoder = ENCODER; // Bug#32: モジュールスコープのインスタンスを再利用
   const facets  = [];
   const allTags = [...HASHTAG_LIST, ...additionalTags];
 
@@ -224,7 +232,7 @@ export function buildHashtagFacets(text, additionalTags = []) {
  * @param {string} [url] - 検索・リンク先 URL（デフォルト: SITE_URL）
  */
 export function buildUrlFacets(text, url = SITE_URL) {
-  const encoder = new TextEncoder();
+  const encoder = ENCODER; // Bug#32: モジュールスコープのインスタンスを再利用
   const facets  = [];
   let searchFrom = 0;
 
@@ -319,18 +327,21 @@ async function shrinkByPollinations(theme, description) {
 
   const buffer  = await res.arrayBuffer();
   const newMime = res.headers.get("Content-Type") || "image/jpeg";
+  const bytes   = new Uint8Array(buffer);
   console.log(`[bot] Pollinations縮小画像取得完了 (${buffer.byteLength} bytes)`);
-  return { imageData: arrayBufferToBase64(buffer), mimeType: newMime };
+  return { imageData: arrayBufferToBase64(buffer), mimeType: newMime, bytes };
 }
 
 /**
  * Bluesky上限（~976KB）を超える画像をPhotonでJPEG圧縮する。
  * Photon失敗時またはJPEG圧縮後もサイズ超過の場合はPollinationsで再取得する。
+ * Bug#32: 呼び出し元での再デコードを避けるため、戻り値にデコード済みbytesを含める
+ * （すべての分岐で既にデコード/生成済みのUint8Arrayをそのまま返す）。
  */
 async function shrinkImageIfNeeded(imageData, mimeType, theme, description) {
   const bytes = base64ToBytes(imageData);
   if (bytes.length <= BLUESKY_MAX_IMAGE_BYTES) {
-    return { imageData, mimeType };
+    return { imageData, mimeType, bytes };
   }
   console.log(`[bot] 画像サイズ超過 (${bytes.length} bytes > ${BLUESKY_MAX_IMAGE_BYTES})、Photon JPEG圧縮を試みます`);
 
@@ -343,7 +354,7 @@ async function shrinkImageIfNeeded(imageData, mimeType, theme, description) {
     img1.free();
     if (jpeg70.length <= BLUESKY_MAX_IMAGE_BYTES) {
       console.log(`[bot] Photon圧縮完了 quality=70 (${jpeg70.length} bytes)`);
-      return { imageData: uint8ArrayToBase64(jpeg70), mimeType: "image/jpeg" };
+      return { imageData: uint8ArrayToBase64(jpeg70), mimeType: "image/jpeg", bytes: jpeg70 };
     }
 
     // quality 40 で再試行
@@ -352,7 +363,7 @@ async function shrinkImageIfNeeded(imageData, mimeType, theme, description) {
     img2.free();
     if (jpeg40.length <= BLUESKY_MAX_IMAGE_BYTES) {
       console.log(`[bot] Photon圧縮完了 quality=40 (${jpeg40.length} bytes)`);
-      return { imageData: uint8ArrayToBase64(jpeg40), mimeType: "image/jpeg" };
+      return { imageData: uint8ArrayToBase64(jpeg40), mimeType: "image/jpeg", bytes: jpeg40 };
     }
 
     console.log(`[bot] Photon圧縮後もサイズ超過 (${jpeg40.length} bytes)、Pollinationsフォールバック`);
@@ -593,7 +604,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
     // ── 2. 画像生成 ────────────────────────────────────────────────────────
     console.log(`${prefix} generate 開始`);
     const generated = await handleGenerate(
-      { theme: research.theme, description: research.description, visualHint: research.visualHint ?? null, foodItem: research.foodItem ?? null, themeEn: research.themeEn ?? "", descriptionEn: research.descriptionEn ?? "" },
+      { theme: research.theme, description: research.description, visualHint: research.visualHint ?? null, foodItem: research.foodItem ?? null, themeEn: research.themeEn ?? "", descriptionEn: research.descriptionEn ?? "", jstDateISO },
       apiKey,
       env
     );
@@ -634,23 +645,25 @@ export async function runBot(env, handleResearch, handleGenerate) {
     }
 
     // ── 5. 共有データ準備 ─────────────────────────────────────────────────
-    const shrunk     = await shrinkImageIfNeeded(
+    // Bug#32: descはこの後複数箇所で使うため1回だけ評価して使い回す
+    const desc        = research.description ?? "";
+    const shrunk       = await shrinkImageIfNeeded(
       generated.imageData, generated.mimeType || "image/png",
-      research.theme, research.description ?? ""
+      research.theme, desc
     );
-    const imageBytes = base64ToBytes(shrunk.imageData);
-    const mimeType   = shrunk.mimeType;
+    // Bug#32: shrinkImageIfNeeded()がデコード済みbytesを返すため再デコード不要
+    const imageBytes  = shrunk.bytes;
+    const mimeType    = shrunk.mimeType;
 
     const themeTag    = buildThemeTag(research.theme);
     const guestSnsTag = generated.guest?.snsTag ?? null;
     const cta         = pickCta();
-    const text        = buildPostText(research.theme, research.description ?? "", pageUrl, guestSnsTag, cta);
+    const text        = buildPostText(research.theme, desc, pageUrl, guestSnsTag, cta);
     const mastoText   = buildMastodonText(
-      research.theme, research.description ?? "",
+      research.theme, desc,
       research.themeEn ?? "", research.descriptionEn ?? "",
       pageUrl, guestSnsTag, cta
     );
-    const desc     = research.description ?? "";
     const altText  = desc
       ? `にゃんバーサリー - 「${research.theme}」の日！${desc}（AIが生成した水彩画風の猫イラスト）`
       : `にゃんバーサリー - 「${research.theme}」をテーマにAIが生成した水彩画風の猫イラスト`;
@@ -713,12 +726,11 @@ export async function runBot(env, handleResearch, handleGenerate) {
           ? "✅ Mastodon投稿完了"
           : `❌ Mastodon投稿失敗: ${mastoResult.reason?.message}`;
 
+      // Bug#32: research.kanjiCharはhandleResearch()経由ならnormalizeKanjiChar()で
+      // 既に正規化済み（有効な漢字1文字 or "😺"）。季節補充フォールバック由来の場合のみ
+      // 正規化されずnullになりうる。いずれのケースも正規表現は不要で単純な値比較で足りる
       const _k = research.kanjiChar;
-      const kanjiLine = `🈁 裏面漢字: ${
-        _k && /[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]/.test(_k)
-          ? `${_k}（採用）`
-          : _k ? `「${_k}」無効→🐾` : "なし→🐾"
-      }`;
+      const kanjiLine = `🈁 裏面漢字: ${_k && _k !== "😺" ? `${_k}（採用）` : "なし→🐾"}`;
       const lines = [
         bskyLine,
         mastoLine,

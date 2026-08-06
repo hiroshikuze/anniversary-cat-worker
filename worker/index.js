@@ -945,7 +945,8 @@ export async function handleGenerate(body, apiKey, env) {
     ? `${personality}, ${guest.guardianModifier}`
     : personality;
   // Bug#26: 季節カラー（getSeasonalStyleTone）でStyle行の固定文言"light pink and beige tones"を置き換える
-  const seasonalStyleTone = getSeasonalStyleTone(toJSTDateStringWorker(new Date()));
+  // Bug#32: runBot()側で計算済みのJST日付があれば再利用し、new Date()の再計算を避ける
+  const seasonalStyleTone = getSeasonalStyleTone(body.jstDateISO ?? toJSTDateStringWorker(new Date()));
   const prompt = _buildGeminiPrompt(theme, description, persona, effectivePersonality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, seasonalStyleTone);
 
   async function callModel(model) {

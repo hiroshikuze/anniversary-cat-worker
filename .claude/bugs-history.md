@@ -295,4 +295,21 @@
 - **場所**: `worker/index.js` `SEASONAL_FLOWERS` `getSeasonalFlowerKana()`（新設） `getSeasonalFlowerEn()`（新設） `generateResearchPool()`
 - **教訓**: 通常経路（Gemini API呼び出し）とフォールバック経路（固定値の直接組み立て）が同じデータ構造（`theme`/`description`等のフィールド一式）を返す設計では、通常経路にフィールドを追加した際にフォールバック経路が追随しているか確認する。今回はかなモード追加（`themeKana`/`descriptionKana`）・英語モード追加（`themeEn`/`descriptionEn`）のどちらの実装時にも季節補充フォールバックへの反映が漏れていた
 
+### 32. Cron Trigger実行がWorkers Free プランのCPU時間上限（10ms）を恒常的に超過し投稿が途中で止まる（2026-08）
+
+- **症状**: 2026-08-04 22:00 UTC以降、両方のCron Trigger（`0 15 * * *`・`0 22 * * 1-5`）がCloudflareダッシュボードの実行履歴に1件も記録されなくなった。`wrangler.toml`へのコメントのみの変更で再デプロイしCron Trigger登録をリフレッシュしたところ実行自体は復旧したが、その後ダッシュボードから手動でScheduledイベントを送信した際、R2への画像保存（`bot/YYYY-MM-DD`）は成功したにもかかわらずBluesky/Mastodon投稿・Discord完了通知が一切行われなかった
+- **原因調査**: Cloudflare公式ドキュメント（[Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)）で、Workers Freeプランの「CPU time per Cron Trigger」上限が**10ms**であることを確認。一方、過去の正常時のCronイベントログのCPU時間は**243〜297ms**（上限の約20〜30倍）で恒常的に推移していた。公式ドキュメントには「isolateには不定期の超過を許容する内部的な猶予があるが、恒常的に超過し続ける場合は実行が終了させられる」と明記されており、これまで動作していたのはこの非公式な猶予に依存していたためと考えられる。2026-08-04以降この猶予が尽きた（または打ち切られた）結果、Cron実行自体が記録されなくなり、再デプロイ後もCPU時間予算切れで`runBot()`の後半（Bluesky/Mastodon投稿・Discord通知）まで到達できないケースが発生したと推定される
+- **恒久対応（未実施・検討中）**: Workers Paidプランへのアップグレード（月$5〜）でCPU時間上限が30秒（1時間未満間隔のCron Trigger）に緩和される。ただし2026-08時点でSUZURI等による収益がまだ発生していないため、まずは無料枠内でCPU時間を削減する最適化を試み、それでも不安定な場合に移行を検討する方針とした
+- **暫定対応（実施済み）**: `runBot()`実行パス内でCPU時間を消費している不要な重複処理を洗い出し、以下を解消した
+  - `worker/bot.js`: 同一base64画像データが`saveToR2()`・`shrinkImageIfNeeded()`のサイズ判定・Bluesky投稿用バイト列変換の3箇所で毎回デコードし直されていた。1回のデコード結果を使い回すよう変更
+  - `worker/bot.js`: `graphemeLength()`/`truncateToGraphemes()`が`Intl.Segmenter`を毎回新規生成し、上限を超えない場合でも常に全文を書記素分割していた（`Bug#30`で追加した安全網）。JS文字列の`.length`（UTF-16コード単位数）は書記素数の上界であることを利用し、`text.length <= max`の場合はSegmenterを呼ばずに済むfast pathを追加。`Intl.Segmenter`インスタンスはモジュールスコープで1つを使い回す
+  - `worker/index.js`: `handleGenerate()`が`getSeasonalStyleTone()`用のJST日付を`toJSTDateStringWorker(new Date())`で独自に再計算していたが、`runBot()`側で同じ日付をすでに計算済みだった。`body.jstDateISO`として渡せる場合はそれを再利用するよう変更（後方互換: 未指定時は従来通り自前で計算）
+  - `worker/bot.js`: Discord通知の裏面漢字表示行が、`handleResearch()`側で`normalizeKanjiChar()`によりすでに正規化済みの値に対して同じ正規表現で再判定していた。単純な値比較（`_k && _k !== "😺"`）に置き換えて正規表現を削除。季節補充フォールバック由来の`kanjiChar: null`（`normalizeKanjiChar()`を通らない）も正しく「なし→🐾」表示になることを確認した上で修正（サブエージェントの初期提案`_k === "😺" ? ... : ...`はこの`null`ケースを見落としており`"null（採用）"`と表示するバグを持っていたため採用せず修正）
+  - `worker/bot.js`: `buildHashtagFacets()`/`buildUrlFacets()`がそれぞれ独自に`new TextEncoder()`を生成していた（`createPost()`1回あたり最大3インスタンス）。モジュールスコープの単一インスタンスを共有するよう変更
+  - `worker/bot.js`: `research.description ?? ""`を`runBot()`内4箇所で毎回再評価していたのを、`desc`変数に1回だけ代入して使い回すよう変更
+- **見送った項目**: `buildThemeTag()`の3重計算（`runBot()`・`buildPostText()`・`buildMastodonText()`各々で再計算）とヘッダー文字列の2重組み立ては、`buildPostText()`/`buildMastodonText()`のシグネチャ変更が必要で`scripts/test-bot.mjs`内の既存テスト呼び出し箇所への影響範囲が広い一方、正規表現・テンプレートリテラルの計算コスト自体は`Intl.Segmenter`や`Date`系ほど高くないため、今回は見送った
+- **テスト**: 既存の`scripts/test-bot.mjs`（637件+26件）で全項目が動作変更なしであることを回帰確認。fast path追加箇所には境界値テストを追加
+- **場所**: `worker/bot.js`（`shrinkImageIfNeeded()` `graphemeLength()` `truncateToGraphemes()` `runBot()` `buildHashtagFacets()` `buildUrlFacets()`）・`worker/index.js`（`handleGenerate()`）
+- **教訓**: Cloudflare WorkersのCPU時間制限は「たまたま動いている」状態が長く続くことがあり、実際に制限を超過している事実に気づきにくい。定期的にダッシュボードのCronイベントログでCPU時間の実測値を確認し、プランの公式上限と比較する習慣が必要。またLLMエージェントが提案する「一見安全な簡略化」も、分岐の全パターン（今回は`null`という第3の値）を网羅しているか必ず自分で検証してから適用する
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
