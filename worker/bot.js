@@ -15,7 +15,7 @@
 
 import { saveToR2 } from "./r2-storage.js";
 import { createSuzuriProducts } from "./suzuri.js";
-import { pickFromPool } from "./index.js";
+import { pickFromPool, incrementCpuTimeKv } from "./index.js";
 
 // Photonは動的importで遅延ロード（Node.jsテスト環境での.wasmロード失敗を回避）
 let _photonReady = false;
@@ -583,11 +583,9 @@ export async function runBot(env, handleResearch, handleGenerate) {
   }
 
   try {
-    // Bug#32: CPU時間分析用チェックポイント。performance.now()はネットワーク待ちを
-    // 含む壁時計時間だが、同期処理のみのブロックであれば実質CPU時間の近似値になる
-    const tResearchStart = performance.now();
-
     // ── 1. 記念日リサーチ（R2プール優先・フォールバックはリアルタイムGemini）──
+    // Bug#32: CPU時間計測はhandleResearch()内部に実装済み（[cpu] research: ...ms）。
+    // ここでは外側から壁時計時間（ネットワーク待ち含む）を測ってもCPU時間の近似にならないため測らない
     let research;
     if (env.IMAGE_BUCKET) {
       const poolObj = await env.IMAGE_BUCKET.get(`research-pool/${jstDateISO}.json`);
@@ -604,10 +602,9 @@ export async function runBot(env, handleResearch, handleGenerate) {
       research = await handleResearch({ date: dateStr }, apiKey, env);
       console.log(`${prefix} research 完了 theme="${research.theme}"`);
     }
-    console.log(`[cpu] research: ${(performance.now() - tResearchStart).toFixed(1)}ms`);
 
     // ── 2. 画像生成 ────────────────────────────────────────────────────────
-    const tGenerateStart = performance.now();
+    // Bug#32: CPU時間計測はhandleGenerate()内部に実装済み（[cpu] generate: ...ms）
     console.log(`${prefix} generate 開始`);
     const generated = await handleGenerate(
       { theme: research.theme, description: research.description, visualHint: research.visualHint ?? null, foodItem: research.foodItem ?? null, themeEn: research.themeEn ?? "", descriptionEn: research.descriptionEn ?? "", jstDateISO },
@@ -615,7 +612,6 @@ export async function runBot(env, handleResearch, handleGenerate) {
       env
     );
     console.log(`${prefix} generate 完了 source=${generated.source}`);
-    console.log(`[cpu] generate: ${(performance.now() - tGenerateStart).toFixed(1)}ms`);
 
     // ── 3. R2 保存（best-effort） ─────────────────────────────────────────
     // SUZURI商品登録はボットでは行わない。
@@ -653,6 +649,9 @@ export async function runBot(env, handleResearch, handleGenerate) {
 
     // ── 5. 共有データ準備 ─────────────────────────────────────────────────
     // Bug#32: descはこの後複数箇所で使うため1回だけ評価して使い回す
+    // Bug#32: 通常系（976KB以下・Photon圧縮）は同期処理のみでCPU時間の近似値になるが、
+    // 976KB超過かつPhoton圧縮後もサイズ超過という稀なケースのみPollinationsへのfetch
+    // （ネットワーク待ち）を含む点に留意する
     const tShrinkStart = performance.now();
     const desc        = research.description ?? "";
     const shrunk       = await shrinkImageIfNeeded(
@@ -662,7 +661,9 @@ export async function runBot(env, handleResearch, handleGenerate) {
     // Bug#32: shrinkImageIfNeeded()がデコード済みbytesを返すため再デコード不要
     const imageBytes  = shrunk.bytes;
     const mimeType    = shrunk.mimeType;
-    console.log(`[cpu] shrinkImageIfNeeded: ${(performance.now() - tShrinkStart).toFixed(1)}ms`);
+    const shrinkCpuMs = performance.now() - tShrinkStart;
+    console.log(`[cpu] shrinkImageIfNeeded: ${shrinkCpuMs.toFixed(1)}ms`);
+    await incrementCpuTimeKv(env.RATE_KV, "shrinkImage", shrinkCpuMs);
 
     const themeTag    = buildThemeTag(research.theme);
     const guestSnsTag = generated.guest?.snsTag ?? null;

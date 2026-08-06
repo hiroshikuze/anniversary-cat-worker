@@ -56,7 +56,12 @@ export async function getImageFromR2(bucket, id) {
     if (obj) {
       const buffer = await obj.arrayBuffer();
       const mimeType = obj.httpMetadata?.contentType ?? (ext === "jpg" ? "image/jpeg" : "image/png");
-      return { data: uint8ArrayToBase64(new Uint8Array(buffer)), mimeType };
+      // Bug#32: /image/:id はレート制限がなく高頻度に呼ばれうるため、KV集計（1日1,000回書き込み上限）
+      // は行わずconsole.logのみに留める（architecture.mdの「CPU時間のステップ別記録」参照）
+      const tCpuStart = performance.now();
+      const data = uint8ArrayToBase64(new Uint8Array(buffer));
+      console.log(`[cpu] getImageFromR2-base64Encode: ${(performance.now() - tCpuStart).toFixed(1)}ms`);
+      return { data, mimeType };
     }
   }
   return null;

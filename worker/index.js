@@ -196,6 +196,28 @@ export async function incrementUsageKv(kv, kind, tokens, model, resolvedModel = 
   }
 }
 
+// Bug#32: CPU時間のステップ別日次集計（/usage・incrementUsageKv()と同じパターン）。
+// KV書き込みは1日1,000回までのため、既存のレート制限で呼び出し回数が有界な経路
+// （research/generate/suzuri-create・Cron）のみで呼ぶ。レート制限のない高頻度経路
+// （/image/:id等）はconsole.logのみに留め、この関数は呼ばない
+export async function incrementCpuTimeKv(kv, step, ms) {
+  if (!kv) return;
+  const today = new Date().toISOString().slice(0, 10); // UTC YYYY-MM-DD
+  const key   = `cpu-time:${today}`;
+  try {
+    const raw    = await kv.get(key);
+    const stored = raw ? JSON.parse(raw) : {};
+    const s = stored[step] ?? { calls: 0, totalMs: 0, maxMs: 0 };
+    s.calls++;
+    s.totalMs += ms;
+    s.maxMs = Math.max(s.maxMs, ms);
+    stored[step] = s;
+    await kv.put(key, JSON.stringify(stored), { expirationTtl: 32 * 24 * 60 * 60 });
+  } catch (e) {
+    console.warn("[cpu] KV集計失敗:", e.message);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // CORS ヘッダー生成
 // ---------------------------------------------------------------------------
@@ -469,6 +491,9 @@ export async function handleResearch(body, apiKey, env = null) {
   );
 
   const resText = await res.text();
+  // Bug#32: ここから先はfetchを含まない同期処理のみのためCPU時間の近似値になる。
+  // fetchWithRetry()自体（ネットワーク待ち）は意図的に含めない
+  const tCpuStart = performance.now();
   if (!res.ok) {
     let msg;
     try { msg = JSON.parse(resText).error?.message; } catch { msg = resText.slice(0, 120); }
@@ -553,6 +578,10 @@ export async function handleResearch(body, apiKey, env = null) {
   );
 
   await incrementUsageKv(env?.RATE_KV, "text", totalTokens, model, data.modelVersion ?? null);
+
+  const cpuMs = performance.now() - tCpuStart;
+  console.log(`[cpu] research: ${cpuMs.toFixed(1)}ms`);
+  await incrementCpuTimeKv(env?.RATE_KV, "research", cpuMs);
 
   return result;
 }
@@ -982,6 +1011,9 @@ export async function handleGenerate(body, apiKey, env) {
       // その他のエラー（クォータ超過・安全フィルタ等）は即座に失敗
       throw new Error(msg);
     }
+    // Bug#32: ここから先はfetchを含まない同期処理のみのためCPU時間の近似値になる。
+    // base64画像データを含む大きめのJSONをパースする箇所のため計測対象にした
+    const tCpuStart = performance.now();
     let data;
     try { data = JSON.parse(resText); } catch {
       throw new Error(`Gemini レスポンス解析エラー: ${resText.slice(0, 120)}`);
@@ -996,6 +1028,9 @@ export async function handleGenerate(body, apiKey, env) {
     const imgTokens = data.usageMetadata?.totalTokenCount ?? 0;
     console.log(`[generate] Gemini success model=${model} mimeType=${imagePart.inlineData.mimeType} tokens=${imgTokens}`);
     await incrementUsageKv(env?.RATE_KV, "image", imgTokens, model, data.modelVersion ?? null);
+    const cpuMs = performance.now() - tCpuStart;
+    console.log(`[cpu] generate: ${cpuMs.toFixed(1)}ms`);
+    await incrementCpuTimeKv(env?.RATE_KV, "generate", cpuMs);
     return { imageData: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType || "image/png", source: "gemini" };
   }
 
@@ -1385,6 +1420,25 @@ ${itemsXml}
       return Response.json({ days: nonEmpty }, { headers: corsH });
     }
 
+    // GET: ステップ別CPU時間集計（直近30日・Bug#32）
+    if (request.method === "GET" && url.pathname === "/cpu-usage") {
+      if (!env.RATE_KV) return Response.json({ error: "KV not available" }, { status: 503, headers: corsH });
+      const days = [];
+      const now = new Date();
+      for (let i = 0; i < 30; i++) {
+        const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+        days.push(d.toISOString().slice(0, 10));
+      }
+      const entries = await Promise.all(
+        days.map(async d => {
+          const raw = await env.RATE_KV.get(`cpu-time:${d}`);
+          return { date: d, ...(raw ? JSON.parse(raw) : {}) };
+        })
+      );
+      const nonEmpty = entries.filter(e => Object.keys(e).length > 1);
+      return Response.json({ days: nonEmpty }, { headers: corsH });
+    }
+
     // GET: fal.ai高解像度画像をR2から返す（SUZURI向け安定URL）
     if (request.method === "GET" && url.pathname.startsWith("/hires/")) {
       const id = url.pathname.slice("/hires/".length);
@@ -1587,11 +1641,17 @@ ${itemsXml}
           // （SUZURI の sub_materials.texture は base64 data URI を受け付けず無視するため）
           let resolvedBackTexture = backTexture ?? null;
           if (backTexture?.startsWith("data:") && r2Id && env.IMAGE_BUCKET) {
+            // Bug#32: base64デコードのループ部分（同期処理のみ）を計測。R2 put自体は
+            // ネットワーク待ちのため計測対象に含めない
+            const tCpuStart = performance.now();
             try {
               const [, dataPart] = backTexture.split(",", 2);
               const binaryStr = atob(dataPart);
               const bytes = new Uint8Array(binaryStr.length);
               for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+              const cpuMs = performance.now() - tCpuStart;
+              console.log(`[cpu] suzuriCreate-backTextureDecode: ${cpuMs.toFixed(1)}ms`);
+              await incrementCpuTimeKv(env.RATE_KV, "suzuriCreate", cpuMs);
               await env.IMAGE_BUCKET.put(`${r2Id}/back.jpg`, bytes, {
                 httpMetadata: { contentType: "image/jpeg" },
               });

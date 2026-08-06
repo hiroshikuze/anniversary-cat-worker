@@ -18,7 +18,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta,
 } from "../worker/bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, _pollFalAndGetTexture } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, _pollFalAndGetTexture } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 
@@ -2020,6 +2020,58 @@ function makeKvMock() {
   // 境界値: kv が null のとき例外を投げない
   let threw = false;
   try { await incrementUsageKv(null, "text", 100, "gemini-2.5-flash-lite"); }
+  catch { threw = true; }
+  assert("kv=null でも例外を投げない", !threw);
+}
+
+// ---------------------------------------------------------------------------
+// incrementCpuTimeKv: CPU時間のステップ別KV日次集計（Bug#32）
+// ---------------------------------------------------------------------------
+console.log("\n[incrementCpuTimeKv]");
+{
+  // 正常系: 1回呼び出しでcalls/totalMs/maxMsが記録される
+  const kv = makeKvMock();
+  await incrementCpuTimeKv(kv, "research", 12.5);
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`cpu-time:${today}`]);
+  assert("calls が 1 になる",   stored.research.calls   === 1);
+  assert("totalMs が 12.5 になる", stored.research.totalMs === 12.5);
+  assert("maxMs が 12.5 になる",   stored.research.maxMs   === 12.5);
+}
+{
+  // 正常系: 複数回の呼び出しでcalls/totalMsが累積され、maxMsは最大値を保持する
+  const kv = makeKvMock();
+  await incrementCpuTimeKv(kv, "generate", 10);
+  await incrementCpuTimeKv(kv, "generate", 30);
+  await incrementCpuTimeKv(kv, "generate", 20);
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`cpu-time:${today}`]);
+  assert("calls が 3 に累積される",   stored.generate.calls   === 3);
+  assert("totalMs が 60 に累積される", stored.generate.totalMs === 60);
+  assert("maxMs が最大値(30)を保持する", stored.generate.maxMs   === 30);
+}
+{
+  // 正常系: 異なるstep名は別々のフィールドに集計される
+  const kv = makeKvMock();
+  await incrementCpuTimeKv(kv, "research", 10);
+  await incrementCpuTimeKv(kv, "generate", 20);
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`cpu-time:${today}`]);
+  assert("research と generate が独立して記録される", stored.research.totalMs === 10 && stored.generate.totalMs === 20);
+}
+{
+  // 境界値: ms=0（非常に速い処理）でも呼び出し回数として記録される
+  // （incrementUsageKvのtokens<=0スキップとは異なり、0msは正当な計測値のためスキップしない）
+  const kv = makeKvMock();
+  await incrementCpuTimeKv(kv, "shrinkImage", 0);
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`cpu-time:${today}`]);
+  assert("ms=0でもcallsが1に記録される", stored.shrinkImage.calls === 1);
+}
+{
+  // 境界値: kv が null のとき例外を投げない
+  let threw = false;
+  try { await incrementCpuTimeKv(null, "research", 10); }
   catch { threw = true; }
   assert("kv=null でも例外を投げない", !threw);
 }

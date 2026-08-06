@@ -504,6 +504,25 @@ async function checkWorker(workerUrl, bypassToken) {
     }
   }
 
+  // Bug#32: CPU時間のステップ別集計をCIログに出力する（Claude CodeセッションがCIログから
+  // Cloudflareダッシュボードを見ずにCPU時間の実測データを確認できるようにする目的）
+  console.log("\n[W4] Worker /cpu-usage エンドポイント確認");
+  const { ok: cpuOk, res: cpuRes, error: cpuErr } = await safeFetch(`${workerUrl}/cpu-usage`);
+  if (!check("Worker /cpu-usage 到達", cpuOk, cpuErr)) return data;
+  const cpuData = await cpuRes.json();
+  check("HTTP 200", cpuRes.status === 200, `status=${cpuRes.status}`);
+  if (cpuRes.ok) {
+    note(`/cpu-usage: ${cpuData.days?.length ?? 0} 日分のデータ`);
+    if (cpuData.days?.length > 0) {
+      const latest = cpuData.days[0];
+      const { date, ...steps } = latest;
+      const stepSummary = Object.entries(steps)
+        .map(([step, s]) => `${step}(calls=${s.calls} avg=${(s.totalMs / s.calls).toFixed(1)}ms max=${s.maxMs.toFixed(1)}ms)`)
+        .join(" ");
+      note(`最新 ${date}: ${stepSummary || "(記録なし)"}`);
+    }
+  }
+
   return data;
 }
 
