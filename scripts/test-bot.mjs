@@ -2702,6 +2702,63 @@ console.log("\n[【回帰】handleGenerate: 502平文レスポンス（Pollinati
 }
 
 // ---------------------------------------------------------------------------
+// 【回帰】handleGenerate: body.jstDateISOが渡された場合はそれを使う（Bug#32）
+// runBot()側ですでに計算済みのJST日付を再利用し、new Date()の再計算を避ける。
+// ---------------------------------------------------------------------------
+console.log("\n[【回帰】handleGenerate: jstDateISO受け渡し]");
+{
+  const origFetch = globalThis.fetch;
+  let capturedPrompt = null;
+  globalThis.fetch = async (url, opts) => {
+    // _twoPhaseRaceがPollinationsも並列に呼ぶため、Gemini generateContent呼び出しのみ判定する
+    if (typeof url === "string" && url.includes("generateContent")) {
+      capturedPrompt = JSON.parse(opts.body).contents[0].parts[0].text;
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "aW1h" } }] } }],
+        }),
+      };
+    }
+    // Pollinations等その他の呼び出しはGeminiが先着する前提でエラー扱いにしておく
+    // Pollinationsは_twoPhaseRaceで並列起動されるため、未処理rejectionを避けて無害な成功レスポンスを返す
+    return { ok: true, status: 200, headers: { get: () => "image/png" }, arrayBuffer: async () => new ArrayBuffer(1) };
+  };
+
+  // 7/20（実際の「今日」の日付とは無関係）を明示的に指定 → 桔梗の季節カラーが使われるはず
+  await handleGenerate({ theme: "テスト", description: "", jstDateISO: "2026-07-20" }, "dummy-key");
+  globalThis.fetch = origFetch;
+
+  assert("jstDateISO指定時: 指定日付の季節カラー（桔梗）がプロンプトに反映される", capturedPrompt?.includes("purple and deep green tones, summer garden depth"));
+}
+{
+  // jstDateISO省略時は従来通り実行時の日付から自動算出（クラッシュしないことのみ確認）
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (typeof url === "string" && url.includes("generateContent")) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "aW1h" } }] } }],
+        }),
+      };
+    }
+    // Pollinationsは_twoPhaseRaceで並列起動されるため、未処理rejectionを避けて無害な成功レスポンスを返す
+    return { ok: true, status: 200, headers: { get: () => "image/png" }, arrayBuffer: async () => new ArrayBuffer(1) };
+  };
+  let result;
+  try {
+    result = await handleGenerate({ theme: "テスト", description: "" }, "dummy-key");
+  } catch (e) {
+    result = null;
+  }
+  globalThis.fetch = origFetch;
+  assert("jstDateISO省略時: 従来通り正常に生成される", result?.source === "gemini");
+}
+
+// ---------------------------------------------------------------------------
 // [pickGuestAnimal]
 // ---------------------------------------------------------------------------
 // rand() の呼び出し順序（type別）:
@@ -3331,6 +3388,73 @@ console.log("\n[mastoSkipped: Discord ⏭️ 表示]");
 }
 
 // ---------------------------------------------------------------------------
+// Discord通知の裏面漢字行（kanjiLine）- Bug#32でrunBot()側の正規表現判定を
+// 単純な値比較に置き換えた際の回帰テスト。季節補充フォールバック由来の
+// kanjiChar=null（normalizeKanjiChar()を通らない値）でも正しく「なし→🐾」に
+// なることを確認する（サブエージェント提案の簡略化案はこのnullケースを
+// 見落としており "null（採用）" と表示するバグを持っていたため要検証箇所）
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: 裏面漢字行(kanjiLine)]");
+function makeDiscordCaptureFetch() {
+  const discordBodies = [];
+  const fetchFn = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("discord")) {
+      discordBodies.push(JSON.parse(opts?.body ?? "{}").content ?? "");
+      return { ok: true, status: 204, text: async () => "" };
+    }
+    if (u.includes("createSession")) return { ok: true, status: 200, text: async () => JSON.stringify({ accessJwt: "jwt", did: "did:plc:test" }) };
+    if (u.includes("uploadBlob"))   return { ok: true, status: 200, text: async () => JSON.stringify({ blob: { ref: { $link: "ref" }, mimeType: "image/png", size: 100 } }) };
+    if (u.includes("createRecord")) return { ok: true, status: 200, text: async () => JSON.stringify({ uri: "at://test", cid: "cid" }) };
+    return { ok: true, status: 200, text: async () => JSON.stringify({}) };
+  };
+  return { fetchFn, discordBodies };
+}
+{
+  // kanjiChar=null（季節補充フォールバック由来）→「なし→🐾」
+  const { fetchFn, discordBodies } = makeDiscordCaptureFetch();
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+  await runBot(
+    { GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook", BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass" },
+    async () => ({ theme: "テスト記念日", description: "説明", kanjiChar: null }),
+    async () => ({ imageData: "aW1h", mimeType: "image/png", source: "gemini" })
+  );
+  globalThis.fetch = origFetch;
+  const allBodies = discordBodies.join("\n");
+  assert("kanjiChar=null: 「なし→🐾」が含まれる", allBodies.includes("なし→🐾"));
+  assert("kanjiChar=null: 「null」という文字列が含まれない", !allBodies.includes("null"));
+}
+{
+  // kanjiChar="😺"（normalizeKanjiChar()のフォールバック値）→「なし→🐾」
+  const { fetchFn, discordBodies } = makeDiscordCaptureFetch();
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+  await runBot(
+    { GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook", BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass" },
+    async () => ({ theme: "テスト記念日", description: "説明", kanjiChar: "😺" }),
+    async () => ({ imageData: "aW1h", mimeType: "image/png", source: "gemini" })
+  );
+  globalThis.fetch = origFetch;
+  const allBodies = discordBodies.join("\n");
+  assert("kanjiChar=😺: 「なし→🐾」が含まれる", allBodies.includes("なし→🐾"));
+}
+{
+  // kanjiChar="塔"（有効な漢字）→「塔（採用）」
+  const { fetchFn, discordBodies } = makeDiscordCaptureFetch();
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+  await runBot(
+    { GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook", BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass" },
+    async () => ({ theme: "テスト記念日", description: "説明", kanjiChar: "塔" }),
+    async () => ({ imageData: "aW1h", mimeType: "image/png", source: "gemini" })
+  );
+  globalThis.fetch = origFetch;
+  const allBodies = discordBodies.join("\n");
+  assert("kanjiChar=塔: 「塔（採用）」が含まれる", allBodies.includes("塔（採用）"));
+}
+
+// ---------------------------------------------------------------------------
 // buildPostText: guestSnsTag
 // ---------------------------------------------------------------------------
 console.log("\n[buildPostText: guestSnsTag]");
@@ -3498,6 +3622,28 @@ function graphemeCount(text) {
   // 境界値: 通常のtheme/descriptionは従来通り変化しない
   const text = buildMastodonText("大仏の日", "東大寺の大仏開眼法要が行われた記念日。", "Great Buddha Day", "Anniversary of the eye-opening ceremony.");
   assert("通常時は従来通り英語ヘッダーで始まる", text.startsWith('Today is "Great Buddha Day"!'));
+}
+
+// ---------------------------------------------------------------------------
+// buildPostText: grapheme切り詰めのfast path回帰（Bug#32）
+// text.length（UTF-16コード単位数）は書記素数の上界であることを利用し、
+// text.length <= budgetの場合はIntl.Segmenterを呼ばずに済ませる最適化を追加した。
+// UTF-16コード単位数と書記素数がズレる絵文字混じりの入力でも、正しく
+// Segmenterベースの判定にフォールバックすることを確認する。
+// ---------------------------------------------------------------------------
+console.log("\n[buildPostText: grapheme fast path回帰]");
+{
+  // fast pathが使われるケース: 短いdescription（コード単位数 <= budget）はそのまま
+  const text = buildPostText("大仏の日", "短い説明文");
+  assert("fast path: 短いdescriptionはそのまま含まれる", text.includes("短い説明文"));
+}
+{
+  // fast pathを迂回する必要があるケース: サロゲートペア絵文字を含み、
+  // コード単位数 > 書記素数になる文字列でも正しく切り詰められる
+  const emojiDescription = "🐱".repeat(200); // 1絵文字 = UTF-16コード単位2つ・書記素1つ
+  const text = buildPostText("大仏の日", emojiDescription);
+  const graphemes = [...new Intl.Segmenter().segment(text)].length;
+  assert("絵文字混じりでも300 grapheme以内", graphemes <= 300);
 }
 
 // ---------------------------------------------------------------------------
