@@ -308,8 +308,14 @@
   - `worker/bot.js`: `buildHashtagFacets()`/`buildUrlFacets()`がそれぞれ独自に`new TextEncoder()`を生成していた（`createPost()`1回あたり最大3インスタンス）。モジュールスコープの単一インスタンスを共有するよう変更
   - `worker/bot.js`: `research.description ?? ""`を`runBot()`内4箇所で毎回再評価していたのを、`desc`変数に1回だけ代入して使い回すよう変更
 - **見送った項目**: `buildThemeTag()`の3重計算（`runBot()`・`buildPostText()`・`buildMastodonText()`各々で再計算）とヘッダー文字列の2重組み立ては、`buildPostText()`/`buildMastodonText()`のシグネチャ変更が必要で`scripts/test-bot.mjs`内の既存テスト呼び出し箇所への影響範囲が広い一方、正規表現・テンプレートリテラルの計算コスト自体は`Intl.Segmenter`や`Date`系ほど高くないため、今回は見送った
-- **テスト**: 既存の`scripts/test-bot.mjs`（637件+26件）で全項目が動作変更なしであることを回帰確認。fast path追加箇所には境界値テストを追加
-- **場所**: `worker/bot.js`（`shrinkImageIfNeeded()` `graphemeLength()` `truncateToGraphemes()` `runBot()` `buildHashtagFacets()` `buildUrlFacets()`）・`worker/index.js`（`handleGenerate()`）
-- **教訓**: Cloudflare WorkersのCPU時間制限は「たまたま動いている」状態が長く続くことがあり、実際に制限を超過している事実に気づきにくい。定期的にダッシュボードのCronイベントログでCPU時間の実測値を確認し、プランの公式上限と比較する習慣が必要。またLLMエージェントが提案する「一見安全な簡略化」も、分岐の全パターン（今回は`null`という第3の値）を网羅しているか必ず自分で検証してから適用する
+- **観測性の追加（実施済み・上記の暫定対応を実測で検証するため）**:
+  - `wrangler.toml`に`[observability.traces]`を有効化（ベータ期間中無料）
+  - Cron・HTTPエンドポイント問わず「重そうな処理」の前後に`performance.now()`計測を追加。`worker/index.js`の`recordCpuCheckpoint(step, ms, kv = null)`に共通化し、`console.log`（`[cpu] {step}: {ms}ms`形式）と、既存のレート制限で呼び出し回数が有界な経路（`research`・`generate`・`suzuriCreate-backTextureDecode`・`shrinkImage`・Cron）のみ`incrementCpuTimeKv()`によるKV日次集計（キー`cpu-time:YYYY-MM-DD`）を行う。`/usage`と同じ`GET /cpu-usage`エンドポイントで直近30日分を取得できる
+  - `research`/`generate`の計測は`handleResearch()`/`handleGenerate()`内部（`fetchWithRetry()`のネットワーク待ちを含まない同期処理区間のみ）に実装し、Cron・`/research`・`/generate`・`generateResearchPool()`の10並列呼び出しすべてを1箇所でカバーする
+  - `/image/:id`（`getImageFromR2()`）はレート制限がなく高頻度に呼ばれるため、Workers KV Freeプランの書き込み上限（1,000回/日）を圧迫しないよう`console.log`のみに留め、`recordCpuCheckpoint()`は使わない（循環import回避のため`r2-storage.js`は`worker/index.js`をimportしない設計上の理由もある）
+  - `scripts/health-check.js`に`/cpu-usage`を呼びCIログにステップ別サマリーを出力するチェック（`[W4]`）を追加。これによりCloudflareダッシュボードを都度確認せずとも、Claude CodeセッションがGitHub Actionsログから実測CPU時間を確認できるようになった
+- **テスト**: 既存の`scripts/test-bot.mjs`（657件+26件）で全項目が動作変更なしであることを回帰確認。fast path追加箇所・`incrementCpuTimeKv()`・`recordCpuCheckpoint()`には正常系/累積/境界値のテストを追加
+- **場所**: `worker/bot.js`（`shrinkImageIfNeeded()` `graphemeLength()` `truncateToGraphemes()` `runBot()` `buildHashtagFacets()` `buildUrlFacets()`）・`worker/index.js`（`handleResearch()` `handleGenerate()` `incrementCpuTimeKv()`（新設） `recordCpuCheckpoint()`（新設） `/cpu-usage`（新設） `/suzuri-create`ハンドラー）・`worker/r2-storage.js`（`getImageFromR2()`）・`wrangler.toml`・`scripts/health-check.js`
+- **教訓**: Cloudflare WorkersのCPU時間制限は「たまたま動いている」状態が長く続くことがあり、実際に制限を超過している事実に気づきにくい。定期的にダッシュボードのCronイベントログでCPU時間の実測値を確認し、プランの公式上限と比較する習慣が必要。またLLMエージェントが提案する「一見安全な簡略化」も、分岐の全パターン（今回は`null`という第3の値）を网羅しているか必ず自分で検証してから適用する。さらに、コード削減の最適化だけでなく「効果を実測で検証できる仕組み」自体を併せて整備しないと、修正が本当に効いたのか確認する手段がなくなる（`/usage`と同じKV集計＋API公開パターンをそのまま流用できた）
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）

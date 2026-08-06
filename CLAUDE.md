@@ -196,7 +196,8 @@ SUZURI_API_KEY=xxx node scripts/audit-suzuri-materials.mjs --delete   # 上記�
 | かなモード（JP/かな/EN 3択・ruby furigana・Gemini生成`themeKana`/`descriptionKana`・日付`formatDateKana()`でふりがな） | `frontend/index.html` `translations.kana`/`setLang()`/`formatDateKana()` / `worker/index.js` `handleResearch()` | 稼働中 |
 | Bluesky/Mastodon投稿CTA行のローテーション（`CTA_VARIANTS`重み付き5パターン・毎回同一文言の反復を回避） | `worker/bot.js` `pickCta()` | 稼働中 |
 | 外部通信の共通リトライ（5xx・ネットワーク例外を指数バックオフでリトライ。SUZURI登録・fal.aiポーリング・共有URL画像取得等に適用） | `worker/http-utils.js` `fetchWithRetry()` `worker/index.js` `_pollFalAndGetTexture()` | 稼働中 |
-| Workers Traces有効化・CPU時間計測チェックポイント（`runBot()`実行パスの重い処理に`performance.now()`ログを恒久設置。Workers Free上限10ms対策のBug#32の一環） | `wrangler.toml` `[observability.traces]` `worker/bot.js` | 稼働中 |
+| Workers Traces有効化・CPU時間計測チェックポイント（Cron・HTTPエンドポイント問わず重い処理に`recordCpuCheckpoint()`で計測を恒久設置。Workers Free上限10ms対策のBug#32の一環） | `wrangler.toml` `[observability.traces]` `worker/index.js` `recordCpuCheckpoint()` `worker/bot.js` | 稼働中 |
+| CPU時間のステップ別KV集計・API化（`/usage`と同パターン。`/cpu-usage`でCIログから確認可能） | `worker/index.js` `incrementCpuTimeKv()` `recordCpuCheckpoint()` `/cpu-usage` `scripts/health-check.js` | 稼働中 |
 
 ### 主要な定数値・APIエンドポイント一覧
 

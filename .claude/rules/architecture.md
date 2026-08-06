@@ -65,6 +65,7 @@ anniversary-cat-worker/
 | GET | `/back/:id` | TシャツSUZURI背面印刷テクスチャをR2から返す（sub_materials.textureはURLのみ対応のため） |
 | GET | `/rss.xml` | RSSフィード（直近14日のボット作品・サムネイル画像付き） |
 | GET | `/usage` | Gemini APIトークン使用量（直近30日・認証なし・`{days:[{date,textCalls,textTokens,textModel,imageCalls,imageTokens}]}`） |
+| GET | `/cpu-usage` | ステップ別CPU時間集計（直近30日・認証なし・`{days:[{date,{step}:{calls,totalMs,maxMs}}]}`） |
 | POST | `/suzuri-create` | ウォーターマーク済み画像を受け取りSUZURI登録・R2メタ更新 |
 
 ### /proxy-imageのセキュリティ制約
@@ -434,6 +435,36 @@ GeminiのAPIレスポンスに含まれる`usageMetadata.totalTokenCount`を取�
 - 集計フィールド: `textCalls`（回数）・`textTokens`（累計トークン数）・`textModel`・`textModelResolved`・`imageCalls`・`imageTokens`・`imageModel`・`imageModelResolved`
 - `/usage` GETエンドポイントで直近30日分をJSON返却（認証なし・統計のみ）
 - `scripts/health-check.js`の末尾でエンドポイントを呼び、CIログに出力する（将来のClaude CodeセッションがCIログからモデルとトークン数を確認できる）
+
+**CPU時間のステップ別記録（`incrementCpuTimeKv()`・2026-08追加・Bug#32）:**
+
+`/usage`（トークン使用量）と同じパターンで、CPU時間が心配な実行パスのステップ別所要時間をKVに日次集計し、APIで取得できるようにする。GitHub Actionsのログ経由でClaude CodeセッションがCPU時間の実測データを直接確認できるようにする目的。
+
+- KVキー: `cpu-time:YYYY-MM-DD`（UTC基準・TTL=32日、`usage:`と同じ命名パターン）
+- 集計フィールド: ステップ名をキーとしたオブジェクト（例: `research`・`generate`・`shrinkImage`・`suzuriCreate-backTextureDecode`）。各ステップは`{calls, totalMs, maxMs}`
+- `/cpu-usage` GETエンドポイントで直近30日分をJSON返却（認証なし・統計のみ）
+- `scripts/health-check.js`の末尾でエンドポイントを呼び、CIログに出力する
+
+**計測チェックポイントの共通化（`recordCpuCheckpoint()`・2026-08追加）:**
+
+各チェックポイントで`console.log`とKV集計を個別に書くと同じ2行パターンが重複するため、`recordCpuCheckpoint(step, ms, kv = null)`に共通化した。`console.log`は常に行い、`incrementCpuTimeKv(kv, step, ms)`は無条件に呼ぶ（`kv`が`null`の場合は`incrementCpuTimeKv()`自身が既に持つnullガードで安全に何もしない。呼び出し側で`if (kv)`のような分岐を重ねる必要はない）。
+
+- KV集計が必要な経路（`research`・`generate`・`shrinkImage`・`suzuriCreate-backTextureDecode`）: `recordCpuCheckpoint(step, ms, env?.RATE_KV)`
+- 壁時計時間・レート制限のない高頻度経路等、KV集計対象外の経路: `recordCpuCheckpoint(step, ms)`（`kv`省略）
+- `worker/index.js`に定義し、`worker/bot.js`からimportして使う（既存の`pickFromPool`と同じ循環import許容パターン）。`worker/r2-storage.js`は`index.js`から先にimportされている側のため、逆方向のimportで循環参照を新設することを避け、単独の`console.log`のまま共通化の対象外とした
+
+**KV書き込み回数の制約による対象範囲の線引き（2026-08追加）:**
+
+Workers KV Free プランは書き込み1日1,000回までという厳しい制限があるため、全経路にKV集計を入れるのではなく、既存のレート制限で書き込み量が自然に上限管理されている経路のみを対象にする。
+
+| 経路 | KV集計 | 理由 |
+| --- | --- | --- |
+| Cron `generateResearchPool()` / `runBot()` | 対象 | 1日2回のみ |
+| `POST /research` / `POST /generate`（`handleResearch()`/`handleGenerate()`内部で計測） | 対象 | 既存レート制限（`/research` 10回/日/IP・`/generate` 3回/日/IP・50回/日グローバル）で書き込み量が有界 |
+| `POST /suzuri-create` | 対象 | 生成1回につき数回程度、同様に有界 |
+| `GET /image/:id`（`getImageFromR2()`） | **対象外**（`console.log`のみ） | レート制限がなく訪問のたびに呼ばれるため、KV書き込みすると1,000回/日の予算を圧迫しうる |
+
+`research`/`generate`のCPU計測は`handleResearch()`/`handleGenerate()`自体の内部に実装する（呼び出し元の`runBot()`外側でラップしない）。これにより`generateResearchPool()`の10並列呼び出し・`runBot()`・`/research`・`/generate`エンドポイントのすべてを1箇所の実装で自動的にカバーする（DRY）。
 
 **`textModel`/`imageModel` と `textModelResolved`/`imageModelResolved` の違い（2026-07追加）:**
 
