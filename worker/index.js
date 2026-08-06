@@ -197,9 +197,10 @@ export async function incrementUsageKv(kv, kind, tokens, model, resolvedModel = 
 }
 
 // Bug#32: CPU時間のステップ別日次集計（/usage・incrementUsageKv()と同じパターン）。
-// KV書き込みは1日1,000回までのため、既存のレート制限で呼び出し回数が有界な経路
-// （research/generate/suzuri-create・Cron）のみで呼ぶ。レート制限のない高頻度経路
-// （/image/:id等）はconsole.logのみに留め、この関数は呼ばない
+// アプリケーションコードから直接呼ばれることは想定しておらず、常にrecordCpuCheckpoint()
+// 経由で呼ばれる。KV書き込みは1日1,000回までのため、既存のレート制限で呼び出し回数が
+// 有界な経路（research/generate/suzuri-create・Cron）のみrecordCpuCheckpoint()にkvを渡す。
+// レート制限のない高頻度経路（/image/:id等）はkvを省略し、このnullガードで安全に何もしない
 export async function incrementCpuTimeKv(kv, step, ms) {
   if (!kv) return;
   const today = new Date().toISOString().slice(0, 10); // UTC YYYY-MM-DD
