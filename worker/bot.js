@@ -583,6 +583,10 @@ export async function runBot(env, handleResearch, handleGenerate) {
   }
 
   try {
+    // Bug#32: CPU時間分析用チェックポイント。performance.now()はネットワーク待ちを
+    // 含む壁時計時間だが、同期処理のみのブロックであれば実質CPU時間の近似値になる
+    const tResearchStart = performance.now();
+
     // ── 1. 記念日リサーチ（R2プール優先・フォールバックはリアルタイムGemini）──
     let research;
     if (env.IMAGE_BUCKET) {
@@ -600,8 +604,10 @@ export async function runBot(env, handleResearch, handleGenerate) {
       research = await handleResearch({ date: dateStr }, apiKey, env);
       console.log(`${prefix} research 完了 theme="${research.theme}"`);
     }
+    console.log(`[cpu] research: ${(performance.now() - tResearchStart).toFixed(1)}ms`);
 
     // ── 2. 画像生成 ────────────────────────────────────────────────────────
+    const tGenerateStart = performance.now();
     console.log(`${prefix} generate 開始`);
     const generated = await handleGenerate(
       { theme: research.theme, description: research.description, visualHint: research.visualHint ?? null, foodItem: research.foodItem ?? null, themeEn: research.themeEn ?? "", descriptionEn: research.descriptionEn ?? "", jstDateISO },
@@ -609,6 +615,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
       env
     );
     console.log(`${prefix} generate 完了 source=${generated.source}`);
+    console.log(`[cpu] generate: ${(performance.now() - tGenerateStart).toFixed(1)}ms`);
 
     // ── 3. R2 保存（best-effort） ─────────────────────────────────────────
     // SUZURI商品登録はボットでは行わない。
@@ -646,6 +653,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
 
     // ── 5. 共有データ準備 ─────────────────────────────────────────────────
     // Bug#32: descはこの後複数箇所で使うため1回だけ評価して使い回す
+    const tShrinkStart = performance.now();
     const desc        = research.description ?? "";
     const shrunk       = await shrinkImageIfNeeded(
       generated.imageData, generated.mimeType || "image/png",
@@ -654,6 +662,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
     // Bug#32: shrinkImageIfNeeded()がデコード済みbytesを返すため再デコード不要
     const imageBytes  = shrunk.bytes;
     const mimeType    = shrunk.mimeType;
+    console.log(`[cpu] shrinkImageIfNeeded: ${(performance.now() - tShrinkStart).toFixed(1)}ms`);
 
     const themeTag    = buildThemeTag(research.theme);
     const guestSnsTag = generated.guest?.snsTag ?? null;
@@ -669,6 +678,9 @@ export async function runBot(env, handleResearch, handleGenerate) {
       : `にゃんバーサリー - 「${research.theme}」をテーマにAIが生成した水彩画風の猫イラスト`;
 
     // ── 5. Bluesky + Mastodon 並列投稿 ───────────────────────────────────
+    // Bug#32: この区間はネットワーク待ちが支配的なため壁時計時間であり、
+    // CPU時間そのものの近似値にはならない点に注意（参考値として記録）
+    const tPostStart = performance.now();
     console.log(`${prefix} Bluesky + Mastodon 投稿 開始`);
     const [bskyResult, mastoResult] = await Promise.allSettled([
       // Bluesky（日本語のみ）
@@ -695,6 +707,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
           })()
         : Promise.resolve(null),
     ]);
+    console.log(`[cpu] SNS投稿（壁時計時間・ネットワーク待ち含む）: ${(performance.now() - tPostStart).toFixed(1)}ms`);
 
     const bskyOk      = bskyResult.status === "fulfilled";
     const mastoSkipped = mastoResult.status === "fulfilled" && mastoResult.value === null;
@@ -761,6 +774,10 @@ export async function runBot(env, handleResearch, handleGenerate) {
       }
       await notifyDiscord(env.DISCORD_WEBHOOK_URL, msg2Lines.join("\n"), "📣");
     } catch (_) { /* 通知失敗は無視 */ }
+
+    // Bug#32: 合計時間。Cloudflareダッシュボードのトリガーイベント欄のCPU時間と
+    // 比較することで、CPU時間予算に対してどのステップが支配的かを分析する
+    console.log(`[cpu] runBot合計（壁時計時間）: ${(performance.now() - tResearchStart).toFixed(1)}ms`);
 
   } catch (err) {
     const msg = `${prefix} エラー: ${err.message}`;

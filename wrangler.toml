@@ -42,3 +42,8 @@ bucket_name = "anniversary-cat-images"
 [observability.logs]
 enabled = true
 invocation_logs = true
+
+# Bug#32: runBot()実行パスのCPU時間分析用。ベータ期間中は無料・Workers Freeでも
+# 1日20万イベントまで無料（このBotの実行頻度では十分に収まる）
+[observability.traces]
+enabled = true
