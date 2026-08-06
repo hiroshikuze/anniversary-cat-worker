@@ -15,7 +15,7 @@
 
 import { saveToR2 } from "./r2-storage.js";
 import { createSuzuriProducts } from "./suzuri.js";
-import { pickFromPool, incrementCpuTimeKv } from "./index.js";
+import { pickFromPool, recordCpuCheckpoint } from "./index.js";
 
 // Photonは動的importで遅延ロード（Node.jsテスト環境での.wasmロード失敗を回避）
 let _photonReady = false;
@@ -583,6 +583,10 @@ export async function runBot(env, handleResearch, handleGenerate) {
   }
 
   try {
+    // Bug#32: runBot合計（壁時計時間）計測用の起点。個別ステップのCPU時間は
+    // handleResearch()/handleGenerate()/shrinkImageIfNeeded()内部で計測済み
+    const tRunBotStart = performance.now();
+
     // ── 1. 記念日リサーチ（R2プール優先・フォールバックはリアルタイムGemini）──
     // Bug#32: CPU時間計測はhandleResearch()内部に実装済み（[cpu] research: ...ms）。
     // ここでは外側から壁時計時間（ネットワーク待ち含む）を測ってもCPU時間の近似にならないため測らない
@@ -661,9 +665,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
     // Bug#32: shrinkImageIfNeeded()がデコード済みbytesを返すため再デコード不要
     const imageBytes  = shrunk.bytes;
     const mimeType    = shrunk.mimeType;
-    const shrinkCpuMs = performance.now() - tShrinkStart;
-    console.log(`[cpu] shrinkImageIfNeeded: ${shrinkCpuMs.toFixed(1)}ms`);
-    await incrementCpuTimeKv(env.RATE_KV, "shrinkImage", shrinkCpuMs);
+    await recordCpuCheckpoint("shrinkImage", performance.now() - tShrinkStart, env.RATE_KV);
 
     const themeTag    = buildThemeTag(research.theme);
     const guestSnsTag = generated.guest?.snsTag ?? null;
@@ -708,7 +710,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
           })()
         : Promise.resolve(null),
     ]);
-    console.log(`[cpu] SNS投稿（壁時計時間・ネットワーク待ち含む）: ${(performance.now() - tPostStart).toFixed(1)}ms`);
+    await recordCpuCheckpoint("SNS投稿（壁時計時間・ネットワーク待ち含む）", performance.now() - tPostStart);
 
     const bskyOk      = bskyResult.status === "fulfilled";
     const mastoSkipped = mastoResult.status === "fulfilled" && mastoResult.value === null;
@@ -778,7 +780,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
 
     // Bug#32: 合計時間。Cloudflareダッシュボードのトリガーイベント欄のCPU時間と
     // 比較することで、CPU時間予算に対してどのステップが支配的かを分析する
-    console.log(`[cpu] runBot合計（壁時計時間）: ${(performance.now() - tResearchStart).toFixed(1)}ms`);
+    await recordCpuCheckpoint("runBot合計（壁時計時間）", performance.now() - tRunBotStart);
 
   } catch (err) {
     const msg = `${prefix} エラー: ${err.message}`;

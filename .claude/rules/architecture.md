@@ -441,9 +441,17 @@ GeminiのAPIレスポンスに含まれる`usageMetadata.totalTokenCount`を取�
 `/usage`（トークン使用量）と同じパターンで、CPU時間が心配な実行パスのステップ別所要時間をKVに日次集計し、APIで取得できるようにする。GitHub Actionsのログ経由でClaude CodeセッションがCPU時間の実測データを直接確認できるようにする目的。
 
 - KVキー: `cpu-time:YYYY-MM-DD`（UTC基準・TTL=32日、`usage:`と同じ命名パターン）
-- 集計フィールド: ステップ名をキーとしたオブジェクト（例: `research`・`generate`・`shrinkImage`・`suzuriCreate`）。各ステップは`{calls, totalMs, maxMs}`
+- 集計フィールド: ステップ名をキーとしたオブジェクト（例: `research`・`generate`・`shrinkImage`・`suzuriCreate-backTextureDecode`）。各ステップは`{calls, totalMs, maxMs}`
 - `/cpu-usage` GETエンドポイントで直近30日分をJSON返却（認証なし・統計のみ）
 - `scripts/health-check.js`の末尾でエンドポイントを呼び、CIログに出力する
+
+**計測チェックポイントの共通化（`recordCpuCheckpoint()`・2026-08追加）:**
+
+各チェックポイントで`console.log`とKV集計を個別に書くと同じ2行パターンが重複するため、`recordCpuCheckpoint(step, ms, kv = null)`に共通化した。`console.log`は常に行い、`incrementCpuTimeKv(kv, step, ms)`は無条件に呼ぶ（`kv`が`null`の場合は`incrementCpuTimeKv()`自身が既に持つnullガードで安全に何もしない。呼び出し側で`if (kv)`のような分岐を重ねる必要はない）。
+
+- KV集計が必要な経路（`research`・`generate`・`shrinkImage`・`suzuriCreate-backTextureDecode`）: `recordCpuCheckpoint(step, ms, env?.RATE_KV)`
+- 壁時計時間・レート制限のない高頻度経路等、KV集計対象外の経路: `recordCpuCheckpoint(step, ms)`（`kv`省略）
+- `worker/index.js`に定義し、`worker/bot.js`からimportして使う（既存の`pickFromPool`と同じ循環import許容パターン）。`worker/r2-storage.js`は`index.js`から先にimportされている側のため、逆方向のimportで循環参照を新設することを避け、単独の`console.log`のまま共通化の対象外とした
 
 **KV書き込み回数の制約による対象範囲の線引き（2026-08追加）:**
 

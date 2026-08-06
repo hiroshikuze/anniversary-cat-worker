@@ -18,7 +18,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta,
 } from "../worker/bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, _pollFalAndGetTexture } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 
@@ -2074,6 +2074,38 @@ console.log("\n[incrementCpuTimeKv]");
   try { await incrementCpuTimeKv(null, "research", 10); }
   catch { threw = true; }
   assert("kv=null でも例外を投げない", !threw);
+}
+
+// ---------------------------------------------------------------------------
+// recordCpuCheckpoint: console.log + 任意でKV集計の共通ヘルパー（Bug#32）
+// ---------------------------------------------------------------------------
+console.log("\n[recordCpuCheckpoint]");
+{
+  // 正常系: kv指定時はincrementCpuTimeKv()経由でKVに記録される
+  const kv = makeKvMock();
+  await recordCpuCheckpoint("research", 15.5, kv);
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`cpu-time:${today}`]);
+  assert("kv指定時: KVに記録される", stored.research.calls === 1 && stored.research.totalMs === 15.5);
+}
+{
+  // 境界値: kv省略時はKVに何も書き込まれず、例外も投げない
+  let threw = false;
+  const kv = makeKvMock();
+  try { await recordCpuCheckpoint("snsPost", 200); }
+  catch { threw = true; }
+  const today = new Date().toISOString().slice(0, 10);
+  assert("kv省略時: 例外を投げない", !threw);
+  assert("kv省略時: 呼び出し元のkvには書き込まれない（別インスタンスなので当然未使用）", kv.store[`cpu-time:${today}`] === undefined);
+}
+{
+  // 正常系: 複数ステップをそれぞれ独立して記録できる
+  const kv = makeKvMock();
+  await recordCpuCheckpoint("research", 10, kv);
+  await recordCpuCheckpoint("generate", 20, kv);
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`cpu-time:${today}`]);
+  assert("research と generate が独立して記録される", stored.research.totalMs === 10 && stored.generate.totalMs === 20);
 }
 
 // ---------------------------------------------------------------------------

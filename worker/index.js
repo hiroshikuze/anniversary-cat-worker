@@ -218,6 +218,15 @@ export async function incrementCpuTimeKv(kv, step, ms) {
   }
 }
 
+// Bug#32: CPU時間チェックポイントの共通ヘルパー。console.logは常に行い、
+// incrementCpuTimeKv()は無条件で呼ぶ（kv未指定時はincrementCpuTimeKv()自身の
+// nullガードで安全に何もしないため、ここで`if (kv)`のような分岐を重ねない）。
+// レート制限のない高頻度経路ではkvを省略してconsole.logのみに留める
+export async function recordCpuCheckpoint(step, ms, kv = null) {
+  console.log(`[cpu] ${step}: ${ms.toFixed(1)}ms`);
+  await incrementCpuTimeKv(kv, step, ms);
+}
+
 // ---------------------------------------------------------------------------
 // CORS ヘッダー生成
 // ---------------------------------------------------------------------------
@@ -579,9 +588,7 @@ export async function handleResearch(body, apiKey, env = null) {
 
   await incrementUsageKv(env?.RATE_KV, "text", totalTokens, model, data.modelVersion ?? null);
 
-  const cpuMs = performance.now() - tCpuStart;
-  console.log(`[cpu] research: ${cpuMs.toFixed(1)}ms`);
-  await incrementCpuTimeKv(env?.RATE_KV, "research", cpuMs);
+  await recordCpuCheckpoint("research", performance.now() - tCpuStart, env?.RATE_KV);
 
   return result;
 }
@@ -1028,9 +1035,7 @@ export async function handleGenerate(body, apiKey, env) {
     const imgTokens = data.usageMetadata?.totalTokenCount ?? 0;
     console.log(`[generate] Gemini success model=${model} mimeType=${imagePart.inlineData.mimeType} tokens=${imgTokens}`);
     await incrementUsageKv(env?.RATE_KV, "image", imgTokens, model, data.modelVersion ?? null);
-    const cpuMs = performance.now() - tCpuStart;
-    console.log(`[cpu] generate: ${cpuMs.toFixed(1)}ms`);
-    await incrementCpuTimeKv(env?.RATE_KV, "generate", cpuMs);
+    await recordCpuCheckpoint("generate", performance.now() - tCpuStart, env?.RATE_KV);
     return { imageData: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType || "image/png", source: "gemini" };
   }
 
@@ -1649,9 +1654,7 @@ ${itemsXml}
               const binaryStr = atob(dataPart);
               const bytes = new Uint8Array(binaryStr.length);
               for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-              const cpuMs = performance.now() - tCpuStart;
-              console.log(`[cpu] suzuriCreate-backTextureDecode: ${cpuMs.toFixed(1)}ms`);
-              await incrementCpuTimeKv(env.RATE_KV, "suzuriCreate", cpuMs);
+              await recordCpuCheckpoint("suzuriCreate-backTextureDecode", performance.now() - tCpuStart, env.RATE_KV);
               await env.IMAGE_BUCKET.put(`${r2Id}/back.jpg`, bytes, {
                 httpMetadata: { contentType: "image/jpeg" },
               });
