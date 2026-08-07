@@ -1053,6 +1053,9 @@ export async function handleGenerate(body, apiKey, env, ctx = null) {
     try { data = JSON.parse(resText); } catch {
       throw new Error(`Gemini レスポンス解析エラー: ${resText.slice(0, 120)}`);
     }
+    // Bug#32追加調査: generateステップ全体の計測値が高い場合にJSON.parse()自体が
+    // 支配的コストかどうかを推測ではなく実測で切り分けるため、単体でも計測する
+    const jsonParseMs = performance.now() - tCpuStart;
     const parts = data.candidates?.[0]?.content?.parts ?? [];
     const imagePart = parts.find((p) => p.inlineData);
     if (!imagePart) {
@@ -1066,7 +1069,14 @@ export async function handleGenerate(body, apiKey, env, ctx = null) {
     // クロージャのためctxを追加引数なしで参照できる
     const cpuMs = performance.now() - tCpuStart;
     const usagePromise = incrementUsageKv(env?.RATE_KV, "image", imgTokens, model, data.modelVersion ?? null);
-    const cpuPromise = recordCpuCheckpoint("generate", cpuMs, env?.RATE_KV);
+    // generate と generate-jsonParse は同じKVキー（cpu-time:YYYY-MM-DD）にGET→PUTするため、
+    // 2つを並行実行するとread-modify-writeが競合し一方の更新が失われる（incrementCpuTimeKv()は
+    // アトミックインクリメントではない）。1つの非同期関数にまとめて内部でawaitし直列化することで、
+    // ctx.waitUntil()に渡す背景タスクとしても単一のPromiseにする
+    const cpuPromise = (async () => {
+      await recordCpuCheckpoint("generate", cpuMs, env?.RATE_KV);
+      await recordCpuCheckpoint("generate-jsonParse", jsonParseMs, env?.RATE_KV);
+    })();
     await _deferOrAwait(usagePromise, ctx);
     await _deferOrAwait(cpuPromise, ctx);
     return { imageData: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType || "image/png", source: "gemini" };

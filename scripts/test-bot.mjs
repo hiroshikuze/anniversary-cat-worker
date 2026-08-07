@@ -3041,7 +3041,9 @@ function makeGenerateFetchMockWithTokens(imgTokens) {
   globalThis.fetch = origFetch;
 
   assert("ctxあり: put()が解決しなくてもhandleGenerate()がハングせず返る", !threw && result?.source === "gemini");
-  assert("ctxあり: ctx.waitUntil()が呼ばれる（usage・cpu用の2件）", waited.length === 2);
+  // generate・generate-jsonParseは同じKVキーへの競合を避けるため1つのPromiseにまとめてある
+  // （usage用と合わせて2件）
+  assert("ctxあり: ctx.waitUntil()が呼ばれる（usage・cpu(generate+jsonParse)用の2件）", waited.length === 2);
 }
 
 {
@@ -3060,6 +3062,7 @@ function makeGenerateFetchMockWithTokens(imgTokens) {
   assert("ctxなし: handleGenerate()は正常に結果を返す", result?.source === "gemini");
   assert("ctxなし: 応答が返るまでにusage KVへ書き込まれている", usageStored.imageTokens === 300);
   assert("ctxなし: 応答が返るまでにcpu-time KVへ書き込まれている", cpuStored.generate?.calls === 1);
+  assert("ctxなし: generate-jsonParseもcpu-time KVへ書き込まれている", cpuStored["generate-jsonParse"]?.calls === 1);
 }
 
 // ---------------------------------------------------------------------------
