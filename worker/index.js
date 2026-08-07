@@ -382,7 +382,7 @@ export function pickFromPool(pool, rand = Math.random) {
  * 当日分のリサーチプールを生成してR2に保存し、Discord通知を送る。
  * Cron `0 15 * * *`（毎日0:00 JST）から呼ばれる。
  */
-async function generateResearchPool(env) {
+async function generateResearchPool(env, ctx = null) {
   const apiKey = env.GEMINI_API_KEY;
   if (!apiKey || !env.IMAGE_BUCKET) {
     console.log("[pool] スキップ: GEMINI_API_KEY または IMAGE_BUCKET 未設定");
@@ -405,7 +405,7 @@ async function generateResearchPool(env) {
 
   // 10件並列生成
   const results = await Promise.allSettled(
-    Array.from({ length: 10 }, () => handleResearch({ date: dateStr }, apiKey, env))
+    Array.from({ length: 10 }, () => handleResearch({ date: dateStr }, apiKey, env, ctx))
   );
 
   const raw          = results.filter(r => r.status === "fulfilled").map(r => r.value);
@@ -475,7 +475,7 @@ function stripHtmlTags(str) {
 // ---------------------------------------------------------------------------
 // /research  ― Gemini + Google Search で今日の記念日を調査
 // ---------------------------------------------------------------------------
-export async function handleResearch(body, apiKey, env = null) {
+export async function handleResearch(body, apiKey, env = null, ctx = null) {
   const { date } = body;
   if (!date) throw new Error("date フィールドが必要です");
 
@@ -587,9 +587,19 @@ export async function handleResearch(body, apiKey, env = null) {
     ` tokens=${totalTokens}`
   );
 
-  await incrementUsageKv(env?.RATE_KV, "text", totalTokens, model, data.modelVersion ?? null);
-
-  await recordCpuCheckpoint("research", performance.now() - tCpuStart, env?.RATE_KV);
+  // Bug#32追加調査: 計測をKV呼び出しより前に確定させる（incrementUsageKv()のKV往復を
+  // 計測区間に含めない）。ctxがあればKV書き込み自体もctx.waitUntil()で背景化し、
+  // 応答をKV往復の完了まで待たせない（ctxなし時は従来通りawaitする後方互換動作）
+  const cpuMs = performance.now() - tCpuStart;
+  const usagePromise = incrementUsageKv(env?.RATE_KV, "text", totalTokens, model, data.modelVersion ?? null);
+  const cpuPromise = recordCpuCheckpoint("research", cpuMs, env?.RATE_KV);
+  if (ctx) {
+    ctx.waitUntil(usagePromise);
+    ctx.waitUntil(cpuPromise);
+  } else {
+    await usagePromise;
+    await cpuPromise;
+  }
 
   return result;
 }
@@ -965,7 +975,7 @@ function buildPollinationsUrl(theme, description, persona, personality, model = 
 // ---------------------------------------------------------------------------
 // /generate  ― Gemini と Pollinations を並列実行し、先に成功した方を返す
 // ---------------------------------------------------------------------------
-export async function handleGenerate(body, apiKey, env) {
+export async function handleGenerate(body, apiKey, env, ctx = null) {
   const { theme, description } = body;
   if (!theme) throw new Error("theme フィールドが必要です");
 
@@ -1035,8 +1045,18 @@ export async function handleGenerate(body, apiKey, env) {
     }
     const imgTokens = data.usageMetadata?.totalTokenCount ?? 0;
     console.log(`[generate] Gemini success model=${model} mimeType=${imagePart.inlineData.mimeType} tokens=${imgTokens}`);
-    await incrementUsageKv(env?.RATE_KV, "image", imgTokens, model, data.modelVersion ?? null);
-    await recordCpuCheckpoint("generate", performance.now() - tCpuStart, env?.RATE_KV);
+    // Bug#32追加調査: handleResearch()と同じ「計測を先に確定→ctxがあればwaitUntil・なければawait」
+    // パターン。callModel()はhandleGenerate()のクロージャのためctxを追加引数なしで参照できる
+    const cpuMs = performance.now() - tCpuStart;
+    const usagePromise = incrementUsageKv(env?.RATE_KV, "image", imgTokens, model, data.modelVersion ?? null);
+    const cpuPromise = recordCpuCheckpoint("generate", cpuMs, env?.RATE_KV);
+    if (ctx) {
+      ctx.waitUntil(usagePromise);
+      ctx.waitUntil(cpuPromise);
+    } else {
+      await usagePromise;
+      await cpuPromise;
+    }
     return { imageData: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType || "image/png", source: "gemini" };
   }
 
@@ -1239,7 +1259,7 @@ export default {
   // "0 10 * * 2-6" → 月〜金 19:00 JST  Bluesky 営業 Bot
   async scheduled(event, env, ctx) {
     if (event.cron === "0 15 * * *") {
-      ctx.waitUntil(generateResearchPool(env));
+      ctx.waitUntil(generateResearchPool(env, ctx));
       return;
     }
 
@@ -1270,7 +1290,7 @@ export default {
           console.error(`[cleanup] エラー: ${e.message}`);
         }
       }
-      await runBot(env, handleResearch, handleGenerate);
+      await runBot(env, handleResearch, handleGenerate, ctx);
     })());
   },
 
@@ -1564,7 +1584,7 @@ ${itemsXml}
         }
         // プールがない場合はリアルタイムGeminiにフォールバック
         if (!result) {
-          result = await handleResearch(body, apiKey, env);
+          result = await handleResearch(body, apiKey, env, ctx);
         }
       } else if (url.pathname === "/generate") {
         if (!isBypassed(request, env)) {
@@ -1574,7 +1594,7 @@ ${itemsXml}
             return Response.json({ error: rl.message }, { status: 429, headers: corsH });
           }
         }
-        result = await handleGenerate(body, apiKey, env);
+        result = await handleGenerate(body, apiKey, env, ctx);
 
         // R2保存（best-effort: 失敗しても imageData は返す）
         // SUZURI商品生成はフロントでウォーターマーク合成後に /suzuri-create で行う

@@ -2843,6 +2843,78 @@ console.log("\n[【回帰】handleGenerate: jstDateISO受け渡し]");
 }
 
 // ---------------------------------------------------------------------------
+// handleGenerate: ctx.waitUntil()によるKV書き込み背景化（Bug#32追加調査）
+// incrementUsageKv()のKV往復が計測区間を水増ししていた問題の是正。
+// ctxが渡された場合はKV書き込みをctx.waitUntil()に委譲し、応答をブロックしない。
+// ---------------------------------------------------------------------------
+console.log("\n[handleGenerate: ctx.waitUntil()によるKV書き込み背景化]");
+
+function makeGenerateFetchMockWithTokens(imgTokens) {
+  return async (url) => {
+    if (typeof url === "string" && url.includes("generateContent")) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "aW1h" } }] } }],
+          usageMetadata: { totalTokenCount: imgTokens },
+        }),
+      };
+    }
+    // Pollinationsは_twoPhaseRaceで並列起動されるため、未処理rejectionを避けて無害な成功レスポンスを返す
+    return { ok: true, status: 200, headers: { get: () => "image/png" }, arrayBuffer: async () => new ArrayBuffer(1) };
+  };
+}
+
+{
+  // ctxあり: put()が永久に解決しなくてもhandleGenerate()はハングせず返り、
+  // ctx.waitUntil()にusage・cpu集計のPromiseが委譲される
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeGenerateFetchMockWithTokens(200);
+
+  // put()はusage:/cpu-time:キーのみ永久にpendingのまま（_resolveImageModel()のimage-model:active書き込みは
+  // 即座に解決させないと、そちら側のawaitでhandleGenerate()自体がハングし本来の検証対象と混同する）
+  const hangingKv = {
+    async get() { return null; },
+    async put(key) {
+      if (key.startsWith("usage:") || key.startsWith("cpu-time:")) return new Promise(() => {});
+    },
+  };
+  const waited = [];
+  const mockCtx = { waitUntil(p) { waited.push(p); } };
+
+  let result, threw = false;
+  try {
+    result = await handleGenerate({ theme: "テスト", description: "" }, "dummy-key", { RATE_KV: hangingKv }, mockCtx);
+  } catch (e) {
+    threw = true;
+    console.error("  handleGenerate threw:", e.message);
+  }
+  globalThis.fetch = origFetch;
+
+  assert("ctxあり: put()が解決しなくてもhandleGenerate()がハングせず返る", !threw && result?.source === "gemini");
+  assert("ctxあり: ctx.waitUntil()が呼ばれる（usage・cpu用の2件）", waited.length === 2);
+}
+
+{
+  // ctxなし: 従来通りKV書き込み完了までawaitされ、KVに実際に記録される（後方互換の確認）
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeGenerateFetchMockWithTokens(300);
+
+  const kv = makeKvMock();
+  const result = await handleGenerate({ theme: "テスト", description: "" }, "dummy-key", { RATE_KV: kv });
+  globalThis.fetch = origFetch;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const usageStored = JSON.parse(kv.store[`usage:${today}`] ?? "{}");
+  const cpuStored    = JSON.parse(kv.store[`cpu-time:${today}`] ?? "{}");
+
+  assert("ctxなし: handleGenerate()は正常に結果を返す", result?.source === "gemini");
+  assert("ctxなし: 応答が返るまでにusage KVへ書き込まれている", usageStored.imageTokens === 300);
+  assert("ctxなし: 応答が返るまでにcpu-time KVへ書き込まれている", cpuStored.generate?.calls === 1);
+}
+
+// ---------------------------------------------------------------------------
 // [pickGuestAnimal]
 // ---------------------------------------------------------------------------
 // rand() の呼び出し順序（type別）:
@@ -3876,6 +3948,90 @@ console.log("\n[handleResearch: HTMLタグ除去]");
 
   assert("タグなしのthemeは変化しない", result?.theme === "大仏の日");
   assert("タグなしのdescriptionは変化しない", result?.description === "東大寺の大仏開眼法要が行われた記念日。");
+}
+
+// ---------------------------------------------------------------------------
+// handleResearch: ctx.waitUntil()によるKV書き込み背景化（Bug#32追加調査）
+// incrementUsageKv()のKV往復が計測区間を水増ししていた問題の是正。
+// ctxが渡された場合はKV書き込みをctx.waitUntil()に委譲し、応答をブロックしない。
+// ---------------------------------------------------------------------------
+console.log("\n[handleResearch: ctx.waitUntil()によるKV書き込み背景化]");
+
+function makeResearchFetchMockWithTokens(researchJson, totalTokenCount) {
+  return async (url) => {
+    if (url.includes("/models?key=")) {
+      return {
+        ok: true,
+        text: async () => JSON.stringify({
+          models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
+        }),
+      };
+    }
+    return {
+      ok: true,
+      text: async () => JSON.stringify({
+        candidates: [{
+          content: { parts: [{ text: JSON.stringify(researchJson) }] },
+          groundingMetadata: { groundingChunks: [], webSearchQueries: ["test query"] },
+        }],
+        usageMetadata: { totalTokenCount },
+      }),
+    };
+  };
+}
+
+{
+  // ctxあり: put()が永久に解決しなくてもhandleResearch()はハングせず返り、
+  // ctx.waitUntil()にusage・cpu集計のPromiseが委譲される
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeResearchFetchMockWithTokens(
+    { theme: "テスト記念日", description: "説明", sourceUrl: "https://example.com" },
+    100
+  );
+
+  // put()はusage:/cpu-time:キーのみ永久にpendingのまま（selectBestModel()のtext-model:active書き込みは
+  // 即座に解決させないと、そちら側のawaitでhandleResearch()自体がハングし本来の検証対象と混同する）
+  const hangingKv = {
+    async get() { return null; },
+    async put(key) {
+      if (key.startsWith("usage:") || key.startsWith("cpu-time:")) return new Promise(() => {});
+    },
+  };
+  const waited = [];
+  const mockCtx = { waitUntil(p) { waited.push(p); } };
+
+  let result, threw = false;
+  try {
+    result = await handleResearch({ date: "2026年1月1日" }, "test-key", { RATE_KV: hangingKv }, mockCtx);
+  } catch (e) {
+    threw = true;
+    console.error("  handleResearch threw:", e.message);
+  }
+  globalThis.fetch = origFetch;
+
+  assert("ctxあり: put()が解決しなくてもhandleResearch()がハングせず返る", !threw && result?.theme === "テスト記念日");
+  assert("ctxあり: ctx.waitUntil()が呼ばれる（usage・cpu用の2件）", waited.length === 2);
+}
+
+{
+  // ctxなし: 従来通りKV書き込み完了までawaitされ、KVに実際に記録される（後方互換の確認）
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeResearchFetchMockWithTokens(
+    { theme: "テスト記念日2", description: "説明2", sourceUrl: "https://example.com" },
+    150
+  );
+
+  const kv = makeKvMock();
+  const result = await handleResearch({ date: "2026年1月2日" }, "test-key", { RATE_KV: kv });
+  globalThis.fetch = origFetch;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const usageStored = JSON.parse(kv.store[`usage:${today}`] ?? "{}");
+  const cpuStored    = JSON.parse(kv.store[`cpu-time:${today}`] ?? "{}");
+
+  assert("ctxなし: handleResearch()は正常に結果を返す", result?.theme === "テスト記念日2");
+  assert("ctxなし: 応答が返るまでにusage KVへ書き込まれている", usageStored.textTokens === 150);
+  assert("ctxなし: 応答が返るまでにcpu-time KVへ書き込まれている", cpuStored.research?.calls === 1);
 }
 
 // ----------------------------------------------------------

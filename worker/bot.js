@@ -566,7 +566,7 @@ export async function findAvailableR2Id(bucket, jstDateISO) {
  * @param {Function} handleResearch - index.js の handleResearch 関数
  * @param {Function} handleGenerate - index.js の handleGenerate 関数
  */
-export async function runBot(env, handleResearch, handleGenerate) {
+export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
   // JST で日付文字列を生成（UTC+9）
   const jst        = new Date(Date.now() + 9 * 60 * 60 * 1000);
   const dateStr    = `${jst.getFullYear()}年${jst.getMonth() + 1}月${jst.getDate()}日`;
@@ -603,7 +603,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
     }
     if (!research) {
       console.log(`${prefix} research 開始`);
-      research = await handleResearch({ date: dateStr }, apiKey, env);
+      research = await handleResearch({ date: dateStr }, apiKey, env, ctx);
       console.log(`${prefix} research 完了 theme="${research.theme}"`);
     }
 
@@ -613,7 +613,8 @@ export async function runBot(env, handleResearch, handleGenerate) {
     const generated = await handleGenerate(
       { theme: research.theme, description: research.description, visualHint: research.visualHint ?? null, foodItem: research.foodItem ?? null, themeEn: research.themeEn ?? "", descriptionEn: research.descriptionEn ?? "", jstDateISO },
       apiKey,
-      env
+      env,
+      ctx
     );
     console.log(`${prefix} generate 完了 source=${generated.source}`);
 
