@@ -228,6 +228,20 @@ export async function recordCpuCheckpoint(step, ms, kv = null) {
   await incrementCpuTimeKv(kv, step, ms);
 }
 
+// Bug#32追加調査: /suzuri-createハンドラーのsuzuriCreate-backTextureDecode計測も
+// recordCpuCheckpoint()のKV書き込みがawaitでクリティカルパスをブロックしていたため、
+// handleResearch()/handleGenerate()と同じ「ctxがあればwaitUntil・なければawait」パターンを適用。
+// fetch()ハンドラー内にインラインで書かれておりexportされた関数がなかったため、
+// _pollFalAndGetTexture()と同じ「依存関数を引数で受け取る」パターンでテスト可能な形に切り出した
+export async function _recordBackTextureDecodeCpu(cpuMs, env, ctx = null) {
+  const cpuPromise = recordCpuCheckpoint("suzuriCreate-backTextureDecode", cpuMs, env.RATE_KV);
+  if (ctx) {
+    ctx.waitUntil(cpuPromise);
+  } else {
+    await cpuPromise;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // CORS ヘッダー生成
 // ---------------------------------------------------------------------------
@@ -1675,7 +1689,7 @@ ${itemsXml}
               const binaryStr = atob(dataPart);
               const bytes = new Uint8Array(binaryStr.length);
               for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-              await recordCpuCheckpoint("suzuriCreate-backTextureDecode", performance.now() - tCpuStart, env.RATE_KV);
+              await _recordBackTextureDecodeCpu(performance.now() - tCpuStart, env, ctx);
               await env.IMAGE_BUCKET.put(`${r2Id}/back.jpg`, bytes, {
                 httpMetadata: { contentType: "image/jpeg" },
               });

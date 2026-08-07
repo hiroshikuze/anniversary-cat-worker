@@ -18,7 +18,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta,
 } from "../worker/bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 
@@ -2143,6 +2143,41 @@ console.log("\n[recordCpuCheckpoint]");
   const today = new Date().toISOString().slice(0, 10);
   const stored = JSON.parse(kv.store[`cpu-time:${today}`]);
   assert("research と generate が独立して記録される", stored.research.totalMs === 10 && stored.generate.totalMs === 20);
+}
+
+// ---------------------------------------------------------------------------
+// _recordBackTextureDecodeCpu: /suzuri-createハンドラーのsuzuriCreate-backTextureDecode
+// 計測をctx.waitUntil()で背景化するヘルパー（Bug#32追加調査の横展開）
+// ---------------------------------------------------------------------------
+console.log("\n[_recordBackTextureDecodeCpu]");
+{
+  // ctxあり: put()が永久に解決しなくてもハングせず返り、ctx.waitUntil()に委譲される
+  const hangingKv = {
+    async get() { return null; },
+    async put(key) {
+      if (key.startsWith("cpu-time:")) return new Promise(() => {});
+    },
+  };
+  const waited = [];
+  const mockCtx = { waitUntil(p) { waited.push(p); } };
+
+  let threw = false;
+  try {
+    await _recordBackTextureDecodeCpu(12.3, { RATE_KV: hangingKv }, mockCtx);
+  } catch {
+    threw = true;
+  }
+
+  assert("ctxあり: put()が解決しなくてもハングせず返る", !threw);
+  assert("ctxあり: ctx.waitUntil()が呼ばれる", waited.length === 1);
+}
+{
+  // ctxなし: 従来通りKV書き込み完了までawaitされ、KVに実際に記録される（後方互換の確認）
+  const kv = makeKvMock();
+  await _recordBackTextureDecodeCpu(20, { RATE_KV: kv });
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`cpu-time:${today}`] ?? "{}");
+  assert("ctxなし: 応答が返るまでにKVへ書き込まれている", stored["suzuriCreate-backTextureDecode"]?.calls === 1);
 }
 
 // ---------------------------------------------------------------------------

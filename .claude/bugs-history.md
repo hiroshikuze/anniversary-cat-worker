@@ -322,5 +322,6 @@
   - **副次対応**: `handleResearch()`/`handleGenerate()`・`generateResearchPool()`・`runBot()`・`scheduled()`・`fetch()`の`/research`・`/generate`ハンドラーに`ctx`（Workers `ExecutionContext`）を新たに通し、`incrementUsageKv()`・`recordCpuCheckpoint()`の呼び出しを`ctx.waitUntil()`で背景化した（`ctx`未指定時は従来通り`await`する後方互換設計）。これによりKV書き込みの完了を待たずに`handleResearch()`/`handleGenerate()`が結果を返せるようになり、HTTPエンドポイントの応答速度・Cron全体の壁時計時間の両方が改善する。`/suzuri-create`のfal.aiキュー処理で既に使われている`ctx.waitUntil()`パターンを踏襲した
   - **検討したが採用しなかった案**: Cloudflare Workersは1 invocationにつき単一のV8アイソレート（真のマルチスレッド不可）のため、KV書き込みの「マルチスレッド化」自体は選択肢にならない。またCPU時間課金・上限はinvocation全体（`waitUntil()`の背景処理を含む）に対して適用されるため、`ctx.waitUntil()`はCPU時間予算そのものを増やすものではなく、あくまでI/O待ちをクリティカルパスから外すための手段である点に注意
   - **教訓（追加）**: 「ネットワーク待ちを含まない同期処理のみを計測する」という設計意図があっても、計測区間の途中に見落としたawait（今回は使用量集計のKV書き込み）が紛れ込むと計測値が大きく歪む。計測ポイントを追加・変更する際は、区間内のコードを1行ずつ「これはCPUバウンドか、I/Oバウンドか」を確認する
+  - **横展開（同日追加）**: `/suzuri-create`ハンドラー内の`suzuriCreate-backTextureDecode`計測（`incrementUsageKv()`とのペアはなく`recordCpuCheckpoint()`単体だが、同じく`await`でクリティカルパスをブロックしていた）にも同じ「計測確定→ctxがあればwaitUntil・なければawait」パターンを適用した。この箇所は`fetch()`ハンドラー内にインラインで書かれておりexportされた関数がなかったため、`_recordBackTextureDecodeCpu(cpuMs, env, ctx)`としてテスト可能な形に切り出した（`_pollFalAndGetTexture()`等の既存の「依存関数を引数で受け取る」切り出しパターンを踏襲）
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
