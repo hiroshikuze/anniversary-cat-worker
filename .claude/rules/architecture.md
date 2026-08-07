@@ -453,6 +453,20 @@ GeminiのAPIレスポンスに含まれる`usageMetadata.totalTokenCount`を取�
 - 壁時計時間・レート制限のない高頻度経路等、KV集計対象外の経路: `recordCpuCheckpoint(step, ms)`（`kv`省略）
 - `worker/index.js`に定義し、`worker/bot.js`からimportして使う（既存の`pickFromPool`と同じ循環import許容パターン）。`worker/r2-storage.js`は`index.js`から先にimportされている側のため、逆方向のimportで循環参照を新設することを避け、単独の`console.log`のまま共通化の対象外とした
 
+**KV書き込みの`ctx.waitUntil()`背景化（2026-08追加・Bug#32追加調査）:**
+
+`/cpu-usage`稼働後の実測で、`research`ステップが`maxMs=94ms`（Free プランCPU時間上限10msの約9倍）という値を示した。原因は、計測区間（`tCpuStart`〜`recordCpuCheckpoint()`）に`incrementUsageKv()`のKV `get`→`put`往復（ネットワークI/O）が含まれていたためで、実際のCPUバウンドな同期処理（JSON.parse・正規表現等）自体は軽量だった。
+
+- **計測精度の是正**: `performance.now() - tCpuStart`の計算を`incrementUsageKv()`呼び出しより*前*に移動し、KV往復を計測区間から除外した。この修正は`ctx`の有無に関わらず適用される
+- **クリティカルパスからの分離**: `handleResearch(body, apiKey, env, ctx = null)`・`handleGenerate(body, apiKey, env, ctx = null)`が末尾に`ctx`（Workers `ExecutionContext`）を受け取るようになった。`ctx`が渡された場合、`incrementUsageKv()`・`recordCpuCheckpoint()`の呼び出しは`ctx.waitUntil()`に渡され、KV書き込みの完了を待たずに関数が結果を返す。`ctx`が渡されない場合（テスト等）は従来通り`await`する後方互換動作
+  - Cloudflare Workersは1 invocationにつき単一のV8アイソレートで動作し、真のマルチスレッドは利用できない。`ctx.waitUntil()`はI/Oバウンドな処理（KV書き込み等）を応答後もバックグラウンドで完了させるための仕組みであり、CPU時間の予算そのものを増やすものではない（CPU時間課金・上限はinvocation全体に対して適用され、`waitUntil()`で登録した背景処理も含む）
+  - `/suzuri-create`のfal.aiキュー処理（`ctx.waitUntil()`でバックグラウンド処理）と同じ設計パターン
+- **`ctx`の伝播経路**: `fetch(request, env, ctx)`の`/research`・`/generate`ハンドラー → `handleResearch()`/`handleGenerate()`に直接渡す。Cron側は`scheduled(event, env, ctx)` → `generateResearchPool(env, ctx)`（10並列の各`handleResearch()`呼び出しに渡す）・`runBot(env, handleResearch, handleGenerate, ctx)`（`worker/bot.js`、内部の`handleResearch()`/`handleGenerate()`呼び出しに渡す）
+- `handleGenerate()`内部の`callModel()`クロージャは`ctx`を追加の引数受け渡しなしにクロージャ経由でそのまま参照する
+- **`/suzuri-create`ハンドラーへの横展開**: `suzuriCreate-backTextureDecode`計測（`incrementUsageKv()`とのペアはなく`recordCpuCheckpoint()`単体呼び出し）にも同じパターンを適用した。この箇所は`fetch()`ハンドラー内にインラインで書かれておりexportされた関数がなかったため、`_recordBackTextureDecodeCpu(cpuMs, env, ctx)`としてexport・テスト可能な形に切り出した（`_pollFalAndGetTexture()`と同じ「依存関数を引数で受け取る」切り出しパターン）。`fetch(request, env, ctx)`内なので`ctx`は常に存在するが、他の箇所と実装を揃えるため同じ`if (ctx) { ctx.waitUntil(...) } else { await ... }`分岐を踏襲する
+- **共通ヘルパー`_deferOrAwait(promise, ctx)`への集約**: 上記「`ctx`があれば`ctx.waitUntil()`・なければ`await`」という同一パターンが4箇所（`handleResearch()`・`handleGenerate()`・`_recordBackTextureDecodeCpu()`・`runBot()`の`shrinkImage`計測）に重複したため、`worker/index.js`に`_deferOrAwait(promise, ctx)`として抽出しexportした。4箇所すべてこのヘルパー経由に統一している
+- **`runBot()`の`shrinkImage`計測**: `worker/bot.js`の`recordCpuCheckpoint("shrinkImage", ..., env.RATE_KV)`も同じKV書き込みブロッキングパターンだったが、`ctx`導入時に見落としていた。`runBot(env, handleResearch, handleGenerate, ctx = null)`が受け取る`ctx`を`_deferOrAwait()`経由でこの呼び出しにも適用する
+
 **KV書き込み回数の制約による対象範囲の線引き（2026-08追加）:**
 
 Workers KV Free プランは書き込み1日1,000回までという厳しい制限があるため、全経路にKV集計を入れるのではなく、既存のレート制限で書き込み量が自然に上限管理されている経路のみを対象にする。

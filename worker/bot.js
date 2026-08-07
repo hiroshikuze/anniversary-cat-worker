@@ -15,7 +15,7 @@
 
 import { saveToR2 } from "./r2-storage.js";
 import { createSuzuriProducts } from "./suzuri.js";
-import { pickFromPool, recordCpuCheckpoint } from "./index.js";
+import { pickFromPool, recordCpuCheckpoint, _deferOrAwait } from "./index.js";
 
 // Photonは動的importで遅延ロード（Node.jsテスト環境での.wasmロード失敗を回避）
 let _photonReady = false;
@@ -566,7 +566,7 @@ export async function findAvailableR2Id(bucket, jstDateISO) {
  * @param {Function} handleResearch - index.js の handleResearch 関数
  * @param {Function} handleGenerate - index.js の handleGenerate 関数
  */
-export async function runBot(env, handleResearch, handleGenerate) {
+export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
   // JST で日付文字列を生成（UTC+9）
   const jst        = new Date(Date.now() + 9 * 60 * 60 * 1000);
   const dateStr    = `${jst.getFullYear()}年${jst.getMonth() + 1}月${jst.getDate()}日`;
@@ -603,7 +603,7 @@ export async function runBot(env, handleResearch, handleGenerate) {
     }
     if (!research) {
       console.log(`${prefix} research 開始`);
-      research = await handleResearch({ date: dateStr }, apiKey, env);
+      research = await handleResearch({ date: dateStr }, apiKey, env, ctx);
       console.log(`${prefix} research 完了 theme="${research.theme}"`);
     }
 
@@ -613,7 +613,8 @@ export async function runBot(env, handleResearch, handleGenerate) {
     const generated = await handleGenerate(
       { theme: research.theme, description: research.description, visualHint: research.visualHint ?? null, foodItem: research.foodItem ?? null, themeEn: research.themeEn ?? "", descriptionEn: research.descriptionEn ?? "", jstDateISO },
       apiKey,
-      env
+      env,
+      ctx
     );
     console.log(`${prefix} generate 完了 source=${generated.source}`);
 
@@ -665,7 +666,8 @@ export async function runBot(env, handleResearch, handleGenerate) {
     // Bug#32: shrinkImageIfNeeded()がデコード済みbytesを返すため再デコード不要
     const imageBytes  = shrunk.bytes;
     const mimeType    = shrunk.mimeType;
-    await recordCpuCheckpoint("shrinkImage", performance.now() - tShrinkStart, env.RATE_KV);
+    // Bug#32追加調査: 見落としていたKV書き込みブロッキングを是正。ctxがあればwaitUntil()で背景化する
+    await _deferOrAwait(recordCpuCheckpoint("shrinkImage", performance.now() - tShrinkStart, env.RATE_KV), ctx);
 
     const themeTag    = buildThemeTag(research.theme);
     const guestSnsTag = generated.guest?.snsTag ?? null;

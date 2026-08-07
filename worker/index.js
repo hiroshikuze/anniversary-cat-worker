@@ -228,6 +228,28 @@ export async function recordCpuCheckpoint(step, ms, kv = null) {
   await incrementCpuTimeKv(kv, step, ms);
 }
 
+// Bug#32追加調査: KV書き込みPromiseを「ctxがあればctx.waitUntil()で背景化・なければawait」する
+// 共通ヘルパー。handleResearch()/handleGenerate()/_recordBackTextureDecodeCpu()/runBot()の
+// shrinkImage計測の4箇所で重複していたパターンを集約した。
+// ctxが渡された場合はKV書き込みの完了を待たずに呼び出し元へ制御を返す（クリティカルパスから
+// 分離）。ctxが渡されない場合（テスト等）は従来通りKV書き込み完了までawaitする後方互換動作
+export async function _deferOrAwait(promise, ctx) {
+  if (ctx) {
+    ctx.waitUntil(promise);
+  } else {
+    await promise;
+  }
+}
+
+// Bug#32追加調査: /suzuri-createハンドラーのsuzuriCreate-backTextureDecode計測も
+// recordCpuCheckpoint()のKV書き込みがawaitでクリティカルパスをブロックしていたため、
+// handleResearch()/handleGenerate()と同じパターンを適用。
+// fetch()ハンドラー内にインラインで書かれておりexportされた関数がなかったため、
+// _pollFalAndGetTexture()と同じ「依存関数を引数で受け取る」パターンでテスト可能な形に切り出した
+export async function _recordBackTextureDecodeCpu(cpuMs, env, ctx = null) {
+  await _deferOrAwait(recordCpuCheckpoint("suzuriCreate-backTextureDecode", cpuMs, env.RATE_KV), ctx);
+}
+
 // ---------------------------------------------------------------------------
 // CORS ヘッダー生成
 // ---------------------------------------------------------------------------
@@ -382,7 +404,7 @@ export function pickFromPool(pool, rand = Math.random) {
  * 当日分のリサーチプールを生成してR2に保存し、Discord通知を送る。
  * Cron `0 15 * * *`（毎日0:00 JST）から呼ばれる。
  */
-async function generateResearchPool(env) {
+async function generateResearchPool(env, ctx = null) {
   const apiKey = env.GEMINI_API_KEY;
   if (!apiKey || !env.IMAGE_BUCKET) {
     console.log("[pool] スキップ: GEMINI_API_KEY または IMAGE_BUCKET 未設定");
@@ -405,7 +427,7 @@ async function generateResearchPool(env) {
 
   // 10件並列生成
   const results = await Promise.allSettled(
-    Array.from({ length: 10 }, () => handleResearch({ date: dateStr }, apiKey, env))
+    Array.from({ length: 10 }, () => handleResearch({ date: dateStr }, apiKey, env, ctx))
   );
 
   const raw          = results.filter(r => r.status === "fulfilled").map(r => r.value);
@@ -475,7 +497,7 @@ function stripHtmlTags(str) {
 // ---------------------------------------------------------------------------
 // /research  ― Gemini + Google Search で今日の記念日を調査
 // ---------------------------------------------------------------------------
-export async function handleResearch(body, apiKey, env = null) {
+export async function handleResearch(body, apiKey, env = null, ctx = null) {
   const { date } = body;
   if (!date) throw new Error("date フィールドが必要です");
 
@@ -587,9 +609,14 @@ export async function handleResearch(body, apiKey, env = null) {
     ` tokens=${totalTokens}`
   );
 
-  await incrementUsageKv(env?.RATE_KV, "text", totalTokens, model, data.modelVersion ?? null);
-
-  await recordCpuCheckpoint("research", performance.now() - tCpuStart, env?.RATE_KV);
+  // Bug#32追加調査: 計測をKV呼び出しより前に確定させる（incrementUsageKv()のKV往復を
+  // 計測区間に含めない）。両方のPromiseを先に生成してから_deferOrAwait()に渡すことで、
+  // ctxなし（await）の場合でも2つのKV書き込みが直列ではなく並行に走る
+  const cpuMs = performance.now() - tCpuStart;
+  const usagePromise = incrementUsageKv(env?.RATE_KV, "text", totalTokens, model, data.modelVersion ?? null);
+  const cpuPromise = recordCpuCheckpoint("research", cpuMs, env?.RATE_KV);
+  await _deferOrAwait(usagePromise, ctx);
+  await _deferOrAwait(cpuPromise, ctx);
 
   return result;
 }
@@ -965,7 +992,7 @@ function buildPollinationsUrl(theme, description, persona, personality, model = 
 // ---------------------------------------------------------------------------
 // /generate  ― Gemini と Pollinations を並列実行し、先に成功した方を返す
 // ---------------------------------------------------------------------------
-export async function handleGenerate(body, apiKey, env) {
+export async function handleGenerate(body, apiKey, env, ctx = null) {
   const { theme, description } = body;
   if (!theme) throw new Error("theme フィールドが必要です");
 
@@ -1035,8 +1062,13 @@ export async function handleGenerate(body, apiKey, env) {
     }
     const imgTokens = data.usageMetadata?.totalTokenCount ?? 0;
     console.log(`[generate] Gemini success model=${model} mimeType=${imagePart.inlineData.mimeType} tokens=${imgTokens}`);
-    await incrementUsageKv(env?.RATE_KV, "image", imgTokens, model, data.modelVersion ?? null);
-    await recordCpuCheckpoint("generate", performance.now() - tCpuStart, env?.RATE_KV);
+    // Bug#32追加調査: handleResearch()と同じパターン。callModel()はhandleGenerate()の
+    // クロージャのためctxを追加引数なしで参照できる
+    const cpuMs = performance.now() - tCpuStart;
+    const usagePromise = incrementUsageKv(env?.RATE_KV, "image", imgTokens, model, data.modelVersion ?? null);
+    const cpuPromise = recordCpuCheckpoint("generate", cpuMs, env?.RATE_KV);
+    await _deferOrAwait(usagePromise, ctx);
+    await _deferOrAwait(cpuPromise, ctx);
     return { imageData: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType || "image/png", source: "gemini" };
   }
 
@@ -1239,7 +1271,7 @@ export default {
   // "0 10 * * 2-6" → 月〜金 19:00 JST  Bluesky 営業 Bot
   async scheduled(event, env, ctx) {
     if (event.cron === "0 15 * * *") {
-      ctx.waitUntil(generateResearchPool(env));
+      ctx.waitUntil(generateResearchPool(env, ctx));
       return;
     }
 
@@ -1270,7 +1302,7 @@ export default {
           console.error(`[cleanup] エラー: ${e.message}`);
         }
       }
-      await runBot(env, handleResearch, handleGenerate);
+      await runBot(env, handleResearch, handleGenerate, ctx);
     })());
   },
 
@@ -1564,7 +1596,7 @@ ${itemsXml}
         }
         // プールがない場合はリアルタイムGeminiにフォールバック
         if (!result) {
-          result = await handleResearch(body, apiKey, env);
+          result = await handleResearch(body, apiKey, env, ctx);
         }
       } else if (url.pathname === "/generate") {
         if (!isBypassed(request, env)) {
@@ -1574,7 +1606,7 @@ ${itemsXml}
             return Response.json({ error: rl.message }, { status: 429, headers: corsH });
           }
         }
-        result = await handleGenerate(body, apiKey, env);
+        result = await handleGenerate(body, apiKey, env, ctx);
 
         // R2保存（best-effort: 失敗しても imageData は返す）
         // SUZURI商品生成はフロントでウォーターマーク合成後に /suzuri-create で行う
@@ -1655,7 +1687,7 @@ ${itemsXml}
               const binaryStr = atob(dataPart);
               const bytes = new Uint8Array(binaryStr.length);
               for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-              await recordCpuCheckpoint("suzuriCreate-backTextureDecode", performance.now() - tCpuStart, env.RATE_KV);
+              await _recordBackTextureDecodeCpu(performance.now() - tCpuStart, env, ctx);
               await env.IMAGE_BUCKET.put(`${r2Id}/back.jpg`, bytes, {
                 httpMetadata: { contentType: "image/jpeg" },
               });

@@ -18,7 +18,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta,
 } from "../worker/bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _deferOrAwait } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 
@@ -311,6 +311,87 @@ console.log("\n[runBot: 正常フロー（Bluesky認証は失敗してよい）]
   assert("handleGenerate に research.theme が渡される", generateBody?.theme === "テスト記念日");
   assert("handleGenerate に research.description が渡される", generateBody?.description === "テスト説明文");
   assert("handleGenerate に GEMINI_API_KEY が渡される", generateApiKey === "test-gemini-key");
+}
+
+// ---------------------------------------------------------------------------
+// runBot: 受け取ったctxをhandleResearch()/handleGenerate()にそのまま転送する
+// （Bug#32追加調査: ctx.waitUntil()背景化の配線確認）
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: ctxの転送]");
+{
+  let researchCtx, generateCtx;
+
+  const mockResearch = async (body, apiKey, env, ctx) => {
+    researchCtx = ctx;
+    return { theme: "テスト記念日", description: "テスト説明文", sourceUrl: "https://example.com" };
+  };
+  const mockGenerate = async (body, apiKey, env, ctx) => {
+    generateCtx = ctx;
+    return { imageData: btoa("fake-image-data"), mimeType: "image/png", source: "gemini" };
+  };
+
+  const env = { GEMINI_API_KEY: "test-gemini-key", BLUESKY_IDENTIFIER: "", BLUESKY_APP_PASSWORD: "", DISCORD_WEBHOOK_URL: "" };
+  const mockCtx = { waitUntil() {} };
+
+  await runBot(env, mockResearch, mockGenerate, mockCtx);
+
+  assert("handleResearch にctxが転送される", researchCtx === mockCtx);
+  assert("handleGenerate にctxが転送される", generateCtx === mockCtx);
+}
+{
+  // ctxを渡さない場合はデフォルト値nullのまま転送される（後方互換）
+  let researchCtx = "unset";
+
+  const mockResearch = async (body, apiKey, env, ctx) => { researchCtx = ctx; return { theme: "テスト", description: "", sourceUrl: "" }; };
+  const mockGenerate = async () => ({ imageData: btoa("x"), mimeType: "image/png", source: "gemini" });
+
+  await runBot({ GEMINI_API_KEY: "test-key", DISCORD_WEBHOOK_URL: "" }, mockResearch, mockGenerate);
+
+  assert("ctx省略時: handleResearch にctx=nullが転送される（後方互換）", researchCtx === null);
+}
+
+// ---------------------------------------------------------------------------
+// runBot: shrinkImage計測もctx.waitUntil()で背景化される（Bug#32見落とし是正）
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: shrinkImage計測のctx委譲]");
+{
+  // ctxあり: put()が永久に解決しなくてもrunBot()がハングせず完了し、ctx.waitUntil()に委譲される
+  const mockResearch = async () => ({ theme: "テスト記念日", description: "テスト説明文", sourceUrl: "https://example.com" });
+  const mockGenerate = async () => ({ imageData: btoa("fake-image-data"), mimeType: "image/png", source: "gemini" });
+
+  const hangingKv = {
+    async get() { return null; },
+    async put(key) {
+      if (key.startsWith("cpu-time:")) return new Promise(() => {});
+    },
+  };
+  const waited = [];
+  const mockCtx = { waitUntil(p) { waited.push(p); } };
+  const env = { GEMINI_API_KEY: "key", BLUESKY_IDENTIFIER: "", BLUESKY_APP_PASSWORD: "", DISCORD_WEBHOOK_URL: "", RATE_KV: hangingKv };
+
+  let threw = false;
+  try {
+    await runBot(env, mockResearch, mockGenerate, mockCtx);
+  } catch {
+    threw = true;
+  }
+
+  assert("ctxあり: put()が解決しなくてもrunBot()がハングせず完了する", !threw);
+  assert("ctxあり: shrinkImage計測がctx.waitUntil()に委譲される", waited.length >= 1);
+}
+{
+  // ctxなし: 従来通りKV書き込み完了までawaitされ、KVに実際に記録される（後方互換の確認）
+  const mockResearch = async () => ({ theme: "テスト記念日", description: "テスト説明文", sourceUrl: "https://example.com" });
+  const mockGenerate = async () => ({ imageData: btoa("fake-image-data"), mimeType: "image/png", source: "gemini" });
+
+  const kv = makeKvMock();
+  const env = { GEMINI_API_KEY: "key", BLUESKY_IDENTIFIER: "", BLUESKY_APP_PASSWORD: "", DISCORD_WEBHOOK_URL: "", RATE_KV: kv };
+
+  await runBot(env, mockResearch, mockGenerate);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`cpu-time:${today}`] ?? "{}");
+  assert("ctxなし: 応答が返るまでにshrinkImageのcpu-time KVへ書き込まれている", stored.shrinkImage?.calls === 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -2109,6 +2190,73 @@ console.log("\n[recordCpuCheckpoint]");
 }
 
 // ---------------------------------------------------------------------------
+// _deferOrAwait: 「ctxがあればctx.waitUntil()・なければawait」の共通ヘルパー
+// （Bug#32追加調査。handleResearch()/handleGenerate()/_recordBackTextureDecodeCpu()/
+// runBot()のshrinkImage計測の4箇所で使う重複パターンを集約した）
+// ---------------------------------------------------------------------------
+console.log("\n[_deferOrAwait]");
+{
+  // ctxあり: 解決しないPromiseでもハングせず返り、ctx.waitUntil()に委譲される
+  const waited = [];
+  const mockCtx = { waitUntil(p) { waited.push(p); } };
+  const hanging = new Promise(() => {});
+
+  let threw = false;
+  try {
+    await _deferOrAwait(hanging, mockCtx);
+  } catch {
+    threw = true;
+  }
+
+  assert("ctxあり: 解決しないPromiseでもハングせず返る", !threw);
+  assert("ctxあり: 渡したPromiseがそのままctx.waitUntil()に委譲される", waited.length === 1 && waited[0] === hanging);
+}
+{
+  // ctxなし: Promiseの解決を最後までawaitする（後方互換）。
+  // setTimeout経由の非同期解決を挟むことで、実際にawaitされていることを検証する
+  // （executor内で同期的にフラグを立てるとawaitの有無に関わらずtrueになってしまうため避ける）
+  let settled = false;
+  const p = new Promise((resolve) => setTimeout(resolve, 5)).then(() => { settled = true; });
+  await _deferOrAwait(p, null);
+  assert("ctxなし: Promiseの解決をawaitする", settled === true);
+}
+
+// ---------------------------------------------------------------------------
+// _recordBackTextureDecodeCpu: /suzuri-createハンドラーのsuzuriCreate-backTextureDecode
+// 計測をctx.waitUntil()で背景化するヘルパー（Bug#32追加調査の横展開）
+// ---------------------------------------------------------------------------
+console.log("\n[_recordBackTextureDecodeCpu]");
+{
+  // ctxあり: put()が永久に解決しなくてもハングせず返り、ctx.waitUntil()に委譲される
+  const hangingKv = {
+    async get() { return null; },
+    async put(key) {
+      if (key.startsWith("cpu-time:")) return new Promise(() => {});
+    },
+  };
+  const waited = [];
+  const mockCtx = { waitUntil(p) { waited.push(p); } };
+
+  let threw = false;
+  try {
+    await _recordBackTextureDecodeCpu(12.3, { RATE_KV: hangingKv }, mockCtx);
+  } catch {
+    threw = true;
+  }
+
+  assert("ctxあり: put()が解決しなくてもハングせず返る", !threw);
+  assert("ctxあり: ctx.waitUntil()が呼ばれる", waited.length === 1);
+}
+{
+  // ctxなし: 従来通りKV書き込み完了までawaitされ、KVに実際に記録される（後方互換の確認）
+  const kv = makeKvMock();
+  await _recordBackTextureDecodeCpu(20, { RATE_KV: kv });
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`cpu-time:${today}`] ?? "{}");
+  assert("ctxなし: 応答が返るまでにKVへ書き込まれている", stored["suzuriCreate-backTextureDecode"]?.calls === 1);
+}
+
+// ---------------------------------------------------------------------------
 // ギャラリー: toJSTDateString
 // frontend/index.html と同じ実装をここで再定義してテストする
 // （ブラウザ専用DOMを持たない純粋関数のため直接テスト可能）
@@ -2840,6 +2988,78 @@ console.log("\n[【回帰】handleGenerate: jstDateISO受け渡し]");
   }
   globalThis.fetch = origFetch;
   assert("jstDateISO省略時: 従来通り正常に生成される", result?.source === "gemini");
+}
+
+// ---------------------------------------------------------------------------
+// handleGenerate: ctx.waitUntil()によるKV書き込み背景化（Bug#32追加調査）
+// incrementUsageKv()のKV往復が計測区間を水増ししていた問題の是正。
+// ctxが渡された場合はKV書き込みをctx.waitUntil()に委譲し、応答をブロックしない。
+// ---------------------------------------------------------------------------
+console.log("\n[handleGenerate: ctx.waitUntil()によるKV書き込み背景化]");
+
+function makeGenerateFetchMockWithTokens(imgTokens) {
+  return async (url) => {
+    if (typeof url === "string" && url.includes("generateContent")) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "aW1h" } }] } }],
+          usageMetadata: { totalTokenCount: imgTokens },
+        }),
+      };
+    }
+    // Pollinationsは_twoPhaseRaceで並列起動されるため、未処理rejectionを避けて無害な成功レスポンスを返す
+    return { ok: true, status: 200, headers: { get: () => "image/png" }, arrayBuffer: async () => new ArrayBuffer(1) };
+  };
+}
+
+{
+  // ctxあり: put()が永久に解決しなくてもhandleGenerate()はハングせず返り、
+  // ctx.waitUntil()にusage・cpu集計のPromiseが委譲される
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeGenerateFetchMockWithTokens(200);
+
+  // put()はusage:/cpu-time:キーのみ永久にpendingのまま（_resolveImageModel()のimage-model:active書き込みは
+  // 即座に解決させないと、そちら側のawaitでhandleGenerate()自体がハングし本来の検証対象と混同する）
+  const hangingKv = {
+    async get() { return null; },
+    async put(key) {
+      if (key.startsWith("usage:") || key.startsWith("cpu-time:")) return new Promise(() => {});
+    },
+  };
+  const waited = [];
+  const mockCtx = { waitUntil(p) { waited.push(p); } };
+
+  let result, threw = false;
+  try {
+    result = await handleGenerate({ theme: "テスト", description: "" }, "dummy-key", { RATE_KV: hangingKv }, mockCtx);
+  } catch (e) {
+    threw = true;
+    console.error("  handleGenerate threw:", e.message);
+  }
+  globalThis.fetch = origFetch;
+
+  assert("ctxあり: put()が解決しなくてもhandleGenerate()がハングせず返る", !threw && result?.source === "gemini");
+  assert("ctxあり: ctx.waitUntil()が呼ばれる（usage・cpu用の2件）", waited.length === 2);
+}
+
+{
+  // ctxなし: 従来通りKV書き込み完了までawaitされ、KVに実際に記録される（後方互換の確認）
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeGenerateFetchMockWithTokens(300);
+
+  const kv = makeKvMock();
+  const result = await handleGenerate({ theme: "テスト", description: "" }, "dummy-key", { RATE_KV: kv });
+  globalThis.fetch = origFetch;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const usageStored = JSON.parse(kv.store[`usage:${today}`] ?? "{}");
+  const cpuStored    = JSON.parse(kv.store[`cpu-time:${today}`] ?? "{}");
+
+  assert("ctxなし: handleGenerate()は正常に結果を返す", result?.source === "gemini");
+  assert("ctxなし: 応答が返るまでにusage KVへ書き込まれている", usageStored.imageTokens === 300);
+  assert("ctxなし: 応答が返るまでにcpu-time KVへ書き込まれている", cpuStored.generate?.calls === 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -3876,6 +4096,90 @@ console.log("\n[handleResearch: HTMLタグ除去]");
 
   assert("タグなしのthemeは変化しない", result?.theme === "大仏の日");
   assert("タグなしのdescriptionは変化しない", result?.description === "東大寺の大仏開眼法要が行われた記念日。");
+}
+
+// ---------------------------------------------------------------------------
+// handleResearch: ctx.waitUntil()によるKV書き込み背景化（Bug#32追加調査）
+// incrementUsageKv()のKV往復が計測区間を水増ししていた問題の是正。
+// ctxが渡された場合はKV書き込みをctx.waitUntil()に委譲し、応答をブロックしない。
+// ---------------------------------------------------------------------------
+console.log("\n[handleResearch: ctx.waitUntil()によるKV書き込み背景化]");
+
+function makeResearchFetchMockWithTokens(researchJson, totalTokenCount) {
+  return async (url) => {
+    if (url.includes("/models?key=")) {
+      return {
+        ok: true,
+        text: async () => JSON.stringify({
+          models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
+        }),
+      };
+    }
+    return {
+      ok: true,
+      text: async () => JSON.stringify({
+        candidates: [{
+          content: { parts: [{ text: JSON.stringify(researchJson) }] },
+          groundingMetadata: { groundingChunks: [], webSearchQueries: ["test query"] },
+        }],
+        usageMetadata: { totalTokenCount },
+      }),
+    };
+  };
+}
+
+{
+  // ctxあり: put()が永久に解決しなくてもhandleResearch()はハングせず返り、
+  // ctx.waitUntil()にusage・cpu集計のPromiseが委譲される
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeResearchFetchMockWithTokens(
+    { theme: "テスト記念日", description: "説明", sourceUrl: "https://example.com" },
+    100
+  );
+
+  // put()はusage:/cpu-time:キーのみ永久にpendingのまま（selectBestModel()のtext-model:active書き込みは
+  // 即座に解決させないと、そちら側のawaitでhandleResearch()自体がハングし本来の検証対象と混同する）
+  const hangingKv = {
+    async get() { return null; },
+    async put(key) {
+      if (key.startsWith("usage:") || key.startsWith("cpu-time:")) return new Promise(() => {});
+    },
+  };
+  const waited = [];
+  const mockCtx = { waitUntil(p) { waited.push(p); } };
+
+  let result, threw = false;
+  try {
+    result = await handleResearch({ date: "2026年1月1日" }, "test-key", { RATE_KV: hangingKv }, mockCtx);
+  } catch (e) {
+    threw = true;
+    console.error("  handleResearch threw:", e.message);
+  }
+  globalThis.fetch = origFetch;
+
+  assert("ctxあり: put()が解決しなくてもhandleResearch()がハングせず返る", !threw && result?.theme === "テスト記念日");
+  assert("ctxあり: ctx.waitUntil()が呼ばれる（usage・cpu用の2件）", waited.length === 2);
+}
+
+{
+  // ctxなし: 従来通りKV書き込み完了までawaitされ、KVに実際に記録される（後方互換の確認）
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeResearchFetchMockWithTokens(
+    { theme: "テスト記念日2", description: "説明2", sourceUrl: "https://example.com" },
+    150
+  );
+
+  const kv = makeKvMock();
+  const result = await handleResearch({ date: "2026年1月2日" }, "test-key", { RATE_KV: kv });
+  globalThis.fetch = origFetch;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const usageStored = JSON.parse(kv.store[`usage:${today}`] ?? "{}");
+  const cpuStored    = JSON.parse(kv.store[`cpu-time:${today}`] ?? "{}");
+
+  assert("ctxなし: handleResearch()は正常に結果を返す", result?.theme === "テスト記念日2");
+  assert("ctxなし: 応答が返るまでにusage KVへ書き込まれている", usageStored.textTokens === 150);
+  assert("ctxなし: 応答が返るまでにcpu-time KVへ書き込まれている", cpuStored.research?.calls === 1);
 }
 
 // ----------------------------------------------------------
