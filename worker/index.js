@@ -1,6 +1,6 @@
 /**
  * Cloudflare Worker - Anniversary Cat API Proxy + Bluesky Bot
- * @updated 2026-03-23
+ * @updated 2026-08-07
  *
  * 環境変数（secrets）:
  *   GEMINI_API_KEY  ... Cloudflare ダッシュボード > Settings > Variables and Secrets で設定
