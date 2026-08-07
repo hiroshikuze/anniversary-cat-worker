@@ -228,18 +228,26 @@ export async function recordCpuCheckpoint(step, ms, kv = null) {
   await incrementCpuTimeKv(kv, step, ms);
 }
 
+// Bug#32追加調査: KV書き込みPromiseを「ctxがあればctx.waitUntil()で背景化・なければawait」する
+// 共通ヘルパー。handleResearch()/handleGenerate()/_recordBackTextureDecodeCpu()/runBot()の
+// shrinkImage計測の4箇所で重複していたパターンを集約した。
+// ctxが渡された場合はKV書き込みの完了を待たずに呼び出し元へ制御を返す（クリティカルパスから
+// 分離）。ctxが渡されない場合（テスト等）は従来通りKV書き込み完了までawaitする後方互換動作
+export async function _deferOrAwait(promise, ctx) {
+  if (ctx) {
+    ctx.waitUntil(promise);
+  } else {
+    await promise;
+  }
+}
+
 // Bug#32追加調査: /suzuri-createハンドラーのsuzuriCreate-backTextureDecode計測も
 // recordCpuCheckpoint()のKV書き込みがawaitでクリティカルパスをブロックしていたため、
-// handleResearch()/handleGenerate()と同じ「ctxがあればwaitUntil・なければawait」パターンを適用。
+// handleResearch()/handleGenerate()と同じパターンを適用。
 // fetch()ハンドラー内にインラインで書かれておりexportされた関数がなかったため、
 // _pollFalAndGetTexture()と同じ「依存関数を引数で受け取る」パターンでテスト可能な形に切り出した
 export async function _recordBackTextureDecodeCpu(cpuMs, env, ctx = null) {
-  const cpuPromise = recordCpuCheckpoint("suzuriCreate-backTextureDecode", cpuMs, env.RATE_KV);
-  if (ctx) {
-    ctx.waitUntil(cpuPromise);
-  } else {
-    await cpuPromise;
-  }
+  await _deferOrAwait(recordCpuCheckpoint("suzuriCreate-backTextureDecode", cpuMs, env.RATE_KV), ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -602,18 +610,13 @@ export async function handleResearch(body, apiKey, env = null, ctx = null) {
   );
 
   // Bug#32追加調査: 計測をKV呼び出しより前に確定させる（incrementUsageKv()のKV往復を
-  // 計測区間に含めない）。ctxがあればKV書き込み自体もctx.waitUntil()で背景化し、
-  // 応答をKV往復の完了まで待たせない（ctxなし時は従来通りawaitする後方互換動作）
+  // 計測区間に含めない）。両方のPromiseを先に生成してから_deferOrAwait()に渡すことで、
+  // ctxなし（await）の場合でも2つのKV書き込みが直列ではなく並行に走る
   const cpuMs = performance.now() - tCpuStart;
   const usagePromise = incrementUsageKv(env?.RATE_KV, "text", totalTokens, model, data.modelVersion ?? null);
   const cpuPromise = recordCpuCheckpoint("research", cpuMs, env?.RATE_KV);
-  if (ctx) {
-    ctx.waitUntil(usagePromise);
-    ctx.waitUntil(cpuPromise);
-  } else {
-    await usagePromise;
-    await cpuPromise;
-  }
+  await _deferOrAwait(usagePromise, ctx);
+  await _deferOrAwait(cpuPromise, ctx);
 
   return result;
 }
@@ -1059,18 +1062,13 @@ export async function handleGenerate(body, apiKey, env, ctx = null) {
     }
     const imgTokens = data.usageMetadata?.totalTokenCount ?? 0;
     console.log(`[generate] Gemini success model=${model} mimeType=${imagePart.inlineData.mimeType} tokens=${imgTokens}`);
-    // Bug#32追加調査: handleResearch()と同じ「計測を先に確定→ctxがあればwaitUntil・なければawait」
-    // パターン。callModel()はhandleGenerate()のクロージャのためctxを追加引数なしで参照できる
+    // Bug#32追加調査: handleResearch()と同じパターン。callModel()はhandleGenerate()の
+    // クロージャのためctxを追加引数なしで参照できる
     const cpuMs = performance.now() - tCpuStart;
     const usagePromise = incrementUsageKv(env?.RATE_KV, "image", imgTokens, model, data.modelVersion ?? null);
     const cpuPromise = recordCpuCheckpoint("generate", cpuMs, env?.RATE_KV);
-    if (ctx) {
-      ctx.waitUntil(usagePromise);
-      ctx.waitUntil(cpuPromise);
-    } else {
-      await usagePromise;
-      await cpuPromise;
-    }
+    await _deferOrAwait(usagePromise, ctx);
+    await _deferOrAwait(cpuPromise, ctx);
     return { imageData: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType || "image/png", source: "gemini" };
   }
 

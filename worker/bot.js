@@ -15,7 +15,7 @@
 
 import { saveToR2 } from "./r2-storage.js";
 import { createSuzuriProducts } from "./suzuri.js";
-import { pickFromPool, recordCpuCheckpoint } from "./index.js";
+import { pickFromPool, recordCpuCheckpoint, _deferOrAwait } from "./index.js";
 
 // Photonは動的importで遅延ロード（Node.jsテスト環境での.wasmロード失敗を回避）
 let _photonReady = false;
@@ -666,7 +666,8 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
     // Bug#32: shrinkImageIfNeeded()がデコード済みbytesを返すため再デコード不要
     const imageBytes  = shrunk.bytes;
     const mimeType    = shrunk.mimeType;
-    await recordCpuCheckpoint("shrinkImage", performance.now() - tShrinkStart, env.RATE_KV);
+    // Bug#32追加調査: 見落としていたKV書き込みブロッキングを是正。ctxがあればwaitUntil()で背景化する
+    await _deferOrAwait(recordCpuCheckpoint("shrinkImage", performance.now() - tShrinkStart, env.RATE_KV), ctx);
 
     const themeTag    = buildThemeTag(research.theme);
     const guestSnsTag = generated.guest?.snsTag ?? null;

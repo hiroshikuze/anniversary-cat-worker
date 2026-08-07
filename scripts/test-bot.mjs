@@ -18,7 +18,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta,
 } from "../worker/bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _deferOrAwait } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 
@@ -348,6 +348,50 @@ console.log("\n[runBot: ctxの転送]");
   await runBot({ GEMINI_API_KEY: "test-key", DISCORD_WEBHOOK_URL: "" }, mockResearch, mockGenerate);
 
   assert("ctx省略時: handleResearch にctx=nullが転送される（後方互換）", researchCtx === null);
+}
+
+// ---------------------------------------------------------------------------
+// runBot: shrinkImage計測もctx.waitUntil()で背景化される（Bug#32見落とし是正）
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: shrinkImage計測のctx委譲]");
+{
+  // ctxあり: put()が永久に解決しなくてもrunBot()がハングせず完了し、ctx.waitUntil()に委譲される
+  const mockResearch = async () => ({ theme: "テスト記念日", description: "テスト説明文", sourceUrl: "https://example.com" });
+  const mockGenerate = async () => ({ imageData: btoa("fake-image-data"), mimeType: "image/png", source: "gemini" });
+
+  const hangingKv = {
+    async get() { return null; },
+    async put(key) {
+      if (key.startsWith("cpu-time:")) return new Promise(() => {});
+    },
+  };
+  const waited = [];
+  const mockCtx = { waitUntil(p) { waited.push(p); } };
+  const env = { GEMINI_API_KEY: "key", BLUESKY_IDENTIFIER: "", BLUESKY_APP_PASSWORD: "", DISCORD_WEBHOOK_URL: "", RATE_KV: hangingKv };
+
+  let threw = false;
+  try {
+    await runBot(env, mockResearch, mockGenerate, mockCtx);
+  } catch {
+    threw = true;
+  }
+
+  assert("ctxあり: put()が解決しなくてもrunBot()がハングせず完了する", !threw);
+  assert("ctxあり: shrinkImage計測がctx.waitUntil()に委譲される", waited.length >= 1);
+}
+{
+  // ctxなし: 従来通りKV書き込み完了までawaitされ、KVに実際に記録される（後方互換の確認）
+  const mockResearch = async () => ({ theme: "テスト記念日", description: "テスト説明文", sourceUrl: "https://example.com" });
+  const mockGenerate = async () => ({ imageData: btoa("fake-image-data"), mimeType: "image/png", source: "gemini" });
+
+  const kv = makeKvMock();
+  const env = { GEMINI_API_KEY: "key", BLUESKY_IDENTIFIER: "", BLUESKY_APP_PASSWORD: "", DISCORD_WEBHOOK_URL: "", RATE_KV: kv };
+
+  await runBot(env, mockResearch, mockGenerate);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`cpu-time:${today}`] ?? "{}");
+  assert("ctxなし: 応答が返るまでにshrinkImageのcpu-time KVへ書き込まれている", stored.shrinkImage?.calls === 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -2143,6 +2187,38 @@ console.log("\n[recordCpuCheckpoint]");
   const today = new Date().toISOString().slice(0, 10);
   const stored = JSON.parse(kv.store[`cpu-time:${today}`]);
   assert("research と generate が独立して記録される", stored.research.totalMs === 10 && stored.generate.totalMs === 20);
+}
+
+// ---------------------------------------------------------------------------
+// _deferOrAwait: 「ctxがあればctx.waitUntil()・なければawait」の共通ヘルパー
+// （Bug#32追加調査。handleResearch()/handleGenerate()/_recordBackTextureDecodeCpu()/
+// runBot()のshrinkImage計測の4箇所で使う重複パターンを集約した）
+// ---------------------------------------------------------------------------
+console.log("\n[_deferOrAwait]");
+{
+  // ctxあり: 解決しないPromiseでもハングせず返り、ctx.waitUntil()に委譲される
+  const waited = [];
+  const mockCtx = { waitUntil(p) { waited.push(p); } };
+  const hanging = new Promise(() => {});
+
+  let threw = false;
+  try {
+    await _deferOrAwait(hanging, mockCtx);
+  } catch {
+    threw = true;
+  }
+
+  assert("ctxあり: 解決しないPromiseでもハングせず返る", !threw);
+  assert("ctxあり: 渡したPromiseがそのままctx.waitUntil()に委譲される", waited.length === 1 && waited[0] === hanging);
+}
+{
+  // ctxなし: Promiseの解決を最後までawaitする（後方互換）。
+  // setTimeout経由の非同期解決を挟むことで、実際にawaitされていることを検証する
+  // （executor内で同期的にフラグを立てるとawaitの有無に関わらずtrueになってしまうため避ける）
+  let settled = false;
+  const p = new Promise((resolve) => setTimeout(resolve, 5)).then(() => { settled = true; });
+  await _deferOrAwait(p, null);
+  assert("ctxなし: Promiseの解決をawaitする", settled === true);
 }
 
 // ---------------------------------------------------------------------------

@@ -464,6 +464,8 @@ GeminiのAPIレスポンスに含まれる`usageMetadata.totalTokenCount`を取�
 - **`ctx`の伝播経路**: `fetch(request, env, ctx)`の`/research`・`/generate`ハンドラー → `handleResearch()`/`handleGenerate()`に直接渡す。Cron側は`scheduled(event, env, ctx)` → `generateResearchPool(env, ctx)`（10並列の各`handleResearch()`呼び出しに渡す）・`runBot(env, handleResearch, handleGenerate, ctx)`（`worker/bot.js`、内部の`handleResearch()`/`handleGenerate()`呼び出しに渡す）
 - `handleGenerate()`内部の`callModel()`クロージャは`ctx`を追加の引数受け渡しなしにクロージャ経由でそのまま参照する
 - **`/suzuri-create`ハンドラーへの横展開**: `suzuriCreate-backTextureDecode`計測（`incrementUsageKv()`とのペアはなく`recordCpuCheckpoint()`単体呼び出し）にも同じパターンを適用した。この箇所は`fetch()`ハンドラー内にインラインで書かれておりexportされた関数がなかったため、`_recordBackTextureDecodeCpu(cpuMs, env, ctx)`としてexport・テスト可能な形に切り出した（`_pollFalAndGetTexture()`と同じ「依存関数を引数で受け取る」切り出しパターン）。`fetch(request, env, ctx)`内なので`ctx`は常に存在するが、他の箇所と実装を揃えるため同じ`if (ctx) { ctx.waitUntil(...) } else { await ... }`分岐を踏襲する
+- **共通ヘルパー`_deferOrAwait(promise, ctx)`への集約**: 上記「`ctx`があれば`ctx.waitUntil()`・なければ`await`」という同一パターンが4箇所（`handleResearch()`・`handleGenerate()`・`_recordBackTextureDecodeCpu()`・`runBot()`の`shrinkImage`計測）に重複したため、`worker/index.js`に`_deferOrAwait(promise, ctx)`として抽出しexportした。4箇所すべてこのヘルパー経由に統一している
+- **`runBot()`の`shrinkImage`計測**: `worker/bot.js`の`recordCpuCheckpoint("shrinkImage", ..., env.RATE_KV)`も同じKV書き込みブロッキングパターンだったが、`ctx`導入時に見落としていた。`runBot(env, handleResearch, handleGenerate, ctx = null)`が受け取る`ctx`を`_deferOrAwait()`経由でこの呼び出しにも適用する
 
 **KV書き込み回数の制約による対象範囲の線引き（2026-08追加）:**
 

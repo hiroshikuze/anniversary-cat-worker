@@ -323,5 +323,7 @@
   - **検討したが採用しなかった案**: Cloudflare Workersは1 invocationにつき単一のV8アイソレート（真のマルチスレッド不可）のため、KV書き込みの「マルチスレッド化」自体は選択肢にならない。またCPU時間課金・上限はinvocation全体（`waitUntil()`の背景処理を含む）に対して適用されるため、`ctx.waitUntil()`はCPU時間予算そのものを増やすものではなく、あくまでI/O待ちをクリティカルパスから外すための手段である点に注意
   - **教訓（追加）**: 「ネットワーク待ちを含まない同期処理のみを計測する」という設計意図があっても、計測区間の途中に見落としたawait（今回は使用量集計のKV書き込み）が紛れ込むと計測値が大きく歪む。計測ポイントを追加・変更する際は、区間内のコードを1行ずつ「これはCPUバウンドか、I/Oバウンドか」を確認する
   - **横展開（同日追加）**: `/suzuri-create`ハンドラー内の`suzuriCreate-backTextureDecode`計測（`incrementUsageKv()`とのペアはなく`recordCpuCheckpoint()`単体だが、同じく`await`でクリティカルパスをブロックしていた）にも同じ「計測確定→ctxがあればwaitUntil・なければawait」パターンを適用した。この箇所は`fetch()`ハンドラー内にインラインで書かれておりexportされた関数がなかったため、`_recordBackTextureDecodeCpu(cpuMs, env, ctx)`としてテスト可能な形に切り出した（`_pollFalAndGetTexture()`等の既存の「依存関数を引数で受け取る」切り出しパターンを踏襲）
+  - **見落とし・追加是正（同日）**: `worker/bot.js` `runBot()`内の`shrinkImage`計測（`recordCpuCheckpoint("shrinkImage", ..., env.RATE_KV)`）にも同じブロッキングパターンが残っていた。`runBot()`は既に`ctx`を受け取るようになっていたにもかかわらず、この呼び出しだけ`ctx`を使わずawaitしたままだった（実装時の見落とし）。「ctxがあればwaitUntil・なければawait」パターンが4箇所目の重複になったため、共通ヘルパー`_deferOrAwait(promise, ctx)`に抽出し、`handleResearch()`・`handleGenerate()`・`_recordBackTextureDecodeCpu()`・`runBot()`のshrinkImage計測の4箇所すべてで使うようリファクタした
+  - **教訓（同種パターンの見落とし対策）**: 同じ設計変更を複数箇所に適用する際、grep等で`recordCpuCheckpoint(`・`incrementUsageKv(`の全呼び出し箇所を機械的に洗い出してから着手しないと、一部の呼び出し（今回は`env.RATE_KV`を渡している箇所のみが対象で、`kv`省略の呼び出しは対象外という判断が必要だった）を見落とす。修正対象の判定基準（第3引数にKVを渡しているかどうか）を明文化してから横展開すると漏れを防ぎやすい
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
