@@ -441,7 +441,7 @@ GeminiのAPIレスポンスに含まれる`usageMetadata.totalTokenCount`を取�
 `/usage`（トークン使用量）と同じパターンで、CPU時間が心配な実行パスのステップ別所要時間をKVに日次集計し、APIで取得できるようにする。GitHub Actionsのログ経由でClaude CodeセッションがCPU時間の実測データを直接確認できるようにする目的。
 
 - KVキー: `cpu-time:YYYY-MM-DD`（UTC基準・TTL=32日、`usage:`と同じ命名パターン）
-- 集計フィールド: ステップ名をキーとしたオブジェクト（例: `research`・`generate`・`shrinkImage`・`suzuriCreate-backTextureDecode`）。各ステップは`{calls, totalMs, maxMs}`
+- 集計フィールド: ステップ名をキーとしたオブジェクト（例: `research`・`generate`・`generate-jsonParse`・`shrinkImage`・`suzuriCreate-backTextureDecode`）。各ステップは`{calls, totalMs, maxMs}`
 - `/cpu-usage` GETエンドポイントで直近30日分をJSON返却（認証なし・統計のみ）
 - `scripts/health-check.js`の末尾でエンドポイントを呼び、CIログに出力する
 
