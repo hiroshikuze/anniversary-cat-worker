@@ -314,6 +314,43 @@ console.log("\n[runBot: 正常フロー（Bluesky認証は失敗してよい）]
 }
 
 // ---------------------------------------------------------------------------
+// runBot: 受け取ったctxをhandleResearch()/handleGenerate()にそのまま転送する
+// （Bug#32追加調査: ctx.waitUntil()背景化の配線確認）
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: ctxの転送]");
+{
+  let researchCtx, generateCtx;
+
+  const mockResearch = async (body, apiKey, env, ctx) => {
+    researchCtx = ctx;
+    return { theme: "テスト記念日", description: "テスト説明文", sourceUrl: "https://example.com" };
+  };
+  const mockGenerate = async (body, apiKey, env, ctx) => {
+    generateCtx = ctx;
+    return { imageData: btoa("fake-image-data"), mimeType: "image/png", source: "gemini" };
+  };
+
+  const env = { GEMINI_API_KEY: "test-gemini-key", BLUESKY_IDENTIFIER: "", BLUESKY_APP_PASSWORD: "", DISCORD_WEBHOOK_URL: "" };
+  const mockCtx = { waitUntil() {} };
+
+  await runBot(env, mockResearch, mockGenerate, mockCtx);
+
+  assert("handleResearch にctxが転送される", researchCtx === mockCtx);
+  assert("handleGenerate にctxが転送される", generateCtx === mockCtx);
+}
+{
+  // ctxを渡さない場合はデフォルト値nullのまま転送される（後方互換）
+  let researchCtx = "unset";
+
+  const mockResearch = async (body, apiKey, env, ctx) => { researchCtx = ctx; return { theme: "テスト", description: "", sourceUrl: "" }; };
+  const mockGenerate = async () => ({ imageData: btoa("x"), mimeType: "image/png", source: "gemini" });
+
+  await runBot({ GEMINI_API_KEY: "test-key", DISCORD_WEBHOOK_URL: "" }, mockResearch, mockGenerate);
+
+  assert("ctx省略時: handleResearch にctx=nullが転送される（後方互換）", researchCtx === null);
+}
+
+// ---------------------------------------------------------------------------
 // runBot - handleResearch 失敗時は handleGenerate を呼ばない
 // ---------------------------------------------------------------------------
 console.log("\n[runBot: research 失敗時]");
