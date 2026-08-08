@@ -42,7 +42,12 @@ if (!itemsRes.ok) {
   process.exit(1);
 }
 
-const itemsData = await itemsRes.json();
+const itemsResText = await itemsRes.text();
+let itemsData;
+try { itemsData = JSON.parse(itemsResText); } catch {
+  console.error(`❌ アイテム一覧: 非JSONレスポンス status=${itemsRes.status} body=${itemsResText.slice(0, 200)}`);
+  process.exit(1);
+}
 
 // レスポンス構造を防御的に扱う（配列直接返しと {items:[...]} 形式の両方に対応）
 const items = Array.isArray(itemsData) ? itemsData : (itemsData.items ?? []);
@@ -115,7 +120,12 @@ const materialsRes = await fetch(`${SUZURI_API_BASE}/materials`, {
   body: JSON.stringify(materialsPayload),
 });
 
-const materialsData = await materialsRes.json();
+const materialsResText = await materialsRes.text();
+let materialsData;
+try { materialsData = JSON.parse(materialsResText); } catch {
+  console.error(`❌ 商品生成: 非JSONレスポンス status=${materialsRes.status} body=${materialsResText.slice(0, 200)}`);
+  process.exit(1);
+}
 
 if (!materialsRes.ok) {
   console.error(`❌ 商品生成失敗: ${materialsRes.status}`);

@@ -158,6 +158,11 @@
 - **副次修正**: `generateResearchPool()`の`notifyDiscord()`呼び出しで絵文字引数を省略していたためDiscord通知の先頭が`❌`になっていた（メッセージ本文の`✅`と矛盾）。`"✅"`を明示渡しに修正
 - **テスト**: `scripts/test-bot.mjs`に`handleResearch`・`handleGenerate`の502平文レスポンス回帰テストを追加
 - **場所**: `worker/index.js` `handleResearch()` L327 / `handleGenerate()` L623 / `generateResearchPool()` L273
+- **横展開の見落とし・追加是正（2026-08）**: `/cpu-usage`の`res.json()`直呼び（`scripts/health-check.js`）をきっかけに全リポジトリを`res.json()`でgrep監査したところ、当時の修正が`worker/index.js`のみに限定され、他の外部API呼び出し箇所には同じ危険パターンが残っていたことが判明した
+  - **`worker/fal.js`（本番影響あり・最優先）**: `submitFalJob()`・`getFalResult()`内の3箇所（fal.ai Queue APIへの投入・ステータス確認・結果取得）が`res.ok`チェック後も`res.json()`を直接呼んでおり、fal.ai側が502等を平文で返すとBug#19と同じ構造でクラッシュしうる状態だった（`!res.ok`分岐は`res.text()`で正しく処理されていたのに、成功分岐だけ無防備という非対称な状態）。標準パターンに是正した
+  - **`scripts/health-check.js`・`scripts/test-suzuri-api.mjs`・`scripts/test-fal-models.mjs`**: CI・手動実行スクリプト内の計13箇所も同様に是正した。いずれも`testing.md`で「GitHub Actionsのみ・外部API必要」に分類されたE2E専用スクリプトのため、`scripts/test-bot.mjs`への単体テストは追加していない（既存の`checkBlueskyAuth`等と同じ扱い）
+  - **対象外とした箇所**: `frontend/index.html`（ブラウザから自Workerを呼ぶコードで文脈が異なるため、今回はユーザー判断で対象外とした）・`worker/r2-storage.js`や`worker/bot.js`/`worker/index.js`のR2オブジェクト`.json()`呼び出し（外部API通信ではなく自ドメインのR2ストレージ読み取りのため対象外）
+  - **教訓**: 特定のバグ修正パターンを導入した際、修正箇所と同じリスクを持つ「兄弟コード」（同種の外部API呼び出し）が他のファイルに残っていないか、修正直後にリポジトリ全体をgrepで確認する習慣が必要。今回は約4ヶ月後に別の作業（CPU計測）のついでに偶然発見された
 
 ### 20. runBot()がR2リサーチプールを参照せずhandleResearch()を直接呼んでいた（2026-04）
 

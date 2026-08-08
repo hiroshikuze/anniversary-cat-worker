@@ -74,7 +74,11 @@ async function submitJob(modelId, body) {
     const err = await res.text().catch(() => "");
     throw new Error(`submit失敗 status=${res.status} ${err.slice(0, 200)}`);
   }
-  const data = await res.json();
+  const resText = await res.text();
+  let data;
+  try { data = JSON.parse(resText); } catch {
+    throw new Error(`submit: 非JSONレスポンス status=${res.status} body=${resText.slice(0, 200)}`);
+  }
   return data.request_id;
 }
 
@@ -86,13 +90,20 @@ async function pollResult(modelId, requestId, timeoutMs = 180_000) {
       headers: { "Authorization": `Key ${FAL_KEY}` },
     });
     if (!res.ok) continue;
-    const { status } = await res.json();
+    const statusText = await res.text();
+    let statusData;
+    try { statusData = JSON.parse(statusText); } catch { continue; }
+    const { status } = statusData;
     if (status === "COMPLETED") {
       const elapsed = Date.now() - start;
       const resultRes = await fetch(`${FAL_QUEUE_BASE}/${modelId}/requests/${requestId}`, {
         headers: { "Authorization": `Key ${FAL_KEY}` },
       });
-      const result = await resultRes.json();
+      const resultText = await resultRes.text();
+      let result;
+      try { result = JSON.parse(resultText); } catch {
+        throw new Error(`result: 非JSONレスポンス status=${resultRes.status} body=${resultText.slice(0, 200)}`);
+      }
       return { result, elapsedMs: elapsed };
     }
     if (status === "FAILED") throw new Error("ジョブ失敗");

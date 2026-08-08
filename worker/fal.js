@@ -66,7 +66,11 @@ export async function submitFalJob(imageData, mimeType, env) {
     throw new Error(`fal.ai queue投入失敗: status=${res.status} ${errText}`);
   }
 
-  const data = await res.json();
+  const resText = await res.text();
+  let data;
+  try { data = JSON.parse(resText); } catch {
+    throw new Error(`fal.ai queue投入: 非JSONレスポンス: status=${res.status} body=${resText.slice(0, 120)}`);
+  }
   const requestId = data.request_id;
   if (!requestId) {
     throw new Error(`fal.ai queue: request_idが取得できません: ${JSON.stringify(data)}`);
@@ -97,7 +101,13 @@ export async function getFalResult(requestId, env) {
     return { status: "error" };
   }
 
-  const { status } = await statusRes.json();
+  const statusText = await statusRes.text();
+  let statusData;
+  try { statusData = JSON.parse(statusText); } catch {
+    console.warn(`[fal] status check: 非JSONレスポンス body=${statusText.slice(0, 120)}`);
+    return { status: "error" };
+  }
+  const { status } = statusData;
   console.log(`[fal] queue status=${status} requestId=${requestId}`);
 
   if (status === "FAILED") {
@@ -117,7 +127,12 @@ export async function getFalResult(requestId, env) {
     return { status: "error" };
   }
 
-  const result = await resultRes.json();
+  const resultText = await resultRes.text();
+  let result;
+  try { result = JSON.parse(resultText); } catch {
+    console.warn(`[fal] result: 非JSONレスポンス body=${resultText.slice(0, 120)}`);
+    return { status: "error" };
+  }
   // モデルによりレスポンス構造が異なるため複数パスを確認
   const cdnUrl =
     result?.image?.url ??
