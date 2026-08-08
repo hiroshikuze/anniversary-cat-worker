@@ -441,7 +441,7 @@ GeminiのAPIレスポンスに含まれる`usageMetadata.totalTokenCount`を取�
 `/usage`（トークン使用量）と同じパターンで、CPU時間が心配な実行パスのステップ別所要時間をKVに日次集計し、APIで取得できるようにする。GitHub Actionsのログ経由でClaude CodeセッションがCPU時間の実測データを直接確認できるようにする目的。
 
 - KVキー: `cpu-time:YYYY-MM-DD`（UTC基準・TTL=32日、`usage:`と同じ命名パターン）
-- 集計フィールド: ステップ名をキーとしたオブジェクト（例: `research`・`generate`・`shrinkImage`・`suzuriCreate-backTextureDecode`）。各ステップは`{calls, totalMs, maxMs}`
+- 集計フィールド: ステップ名をキーとしたオブジェクト（例: `research`・`generate`・`generate-jsonParse`・`shrinkImage`・`suzuriCreate-backTextureDecode`）。各ステップは`{calls, totalMs, maxMs}`
 - `/cpu-usage` GETエンドポイントで直近30日分をJSON返却（認証なし・統計のみ）
 - `scripts/health-check.js`の末尾でエンドポイントを呼び、CIログに出力する
 
@@ -466,6 +466,13 @@ GeminiのAPIレスポンスに含まれる`usageMetadata.totalTokenCount`を取�
 - **`/suzuri-create`ハンドラーへの横展開**: `suzuriCreate-backTextureDecode`計測（`incrementUsageKv()`とのペアはなく`recordCpuCheckpoint()`単体呼び出し）にも同じパターンを適用した。この箇所は`fetch()`ハンドラー内にインラインで書かれておりexportされた関数がなかったため、`_recordBackTextureDecodeCpu(cpuMs, env, ctx)`としてexport・テスト可能な形に切り出した（`_pollFalAndGetTexture()`と同じ「依存関数を引数で受け取る」切り出しパターン）。`fetch(request, env, ctx)`内なので`ctx`は常に存在するが、他の箇所と実装を揃えるため同じ`if (ctx) { ctx.waitUntil(...) } else { await ... }`分岐を踏襲する
 - **共通ヘルパー`_deferOrAwait(promise, ctx)`への集約**: 上記「`ctx`があれば`ctx.waitUntil()`・なければ`await`」という同一パターンが4箇所（`handleResearch()`・`handleGenerate()`・`_recordBackTextureDecodeCpu()`・`runBot()`の`shrinkImage`計測）に重複したため、`worker/index.js`に`_deferOrAwait(promise, ctx)`として抽出しexportした。4箇所すべてこのヘルパー経由に統一している
 - **`runBot()`の`shrinkImage`計測**: `worker/bot.js`の`recordCpuCheckpoint("shrinkImage", ..., env.RATE_KV)`も同じKV書き込みブロッキングパターンだったが、`ctx`導入時に見落としていた。`runBot(env, handleResearch, handleGenerate, ctx = null)`が受け取る`ctx`を`_deferOrAwait()`経由でこの呼び出しにも適用する
+- **ネットワークI/O待ちはCPU時間に計上されない（[Cloudflare Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)で確認済み）**: 「Waiting on network requests (such as fetch() calls, KV reads, or database queries) does not count toward CPU time」と明記されている。CPU時間は実際にコードを実行している時間のみを測定し、fetch・KV等のI/O待ちは「Duration」（壁時計時間）には含まれるがCPU時間には計上されない。`ctx.waitUntil()`はこのI/O待ち部分をクリティカルパスから外す（応答速度を改善する）手段であり、CPU時間の予算そのものを増やすものではない点に注意
+
+**`generate-jsonParse`: JSON.parse()単体の切り分け計測（2026-08追加）:**
+
+`generate`ステップはKV往復除去後も高い値（実測`maxMs=666ms`）を示すことがあり、原因が「Gemini画像生成レスポンス（base64画像データを含む大きめのJSON）の`JSON.parse()`自体が重い」のか別要因かを推測ではなく実測で切り分けるため、`JSON.parse(resText)`単体の所要時間を`generate-jsonParse`という別ステップとして`handleGenerate()`内に追加計測する。`generate`（全体）と`generate-jsonParse`（`JSON.parse()`のみ）を`/cpu-usage`で比較することで、`JSON.parse()`が支配的コストかどうかを実測で判断できる。
+
+**同一KVキーへの並行書き込み race の回避**: `generate`と`generate-jsonParse`はどちらも同じKVキー（`cpu-time:YYYY-MM-DD`）にGET→PUTするため、2つのPromiseを先に生成してから並行して`ctx.waitUntil()`/`_deferOrAwait()`に渡すと、read-modify-writeが競合し一方の更新が失われる（`incrementCpuTimeKv()`はアトミックインクリメントではない）。実装時にこの競合を作り込みテストで検出したため、同じKVキーに書き込む2つのチェックポイントは1つの非同期関数にまとめて内部で直列に`await`し、`_deferOrAwait()`には単一のPromiseとして渡す（`usagePromise`は別キー`usage:YYYY-MM-DD`のため引き続き並行実行してよい）。同じ日次ドキュメントに複数ステップを記録する箇所を追加する際は、既存の書き込みとキーが重複していないか確認し、重複する場合は直列化する。
 
 **KV書き込み回数の制約による対象範囲の線引き（2026-08追加）:**
 

@@ -1506,7 +1506,7 @@ console.log("\n[submitFalJob]");
   const origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     if (url.includes("queue.fal.run")) {
-      return { ok: true, json: async () => ({ request_id: "test-req-123" }) };
+      return { ok: true, text: async () => JSON.stringify({ request_id: "test-req-123" }) };
     }
     throw new Error("unexpected fetch");
   };
@@ -1528,11 +1528,23 @@ console.log("\n[submitFalJob]");
 {
   // request_id なしのレスポンス: エラーをthrow
   const origFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+  globalThis.fetch = async () => ({ ok: true, text: async () => JSON.stringify({}) });
   let threw = false;
   try { await submitFalJob("abc", "image/png", { FAL_KEY: "test-key" }); } catch { threw = true; }
   globalThis.fetch = origFetch;
   assert("request_id なし: エラーをthrowする", threw);
+}
+
+{
+  // 【回帰】ok:true だが非JSON平文レスポンス（Bug#19と同じ構造）: SyntaxErrorではなく
+  // 分かりやすいエラーメッセージでthrowする
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => "<html>Bad Gateway</html>" });
+  let errMessage = null;
+  try { await submitFalJob("abc", "image/png", { FAL_KEY: "test-key" }); } catch (e) { errMessage = e.message; }
+  globalThis.fetch = origFetch;
+  assert("非JSON平文レスポンス: エラーをthrowする", errMessage !== null);
+  assert("非JSON平文レスポンス: SyntaxErrorが伝播しない", !errMessage?.includes("Unexpected token"));
 }
 
 console.log("\n[getFalResult]");
@@ -1542,7 +1554,7 @@ console.log("\n[getFalResult]");
   const origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     if (url.includes("/status")) {
-      return { ok: true, json: async () => ({ status: "IN_QUEUE" }) };
+      return { ok: true, text: async () => JSON.stringify({ status: "IN_QUEUE" }) };
     }
     throw new Error("result fetch should not be called");
   };
@@ -1559,10 +1571,10 @@ console.log("\n[getFalResult]");
   globalThis.fetch = async (url) => {
     callCount++;
     if (url.includes("/status")) {
-      return { ok: true, json: async () => ({ status: "COMPLETED" }) };
+      return { ok: true, text: async () => JSON.stringify({ status: "COMPLETED" }) };
     }
     // result fetch
-    return { ok: true, json: async () => ({ image: { url: "https://cdn.fal.ai/hires.png" } }) };
+    return { ok: true, text: async () => JSON.stringify({ image: { url: "https://cdn.fal.ai/hires.png" } }) };
   };
   const result = await getFalResult("req-123", { FAL_KEY: "key" });
   globalThis.fetch = origFetch;
@@ -1584,12 +1596,33 @@ console.log("\n[getFalResult]");
   // COMPLETED だが CDN URL なし: error を返す
   const origFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
-    if (url.includes("/status")) return { ok: true, json: async () => ({ status: "COMPLETED" }) };
-    return { ok: true, json: async () => ({ image: {} }) };
+    if (url.includes("/status")) return { ok: true, text: async () => JSON.stringify({ status: "COMPLETED" }) };
+    return { ok: true, text: async () => JSON.stringify({ image: {} }) };
   };
   const result = await getFalResult("req-123", { FAL_KEY: "key" });
   globalThis.fetch = origFetch;
   assert("CDN URL なし: error を返す", result.status === "error");
+}
+
+{
+  // 【回帰】status check が ok:true だが非JSON平文レスポンス: クラッシュせず error を返す
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => "<html>Bad Gateway</html>" });
+  const result = await getFalResult("req-123", { FAL_KEY: "key" });
+  globalThis.fetch = origFetch;
+  assert("status check 非JSON平文レスポンス: error を返す（クラッシュしない）", result.status === "error");
+}
+
+{
+  // 【回帰】result fetch が ok:true だが非JSON平文レスポンス: クラッシュせず error を返す
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url.includes("/status")) return { ok: true, text: async () => JSON.stringify({ status: "COMPLETED" }) };
+    return { ok: true, status: 200, text: async () => "<html>Bad Gateway</html>" };
+  };
+  const result = await getFalResult("req-123", { FAL_KEY: "key" });
+  globalThis.fetch = origFetch;
+  assert("result fetch 非JSON平文レスポンス: error を返す（クラッシュしない）", result.status === "error");
 }
 
 // ---------------------------------------------------------------------------
@@ -3041,7 +3074,9 @@ function makeGenerateFetchMockWithTokens(imgTokens) {
   globalThis.fetch = origFetch;
 
   assert("ctxあり: put()が解決しなくてもhandleGenerate()がハングせず返る", !threw && result?.source === "gemini");
-  assert("ctxあり: ctx.waitUntil()が呼ばれる（usage・cpu用の2件）", waited.length === 2);
+  // generate・generate-jsonParseは同じKVキーへの競合を避けるため1つのPromiseにまとめてある
+  // （usage用と合わせて2件）
+  assert("ctxあり: ctx.waitUntil()が呼ばれる（usage・cpu(generate+jsonParse)用の2件）", waited.length === 2);
 }
 
 {
@@ -3060,6 +3095,7 @@ function makeGenerateFetchMockWithTokens(imgTokens) {
   assert("ctxなし: handleGenerate()は正常に結果を返す", result?.source === "gemini");
   assert("ctxなし: 応答が返るまでにusage KVへ書き込まれている", usageStored.imageTokens === 300);
   assert("ctxなし: 応答が返るまでにcpu-time KVへ書き込まれている", cpuStored.generate?.calls === 1);
+  assert("ctxなし: generate-jsonParseもcpu-time KVへ書き込まれている", cpuStored["generate-jsonParse"]?.calls === 1);
 }
 
 // ---------------------------------------------------------------------------

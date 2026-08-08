@@ -158,6 +158,11 @@
 - **副次修正**: `generateResearchPool()`の`notifyDiscord()`呼び出しで絵文字引数を省略していたためDiscord通知の先頭が`❌`になっていた（メッセージ本文の`✅`と矛盾）。`"✅"`を明示渡しに修正
 - **テスト**: `scripts/test-bot.mjs`に`handleResearch`・`handleGenerate`の502平文レスポンス回帰テストを追加
 - **場所**: `worker/index.js` `handleResearch()` L327 / `handleGenerate()` L623 / `generateResearchPool()` L273
+- **横展開の見落とし・追加是正（2026-08）**: `/cpu-usage`の`res.json()`直呼び（`scripts/health-check.js`）をきっかけに全リポジトリを`res.json()`でgrep監査したところ、当時の修正が`worker/index.js`のみに限定され、他の外部API呼び出し箇所には同じ危険パターンが残っていたことが判明した
+  - **`worker/fal.js`（本番影響あり・最優先）**: `submitFalJob()`・`getFalResult()`内の3箇所（fal.ai Queue APIへの投入・ステータス確認・結果取得）が`res.ok`チェック後も`res.json()`を直接呼んでおり、fal.ai側が502等を平文で返すとBug#19と同じ構造でクラッシュしうる状態だった（`!res.ok`分岐は`res.text()`で正しく処理されていたのに、成功分岐だけ無防備という非対称な状態）。標準パターンに是正した
+  - **`scripts/health-check.js`・`scripts/test-suzuri-api.mjs`・`scripts/test-fal-models.mjs`**: CI・手動実行スクリプト内の計13箇所も同様に是正した。いずれも`testing.md`で「GitHub Actionsのみ・外部API必要」に分類されたE2E専用スクリプトのため、`scripts/test-bot.mjs`への単体テストは追加していない（既存の`checkBlueskyAuth`等と同じ扱い）
+  - **対象外とした箇所**: `frontend/index.html`（ブラウザから自Workerを呼ぶコードで文脈が異なるため、今回はユーザー判断で対象外とした）・`worker/r2-storage.js`や`worker/bot.js`/`worker/index.js`のR2オブジェクト`.json()`呼び出し（外部API通信ではなく自ドメインのR2ストレージ読み取りのため対象外）
+  - **教訓**: 特定のバグ修正パターンを導入した際、修正箇所と同じリスクを持つ「兄弟コード」（同種の外部API呼び出し）が他のファイルに残っていないか、修正直後にリポジトリ全体をgrepで確認する習慣が必要。今回は約4ヶ月後に別の作業（CPU計測）のついでに偶然発見された
 
 ### 20. runBot()がR2リサーチプールを参照せずhandleResearch()を直接呼んでいた（2026-04）
 
@@ -325,5 +330,10 @@
   - **横展開（同日追加）**: `/suzuri-create`ハンドラー内の`suzuriCreate-backTextureDecode`計測（`incrementUsageKv()`とのペアはなく`recordCpuCheckpoint()`単体だが、同じく`await`でクリティカルパスをブロックしていた）にも同じ「計測確定→ctxがあればwaitUntil・なければawait」パターンを適用した。この箇所は`fetch()`ハンドラー内にインラインで書かれておりexportされた関数がなかったため、`_recordBackTextureDecodeCpu(cpuMs, env, ctx)`としてテスト可能な形に切り出した（`_pollFalAndGetTexture()`等の既存の「依存関数を引数で受け取る」切り出しパターンを踏襲）
   - **見落とし・追加是正（同日）**: `worker/bot.js` `runBot()`内の`shrinkImage`計測（`recordCpuCheckpoint("shrinkImage", ..., env.RATE_KV)`）にも同じブロッキングパターンが残っていた。`runBot()`は既に`ctx`を受け取るようになっていたにもかかわらず、この呼び出しだけ`ctx`を使わずawaitしたままだった（実装時の見落とし）。「ctxがあればwaitUntil・なければawait」パターンが4箇所目の重複になったため、共通ヘルパー`_deferOrAwait(promise, ctx)`に抽出し、`handleResearch()`・`handleGenerate()`・`_recordBackTextureDecodeCpu()`・`runBot()`のshrinkImage計測の4箇所すべてで使うようリファクタした
   - **教訓（同種パターンの見落とし対策）**: 同じ設計変更を複数箇所に適用する際、grep等で`recordCpuCheckpoint(`・`incrementUsageKv(`の全呼び出し箇所を機械的に洗い出してから着手しないと、一部の呼び出し（今回は`env.RATE_KV`を渡している箇所のみが対象で、`kv`省略の呼び出しは対象外という判断が必要だった）を見落とす。修正対象の判定基準（第3引数にKVを渡しているかどうか）を明文化してから横展開すると漏れを防ぎやすい
+  - **本番実測での確認（同日）**: 上記デプロイ後、フロントエンドの生成ボタンで実際に`/research`・`/generate`を呼び出し`/cpu-usage`を確認した。`generate`のcalls/totalMsは増加し`ctx.waitUntil()`背景化が機能していることを確認できた一方、`research`のcallsは変化しなかった。これは不具合ではなく、`/research`が当日のリサーチプール（`research-pool/YYYY-MM-DD.json`）にヒットする限り`handleResearch()`自体が呼ばれずCPU計測も発生しないという既存の設計（プール優先方式）通りの挙動である
+  - **`generate`の残存する高い計測値の切り分け（同日）**: KV往復除去後も`generate`ステップは`maxMs=666ms`と依然として高い値を示した。原因を推測で済ませず実測で切り分けるため、`generate`ステップの計測区間のうち`JSON.parse(resText)`単体の所要時間だけを`generate-jsonParse`という別ステップとして追加計測することにした（Gemini画像生成レスポンスはbase64画像データを含む大きめのJSONのため、`JSON.parse()`自体が支配的コストである可能性が高いという仮説を検証する目的）
+  - **CPU時間とネットワークI/O待ちの関係（公式ドキュメントで確認・同日）**: [Cloudflare Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)で「Waiting on network requests (such as fetch() calls, KV reads, or database queries) does not count toward CPU time」と明記されていることを確認した。CPU時間は実際にコードを実行している時間のみを測定し、fetch・KV等のI/O待ちは「Duration」（壁時計時間）には含まれるがCPU時間には計上されない。これは`ctx.waitUntil()`によるI/O待ちの背景化がCPU時間予算そのものを増やすものではなく、あくまでクリティカルパス（応答速度）を改善する手段であるという既存の理解と整合する
+  - **自己招入したレースコンディション・テストで検出（同日）**: `generate-jsonParse`追加実装時、`recordCpuCheckpoint("generate", ...)`と`recordCpuCheckpoint("generate-jsonParse", ...)`の2つのPromiseを先に生成してから並行して`_deferOrAwait()`に渡す設計にしたところ、両者が同じKVキー（`cpu-time:YYYY-MM-DD`）へ並行してGET→PUTする形になり、read-modify-writeが競合して一方の更新が失われるバグを自ら作り込んでいた。事前に追加していたテスト（`ctxなし: 応答が返るまでにcpu-time KVへ書き込まれている`）がこれを即座に検出した。修正は、同じKVキーに書き込む2つのチェックポイントを1つの非同期関数にまとめて内部で直列に`await`し、`ctx.waitUntil()`/`_deferOrAwait()`には単一のPromiseとして渡す形にした（`usagePromise`は別キー`usage:YYYY-MM-DD`のため引き続き並行実行してよい）
+  - **教訓（同じKVキーへの並行書き込み）**: 「Promiseを先に生成してから並行実行する」という最適化パターン（`usagePromise`/`cpuPromise`を先に作ってから`_deferOrAwait()`に渡す設計）は、書き込み先のKVキーが異なる場合にのみ安全。同じ日次ドキュメント（`usage:YYYY-MM-DD`・`cpu-time:YYYY-MM-DD`等）に対して複数のステップを記録する箇所を追加する際は、既存の書き込みと同じキーを共有していないか必ず確認し、共有する場合は直列化する
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）

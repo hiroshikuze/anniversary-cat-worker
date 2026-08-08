@@ -51,6 +51,19 @@ async function safeFetch(url, options = {}, timeoutMs = 20_000) {
   }
 }
 
+// Bug#19と同じ構造のリスク対策: res.json()を直接呼ぶと、外部API・Workerが502等を
+// 平文で返した際にSyntaxErrorでスクリプト全体が止まる。res.text()で受けてから安全に
+// パースし、失敗時は空オブジェクトを返してcheck()で明示的に報告する
+async function safeJson(res) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    check("JSONレスポンスをパースできる", false, `status=${res.status} body=${text.slice(0, 120)}`);
+    return {};
+  }
+}
+
 // ─── チェック 1: Gemini API 到達 & モデル一覧 ────────────────────────────────
 async function checkGeminiReachable(apiKey) {
   console.log("\n[1] Gemini API 到達確認");
@@ -59,7 +72,7 @@ async function checkGeminiReachable(apiKey) {
   );
   if (!check("Gemini API へ到達できる", reached, error)) return null;
 
-  const data = await res.json();
+  const data = await safeJson(res);
   if (!check("HTTP 200", res.status === 200, `status=${res.status}`)) {
     fail(`エラー内容: ${data.error?.message ?? JSON.stringify(data).slice(0, 100)}`);
     return null;
@@ -101,7 +114,7 @@ async function checkImageModels(apiKey, allModels) {
   );
   if (!check(`${testModel} へ到達できる`, reached, error)) return;
 
-  const data = await res.json();
+  const data = await safeJson(res);
   if (!res.ok) {
     check(`${testModel} API 成功`, false, data.error?.message?.slice(0, 120));
     // 次の候補も試す
@@ -172,7 +185,7 @@ async function checkResearch(apiKey, allModels) {
   );
   if (!check("Research API 呼び出し成功", callOk, error)) return;
 
-  const data = await res.json();
+  const data = await safeJson(res);
   if (!check("HTTP 200", res.ok, `status=${res.status} ${data.error?.message?.slice(0, 80) ?? ""}`)) return;
 
   const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
@@ -348,7 +361,7 @@ async function checkBlueskyAuth(identifier, appPassword) {
     }
   );
   if (!check("Bluesky API へ到達できる", ok, error)) return false;
-  const data = await res.json();
+  const data = await safeJson(res);
   if (!check("HTTP 200", res.ok, `status=${res.status} ${data.error ?? ""} ${data.message ?? ""}`)) return false;
   check("accessJwt あり", !!data.accessJwt);
   check("did あり",       !!data.did, data.did ?? "(空)");
@@ -362,7 +375,7 @@ async function checkDiscordWebhook(webhookUrl) {
   // GET リクエストはメッセージ送信なしで Webhook の情報のみ返す
   const { ok, res, error } = await safeFetch(webhookUrl);
   if (!check("Discord Webhook URL へ到達できる", ok, error)) return;
-  const data = await res.json().catch(() => ({}));
+  const data = await safeJson(res);
   if (!check("HTTP 200", res.ok, `status=${res.status}`)) return;
   check("Webhook 名あり",  !!data.name,       `name=${data.name ?? "(空)"}`);
   check("channel_id あり", !!data.channel_id, `channel_id=${data.channel_id ?? "(空)"}`);
@@ -487,14 +500,14 @@ async function checkWorker(workerUrl, bypassToken) {
   );
   if (!check("Worker /generate 到達", genReached, genErr)) return;
 
-  const genData = await genRes.json();
+  const genData = await safeJson(genRes);
   check("HTTP 200",          genRes.status === 200, `status=${genRes.status} ${genData.error ?? ""}`);
   check("imageData あり",    !!genData.imageData,   `source=${genData.source ?? "?"}`);
 
   console.log("\n[W3] Worker /usage エンドポイント確認");
   const { ok: usageOk, res: usageRes, error: usageErr } = await safeFetch(`${workerUrl}/usage`);
   if (!check("Worker /usage 到達", usageOk, usageErr)) return data;
-  const usageData = await usageRes.json();
+  const usageData = await safeJson(usageRes);
   check("HTTP 200", usageRes.status === 200, `status=${usageRes.status}`);
   if (usageRes.ok) {
     note(`/usage: ${usageData.days?.length ?? 0} 日分のデータ`);
@@ -509,7 +522,7 @@ async function checkWorker(workerUrl, bypassToken) {
   console.log("\n[W4] Worker /cpu-usage エンドポイント確認");
   const { ok: cpuOk, res: cpuRes, error: cpuErr } = await safeFetch(`${workerUrl}/cpu-usage`);
   if (!check("Worker /cpu-usage 到達", cpuOk, cpuErr)) return data;
-  const cpuData = await cpuRes.json();
+  const cpuData = await safeJson(cpuRes);
   check("HTTP 200", cpuRes.status === 200, `status=${cpuRes.status}`);
   if (cpuRes.ok) {
     note(`/cpu-usage: ${cpuData.days?.length ?? 0} 日分のデータ`);
