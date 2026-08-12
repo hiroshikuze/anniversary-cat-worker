@@ -952,7 +952,7 @@ export function _buildPollinationsPrompt(theme, description, persona, personalit
   // visualHintをsubjectより前に置くことでFluxモデルが前半トークンを重視する特性を活用
   // 「kawaii watercolor cat」にcatが含まれるため persona が null のときの "cat" フォールバックは不要
   const guestPart  = guest ? `with ${guest.appearance}` : null;
-  const parts = ["kawaii watercolor cat", vhForParts, subject, descAscii || null, persona, personality, emotion, eatingAction, guestPart, "pastel colors, white background"];
+  const parts = ["kawaii watercolor cat", vhForParts, subject, descAscii || null, persona, personality, emotion, eatingAction, guestPart, "pastel colors, white background", "full frame composition, minimal empty space"];
   return parts.filter(Boolean).join(", ");
 }
 
@@ -970,12 +970,14 @@ export function _buildGeminiPrompt(theme, description, persona, personality, vis
     `Theme: ${promptTheme}. ` +
     (promptContext ? `Context: ${promptContext}. `              : "") +
     (visualHint   ? `Setting and surrounding atmosphere; the cat may naturally interact with theme-related items (approaching, touching, or holding them as fits the scene): ${visualHint}. ` : "") +
+    `Composition: fill the frame with the cat and scene elements, leaving only a small, even margin around the edges. Avoid large empty corners or a distant, isolated subject floating in excess white space — the illustration should feel full and immersive, not small or shrunken. ` +
     `Style: soft pastel colors, ${seasonalStyleTone}, gentle watercolor brushstrokes, ` +
     `white background, Japanese illustration style. ` +
     `High quality charming illustration. ` +
     `IMPORTANT: Do not include any text, letters, words, titles, captions, or typography in the image. ` +
     `Do not add cherry blossoms, falling flower petals, or other seasonal decorations that are not explicitly mentioned in the Theme, Context, or Setting above. ` +
-    `Do not render the scene as if painted, printed, or mounted on a plate, dish, fan, tapestry, or any other physical object, and do not add a circular frame, border, or vignette around the subject.` +
+    `Do not render the scene as if painted, printed, or mounted on a plate, dish, fan, tapestry, or any other physical object, and do not add a circular frame, border, or vignette around the subject. ` +
+    `Do not leave large blank margins or empty corners around the subject.` +
     (eatingAction ? ` Only the cat has a face and expressions; all food items must be depicted as ordinary objects without faces or eyes.` : "")
   );
 }
