@@ -3503,6 +3503,27 @@ console.log("\n[_buildGeminiPrompt]");
     assert("ネガティブ指示(circular frame)が含まれる", prompt.includes("do not add a circular frame, border, or vignette"));
   }
 
+  // ── 回帰: 構図の余白削減指示（2026-08追加）。Composition行・余白禁止の否定指示が常に含まれる ──
+  {
+    const prompt = _buildGeminiPrompt("ねこの日", "猫を愛でる日", null, null);
+    assert("Composition行が含まれる", prompt.includes("Composition: fill the frame with the cat and scene elements"));
+    assert("余白禁止の否定指示が含まれる", prompt.includes("Do not leave large blank margins or empty corners around the subject."));
+  }
+
+  // ── 正常系: Composition行はSetting行の後・Style行の前に来る ──
+  {
+    const prompt = _buildGeminiPrompt(
+      "ねこの日", "猫を愛でる日", null, null,
+      "cat paw prints, yarn ball, cozy room"
+    );
+    const settingIdx     = prompt.indexOf("Setting and surrounding atmosphere");
+    const compositionIdx = prompt.indexOf("Composition: fill the frame");
+    const styleIdx       = prompt.indexOf("Style: soft pastel colors");
+    assert("Composition行がSetting行より後・Style行より前に来る",
+      settingIdx !== -1 && compositionIdx !== -1 && styleIdx !== -1 &&
+      settingIdx < compositionIdx && compositionIdx < styleIdx);
+  }
+
   // ── 正常系: 春のvisualHintに桜が明示されている場合も除外されず両立する ──
   {
     const prompt = _buildGeminiPrompt(
@@ -3646,6 +3667,13 @@ console.log("\n[_buildPollinationsPrompt: themeEn/visualHint先頭]");
     );
     assert("themeEnあり・visualHintなし: Cat Dayが含まれる", prompt.includes("Cat Day"));
     assert("themeEnあり・visualHintなし: kawaii watercolor catを含む", prompt.includes("kawaii watercolor cat"));
+  }
+
+  // ── 回帰: 構図の余白削減指示（2026-08追加）。full frame compositionキーワードが末尾に常に含まれる ──
+  {
+    const prompt = _buildPollinationsPrompt("ねこの日", "猫を愛でる日", persona, personality);
+    assert("full frame compositionキーワードが含まれる", prompt.includes("full frame composition, minimal empty space"));
+    assert("white backgroundの後に続く", prompt.indexOf("pastel colors, white background") < prompt.indexOf("full frame composition"));
   }
 }
 

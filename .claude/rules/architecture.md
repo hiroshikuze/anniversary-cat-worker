@@ -524,6 +524,22 @@ Style: soft pastel colors, {getSeasonalStyleTone(today)}, gentle watercolor brus
 - ネガティブ指示`Do not add cherry blossoms, falling flower petals, or other seasonal decorations that are not explicitly mentioned in the Theme, Context, or Setting above.`をStyle行の後に追加（保険・デフェンスインデプス）。Theme/Context/Setting欄に明示された場合（例: 春のvisualHintに桜が含まれる）は除外対象にならない
 - **物理オブジェクト化・円形フレーム化の禁止（Bug#27・2026-07追加）**: 上記ネガティブ指示に続けて`Do not render the scene as if painted, printed, or mounted on a plate, dish, fan, tapestry, or any other physical object, and do not add a circular frame, border, or vignette around the subject.`を追加。生成画像が丸皿・団扇等の工芸品風にレンダリングされ、SUZURI連携（缶バッジ/アクキーの二重クロップ・Tシャツ/ステッカーの余白汚染）に悪影響を及ぼす問題への対処。**原因は未確定**（蓮エントリ`07-01`〜`07-15`のStyle行に唯一含まれていた`pond`語を疑ったが、報告事例のTheme/Context/Setting側には蓮・池を連想させる語がなく断定できなかった）のため、原因非依存で効果のあるネガティブ指示を主策とした。蓮エントリの`style`からは`pond`語を除去し他エントリと同じ「色調＋抽象的雰囲気語」パターンに統一済み（`"soft pink and deep green tones, tranquil summer calm"`）。詳細は`bugs-history.md`のBug#27参照
 
+### 構図の余白削減指示（2026-08追加）
+
+**背景**: ユーザーから「くり抜く構図自体は良いが、被写体の周囲の余白が多い」と指摘（無料版Geminiでの手動テストで象の日テーマの生成画像を確認）。`Style:`行の`white background`指示のみでは、Geminiが被写体を小さく中央に配置し周囲を白背景で埋める構図になりやすい問題があった。`white background`自体はSUZURI缶バッジ/アクキーの円形クロップに必要なため維持し、余白の「量」だけを削る構図指示を追加した。
+
+```text
+Setting and surrounding atmosphere...: {visualHint}.
+Composition: fill the frame with the cat and scene elements, leaving only a small, even margin around the edges. Avoid large empty corners or a distant, isolated subject floating in excess white space — the illustration should feel full and immersive, not small or shrunken.
+Style: soft pastel colors, {getSeasonalStyleTone(today)}, gentle watercolor brushstrokes, white background, Japanese illustration style.
+...
+Do not render the scene as if painted, printed, or mounted on a plate, dish, fan, tapestry, or any other physical object, and do not add a circular frame, border, or vignette around the subject. Do not leave large blank margins or empty corners around the subject.
+```
+
+- `_buildGeminiPrompt()`: `Setting`行の直後・`Style`行の直前に`Composition:`行を追加。末尾の否定指示（Bug#27の円形フレーム禁止文）に続けて「余白を残さない」念押しの否定指示を1文追加（Bug#27と同じ「構図指示＋念のための否定指示」の二段構え）
+- `_buildPollinationsPrompt()`: keyword列挙形式のため、`parts`配列の末尾（`"pastel colors, white background"`の後）に`"full frame composition, minimal empty space"`を追加。フルセンテンスではなくキーワードで同じ意図を伝える
+- **効果は未確定な部分あり**: ユーザーの手動テスト（無料版Gemini・象の日テーマ）では「完璧ではないが前より余白が減った」という結果。プロンプトのみでの完全解決は保証されない。四隅の余白がなお気になる場合は生成後の自動トリミング（Canvas後処理）が次の選択肢だが、ウォーターマーク配置・缶バッジ/アクキーの円形クロップ計算・漢字背面テクスチャとの整合に影響するため実装コストが高く、現時点では見送っている
+
 **季節補充フォールバックのkana/英語フィールド（`getSeasonalFlowerKana()`/`getSeasonalFlowerEn()`・2026-07追加・Bug#31）:**
 
 `generateResearchPool()`の季節補充フォールバック（当日のリサーチプールが3件未満のときに`SEASONAL_FLOWERS`から直接組み立てるエントリ）は、Geminiを呼ばないため通常エントリが持つ`themeKana`/`descriptionKana`/`themeEn`/`descriptionEn`が欠落しており、かなモード・英語モードで日本語表示にフォールバックしていた。
