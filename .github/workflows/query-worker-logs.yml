@@ -15,6 +15,10 @@ on:
         description: "取得件数上限"
         required: false
         default: "200"
+      request_id:
+        description: "$metadata.requestIdの完全一致（1回のWorker呼び出しの全ログ行を相関させたい場合・省略可）"
+        required: false
+        default: ""
 
 jobs:
   query-logs:
@@ -28,6 +32,7 @@ jobs:
         run: |
           node scripts/query-worker-logs.mjs \
             ${{ inputs.grep != '' && format('--grep "{0}"', inputs.grep) || '' }} \
+            ${{ inputs.request_id != '' && format('--request-id "{0}"', inputs.request_id) || '' }} \
             --since "${{ inputs.since }}" \
             --limit "${{ inputs.limit }}"
         env:
