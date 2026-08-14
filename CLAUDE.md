@@ -128,6 +128,7 @@ GEMINI_API_KEY=xxx node scripts/test-gemini-image-timing.mjs   # Gemini所要時
 FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 SUZURI_API_KEY=xxx node scripts/audit-suzuri-materials.mjs           # 孤立SUZURIマテリアルの棚卸し（dry-run）
 SUZURI_API_KEY=xxx node scripts/audit-suzuri-materials.mjs --delete   # 上記で見つかった孤立マテリアルを削除
+CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-logs.mjs --grep fal --since 6h   # Cloudflare Workers Logsのキーワード検索（GitHub Actions推奨）
 ```
 
 ---

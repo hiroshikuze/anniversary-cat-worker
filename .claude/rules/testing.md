@@ -196,7 +196,7 @@ node scripts/audit-suzuri-materials.mjs --delete
 
 `scripts/query-worker-logs.mjs`は、Cloudflare Workers Observability Telemetry Query API（`POST /accounts/{account_id}/workers/observability/telemetry/query`）を使い、本番Workerの`console.log`出力（Cloudflare Logsダッシュボードで見えるものと同じ）をキーワード・時間範囲で検索する。背景: fal.aiポーリング未完了等の障害調査のたびにユーザーへCloudflareダッシュボードのログ確認を依頼していたが、ClaudeCodeセッションから直接ログを検索できるようにした。
 
-**保持期間の制約**: Workers Free プランは3日分・Paid プランは7日分のみ（[公式ドキュメント](https://developers.cloudflare.com/workers/observability/logs/workers-logs/)で確認済み）。このプロジェクトはFreeプランのため、3日より前のログは検索しても出てこない。
+**保持期間の制約**: Workers Freeプランは3日分・Paidプランは7日分のみ（[公式ドキュメント](https://developers.cloudflare.com/workers/observability/logs/workers-logs/)で確認済み）。このプロジェクトはFreeプランのため、3日より前のログは検索しても出てこない。
 
 **実行方法（GitHub Actions推奨）:**
 
