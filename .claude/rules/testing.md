@@ -11,6 +11,7 @@
 | `scripts/test-gemini-image-timing.mjs` | `GEMINI_API_KEY=xxx node scripts/test-gemini-image-timing.mjs` | Gemini API | Gemini画像生成の所要時間計測（競合設計の根拠取得用） |
 | `scripts/test-fal-models.mjs` | `FAL_KEY=xxx node scripts/test-fal-models.mjs` | fal.ai API | fal.aiモデル比較（解像度・サイズ・速度の実測） |
 | `scripts/audit-suzuri-materials.mjs` | `SUZURI_API_KEY=xxx node scripts/audit-suzuri-materials.mjs [--delete]` | SUZURI API | 孤立SUZURIマテリアルの棚卸し・削除（デフォルトはdry-run・`--delete`時のみ実削除） |
+| `scripts/query-worker-logs.mjs` | GitHub Actions推奨（`.github/workflows/query-worker-logs.yml`をworkflow_dispatchで手動発火）。ローカル実行も可: `CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-logs.mjs --grep fal --since 6h` | Cloudflare Workers Observability API | Cloudflare Workers Logs（`console.log`の内容）をキーワード検索。詳細は次項参照 |
 
 ## ユニットテスト方針
 
@@ -190,3 +191,32 @@ node scripts/audit-suzuri-materials.mjs --delete
 - 削除対象の判定は`description`に埋め込まれた`〇月〇日（日本時間）までの販売`という期限表記から行う（年は埋め込まれていないため、現在日時から90日以上未来になる場合は前年と判断する）
 - 期限表記が見つからないマテリアル（手動作成・テスト商品等）は「判定不可」として一覧に出すが削除対象には含めない。手動で確認すること
 - `--delete`を付けない限りAPIへのDELETE呼び出しは行われない
+
+## Cloudflare Workers Logsのキーワード検索スクリプトの使い方（2026-08追加）
+
+`scripts/query-worker-logs.mjs`は、Cloudflare Workers Observability Telemetry Query API（`POST /accounts/{account_id}/workers/observability/telemetry/query`）を使い、本番Workerの`console.log`出力（Cloudflare Logsダッシュボードで見えるものと同じ）をキーワード・時間範囲で検索する。背景: fal.aiポーリング未完了等の障害調査のたびにユーザーへCloudflareダッシュボードのログ確認を依頼していたが、ClaudeCodeセッションから直接ログを検索できるようにした。
+
+**保持期間の制約**: Workers Freeプランは3日分・Paidプランは7日分のみ（[公式ドキュメント](https://developers.cloudflare.com/workers/observability/logs/workers-logs/)で確認済み）。このプロジェクトはFreeプランのため、3日より前のログは検索しても出てこない。
+
+**実行方法（GitHub Actions推奨）:**
+
+```text
+Actionsタブ → query-worker-logs → Run workflow
+  grep: fal（検索したいキーワード。省略可）
+  since: 6h（遡る期間。例: 30m, 6h, 2d。省略時は3h）
+  limit: 200（取得件数上限。省略可）
+```
+
+**ローカル実行:**
+
+```bash
+export CLOUDFLARE_API_TOKEN=<APIトークン>
+export CLOUDFLARE_ACCOUNT_ID=<アカウントID>
+node scripts/query-worker-logs.mjs --grep fal --since 6h
+node scripts/query-worker-logs.mjs --grep "019ffd27-796c" --since 2d   # requestId等の完全一致に近い絞り込み
+```
+
+- `CLOUDFLARE_API_TOKEN`は既存のデプロイ用トークン（`checkCloudflareToken`が検証しているもの）を流用する想定だが、Workers Observability（Logs）の読み取り権限が別途必要な可能性がある。401/403が返る場合はCloudflareダッシュボードでトークンの権限に読み取りスコープを追加すること
+- `--grep`は`$metadata.message`に対する部分一致（`includes`）フィルター。省略時は対象Workerの全ログを`--since`の範囲で返す
+- `--service`は省略時`anniversary-cat-worker`固定
+- **未検証事項**: 本スクリプトは[公式APIドキュメント](https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/telemetry/methods/query/)のみを参照して実装しており、実際のAPIレスポンスでの動作確認はできていない（このプロジェクトのサンドボックスからCloudflare APIへの認証済みアクセス手段がなかったため）。初回実行時にレスポンス構造が想定と異なる場合は生レスポンスの一部を出力するので、必要に応じてパース処理を実際のレスポンスに合わせて修正すること

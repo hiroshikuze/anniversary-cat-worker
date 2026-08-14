@@ -56,7 +56,7 @@ Cron Trigger（`0 15 * * *` と `0 22 * * 1-5`）は`wrangler.toml`に設定済�
 - `BLUESKY_APP_PASSWORD`
 - `BLUESKY_IDENTIFIER`
 - `CLOUDFLARE_ACCOUNT_ID`
-- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_API_TOKEN`（`query-worker-logs.yml`で使う場合はWorkers Observability（Logs）の読み取り権限が別途必要な可能性がある。401/403時はCloudflareダッシュボードでトークン権限を確認・追加すること。詳細は`testing.md`の「Cloudflare Workers Logsのキーワード検索スクリプトの使い方」参照）
 - `DISCORD_WEBHOOK_URL`
 - `GEMINI_API_KEY`
 - `SUZURI_API_KEY`

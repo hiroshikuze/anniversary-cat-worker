@@ -1,0 +1,35 @@
+name: Query Worker Logs
+
+on:
+  workflow_dispatch:
+    inputs:
+      grep:
+        description: "検索キーワード（$metadata.messageの部分一致・省略可）"
+        required: false
+        default: ""
+      since:
+        description: "遡る期間。例: 30m, 6h, 2d"
+        required: false
+        default: "3h"
+      limit:
+        description: "取得件数上限"
+        required: false
+        default: "200"
+
+jobs:
+  query-logs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Query Cloudflare Workers Logs
+        run: |
+          node scripts/query-worker-logs.mjs \
+            ${{ inputs.grep != '' && format('--grep "{0}"', inputs.grep) || '' }} \
+            --since "${{ inputs.since }}" \
+            --limit "${{ inputs.limit }}"
+        env:
+          CLOUDFLARE_API_TOKEN:   ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
