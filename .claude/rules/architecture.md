@@ -10,7 +10,8 @@ anniversary-cat-worker/
 ├── .github/workflows/
 │   ├── health-check.yml              ← push時: ユニットテスト + E2Eチェック
 │   ├── deploy-worker.yml             ← main push時: Cloudflare Workersデプロイ
-│   └── deploy-pages.yml              ← main push時: GitHub Pagesデプロイ
+│   ├── deploy-pages.yml              ← main push時: GitHub Pagesデプロイ
+│   └── query-worker-logs.yml         ← workflow_dispatch: Cloudflare Workers Logsのキーワード検索（2026-08追加）
 ├── .claude/
 │   ├── revision_log.md               ← ミスパターン記録（毎セッション冒頭で読む）
 │   ├── bugs-history.md               ← バグ履歴 Bug#1〜（都度参照・自動ロードなし）
@@ -46,7 +47,8 @@ anniversary-cat-worker/
     ├── test-gemini-research-batch.mjs ← バッチ vs シングル精度比較（GEMINI_API_KEY必要）
     ├── test-pool-30days.mjs          ← 事前リサーチプール方式シミュレーション（GEMINI_API_KEY必要）
     ├── generate-kana-translations.mjs ← translations.kanaブランチのruby HTML一括生成（kuroshiro使用・一回限りユーティリティ）
-    └── preview-kana.mjs              ← かなモードのrubyふりがなをブラウザでプレビュー（引数: theme description）
+    ├── preview-kana.mjs              ← かなモードのrubyふりがなをブラウザでプレビュー（引数: theme description）
+    └── query-worker-logs.mjs         ← Cloudflare Workers Logsのキーワード検索（CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID必要・2026-08追加）
 ```
 
 ---

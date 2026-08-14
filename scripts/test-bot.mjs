@@ -11,6 +11,7 @@
 
 import { updateMetaInR2, collectMaterialIds } from "../worker/r2-storage.js";
 import { parseExpiryDate } from "./audit-suzuri-materials.mjs";
+import { parseSinceMs, buildQueryBody, parseArgs as parseQueryLogArgs } from "./query-worker-logs.mjs";
 import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptionForTest } from "../worker/suzuri.js";
 
 import {
@@ -1106,6 +1107,84 @@ console.log("\n[parseExpiryDate]");
   assert("parseExpiryDate: 期限表記がない場合はnull", parseExpiryDate("普通の説明文です", new Date()) === null);
   assert("parseExpiryDate: descriptionが空文字の場合はnull", parseExpiryDate("", new Date()) === null);
   assert("parseExpiryDate: descriptionがnullの場合はnull", parseExpiryDate(null, new Date()) === null);
+}
+
+// ---------------------------------------------------------------------------
+// parseSinceMs / buildQueryBody / parseArgs（scripts/query-worker-logs.mjs）
+// ---------------------------------------------------------------------------
+console.log("\n[parseSinceMs]");
+
+{
+  // 正常系: 分・時・日それぞれの単位を変換できる
+  assert("parseSinceMs: 30m → 1,800,000ms", parseSinceMs("30m") === 30 * 60 * 1000);
+  assert("parseSinceMs: 6h → 21,600,000ms", parseSinceMs("6h") === 6 * 60 * 60 * 1000);
+  assert("parseSinceMs: 2d → 172,800,000ms", parseSinceMs("2d") === 2 * 24 * 60 * 60 * 1000);
+}
+
+{
+  // 境界値: 1単位でも変換できる
+  assert("parseSinceMs: 1m → 60,000ms", parseSinceMs("1m") === 60_000);
+}
+
+{
+  // エラー系: 不正な形式・未対応の単位・空文字はthrow
+  let threw = false;
+  try { parseSinceMs("abc"); } catch { threw = true; }
+  assert("parseSinceMs: 数値でない文字列はthrow", threw);
+
+  threw = false;
+  try { parseSinceMs("6w"); } catch { threw = true; }
+  assert("parseSinceMs: 未対応の単位（週）はthrow", threw);
+
+  threw = false;
+  try { parseSinceMs(""); } catch { threw = true; }
+  assert("parseSinceMs: 空文字はthrow", threw);
+
+  threw = false;
+  try { parseSinceMs(undefined); } catch { threw = true; }
+  assert("parseSinceMs: undefinedはthrow", threw);
+}
+
+console.log("\n[buildQueryBody]");
+
+{
+  // 正常系: grep指定時は$metadata.serviceと$metadata.messageの2フィルターになる
+  const body = buildQueryBody("anniversary-cat-worker", "fal", 6 * 60 * 60 * 1000, 200, 1_000_000);
+  assert("buildQueryBody: timeframe.to が nowMs と一致する", body.timeframe.to === 1_000_000);
+  assert("buildQueryBody: timeframe.from が nowMs - sinceMs と一致する", body.timeframe.from === 1_000_000 - 6 * 60 * 60 * 1000);
+  assert("buildQueryBody: view は events", body.view === "events");
+  assert("buildQueryBody: limit が反映される", body.limit === 200);
+  assert("buildQueryBody: serviceフィルターが含まれる",
+    body.parameters.filters.some((f) => f.key === "$metadata.service" && f.value === "anniversary-cat-worker"));
+  assert("buildQueryBody: grep指定時はmessageフィルターが追加される",
+    body.parameters.filters.some((f) => f.key === "$metadata.message" && f.operation === "includes" && f.value === "fal"));
+  assert("buildQueryBody: フィルターは2件", body.parameters.filters.length === 2);
+}
+
+{
+  // 境界値: grepがnullの場合はserviceフィルターのみ
+  const body = buildQueryBody("anniversary-cat-worker", null, 60_000, 50, 1_000_000);
+  assert("buildQueryBody: grep未指定時はフィルターが1件", body.parameters.filters.length === 1);
+}
+
+console.log("\n[parseArgs (query-worker-logs)]");
+
+{
+  // 正常系: 全オプション指定
+  const args = parseQueryLogArgs(["--grep", "fal", "--since", "6h", "--limit", "50", "--service", "test-worker"]);
+  assert("parseArgs: grep が反映される", args.grep === "fal");
+  assert("parseArgs: since が反映される", args.since === "6h");
+  assert("parseArgs: limit が反映される", args.limit === 50);
+  assert("parseArgs: service が反映される", args.service === "test-worker");
+}
+
+{
+  // 境界値: 未指定時はデフォルト値
+  const args = parseQueryLogArgs([]);
+  assert("parseArgs: grep のデフォルトは null", args.grep === null);
+  assert("parseArgs: since のデフォルトは 3h", args.since === "3h");
+  assert("parseArgs: limit のデフォルトは 200", args.limit === 200);
+  assert("parseArgs: service のデフォルトは anniversary-cat-worker", args.service === "anniversary-cat-worker");
 }
 
 // ---------------------------------------------------------------------------
