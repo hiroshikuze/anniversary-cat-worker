@@ -149,6 +149,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | `sub_materials[].texture`はURLのみ（base64不可） | SUZURI APIのメイン`texture`はbase64を受け付けるが`sub_materials.texture`はURLのみ対応。base64で渡すと無視されて背面が白になる。R2アップロード後に`/back/:id`URLで渡す |
 | t-shirt+stickerグループのSUZURI登録は`ctx.waitUntil()`でバックグラウンド処理 | Wall-clock時間制限（~30秒）内でfal.ai処理は完了しない。Queue API（request_id保存→ポーリング）方式を使う |
 | fal.ai Queue APIのrequest_idは`ctx.waitUntil()`より前にR2へ保存 | ctx.waitUntil()がwall-clock超過で強制終了しても、IDだけは確実に残す保証が必要 |
+| fal.aiポーリング予算（3回×5秒）を安易に増やさない | 2026-08実測で成功ケース（3回目でCOMPLETED）は`bg開始`から`right グループ完了`まで約25.6秒かかっており、28秒予算に対し残り margin は約2.4秒しかない。ポーリングを1〜2秒伸ばすだけでも、CDN取得＋R2保存＋SUZURI登録という重い後処理ごと強制終了され、成功に近いケースほど「何も保存されない」方向に倒れるリスクがある。詳細は`.claude/revision_log.md`の2026-08エントリ参照 |
 | 外部APIレスポンスをMapにする際は整数IDをキーにする | 文字列名はAPIバージョン・ロケールで表記が変わる（過去バグ: SUZURI item.name 表記ゆれ） |
 | Pollinationsプロンプトの先頭は`kawaii watercolor cat`固定 | Fluxモデルは前半トークン重視。先頭に猫・スタイルを宣言することで一貫した品質を保つ |
 | GeminiプロンプトのStyle行は年間固定文言に戻さず`getSeasonalStyleTone()`で季節依存にする | 固定文言`light pink and beige tones`が季節・テーマと無関係に桜の花びらを連想させた（Bug#26）。詳細は`.claude/rules/architecture.md`の「Style行の季節カラー」参照 |
