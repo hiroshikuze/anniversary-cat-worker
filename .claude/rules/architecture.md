@@ -225,6 +225,17 @@ createSuzuriProducts(imageUrl, theme, env, slugFilter = null, backTexture = null
 - **修正後**: 例外時は`console.warn`でログを出すのみで、残りのポーリング試行を継続する。3回すべて失敗・タイムアウトした場合のみ最終的にbase64フォールバックする
 - `deps`引数（`getFalResultFn`・`fetchFn`・`waitFn`・`pollIntervalMs`・`maxAttempts`）はテスト用。本番呼び出しは省略時のデフォルト値（実際の`getFalResult`・`fetch`・5秒間隔・3回）で動作する
 
+**ポーリング予算（3回×5秒）は実測に基づき現状維持と判断（2026-08）:**
+
+fal.aiアップスケール未完了のDiscord通知が連日発生した際、「`ctx.waitUntil()`の~28秒予算にまだ余裕があるならポーリング回数を増やせないか」という案を検討したが、`query-worker-logs.mjs`の`--request-id`フィルターで実際のログを相関させ実測した結果、増やさない方針とした。
+
+| ケース | `bg開始`→`right グループ完了`の実測時間 | 内訳 |
+| --- | --- | --- |
+| 失敗（3回とも`IN_QUEUE`→base64フォールバック） | 約20.3秒 | ポーリング約16.0秒 + フォールバック登録約4.3秒 |
+| 成功（3回目のポーリングで`COMPLETED`） | **約25.6秒**（28秒予算に対しmargin約2.4秒） | ポーリング約16.0秒 + CDN取得→R2保存→SUZURI登録約9.7秒 |
+
+成功ケースの方が完了後の処理（CDN fetch・R2保存・SUZURI登録）が重く、ポーリングを伸ばすほど「3回目でギリギリ完了しそうなケース」が後処理の重さで28秒予算を超過し、強制終了＝何も保存されない方向に倒れるリスクが高い。詳細な調査経緯は`.claude/revision_log.md`の2026-08エントリ参照。`CLAUDE.md`の「変えてはいけない設計判断」にも追記済み。
+
 ---
 
 ## レート制限

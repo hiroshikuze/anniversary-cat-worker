@@ -205,6 +205,7 @@ Actionsタブ → query-worker-logs → Run workflow
   grep: fal（検索したいキーワード。省略可）
   since: 6h（遡る期間。例: 30m, 6h, 2d。省略時は3h）
   limit: 200（取得件数上限。省略可）
+  request_id: 9f2cd1a2088fa79b69202ac5c3d2e940（1回のWorker呼び出しの全ログ行を相関させたい場合。省略可）
 ```
 
 **ローカル実行:**
@@ -213,10 +214,11 @@ Actionsタブ → query-worker-logs → Run workflow
 export CLOUDFLARE_API_TOKEN=<APIトークン>
 export CLOUDFLARE_ACCOUNT_ID=<アカウントID>
 node scripts/query-worker-logs.mjs --grep fal --since 6h
-node scripts/query-worker-logs.mjs --grep "019ffd27-796c" --since 2d   # requestId等の完全一致に近い絞り込み
+node scripts/query-worker-logs.mjs --request-id 9f2cd1a2088fa79b69202ac5c3d2e940 --since 3d   # 1回のWorker呼び出しの全ログ行を相関させる
 ```
 
-- `CLOUDFLARE_API_TOKEN`は既存のデプロイ用トークン（`checkCloudflareToken`が検証しているもの）を流用する想定だが、Workers Observability（Logs）の読み取り権限が別途必要な可能性がある。401/403が返る場合はCloudflareダッシュボードでトークンの権限に読み取りスコープを追加すること
+- `CLOUDFLARE_API_TOKEN`は既存のデプロイ用トークン（`checkCloudflareToken`が検証しているもの）を流用する想定だったが、追加のスコープ付与なしにそのまま認証成功することを実機（workflow_dispatch）で確認済み（2026-08）
 - `--grep`は`$metadata.message`に対する部分一致（`includes`）フィルター。省略時は対象Workerの全ログを`--since`の範囲で返す
+- `--request-id`は`$metadata.requestId`に対する完全一致（`eq`）フィルター。Cloudflare側が1回のWorker呼び出し（HTTPリクエスト1件・`ctx.waitUntil()`のバックグラウンド処理含む）に割り振る内部ID（`query-worker-logs.mjs`の出力では各行の`reqId=...`として表示される）で、`--grep`では拾えない「同一呼び出し内の全ログ行」を時系列で相関させたいとき（例: `ctx.waitUntil()`の実測所要時間の計測）に使う。`--grep`と併用可能（AND条件）
 - `--service`は省略時`anniversary-cat-worker`固定
-- **未検証事項**: 本スクリプトは[公式APIドキュメント](https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/telemetry/methods/query/)のみを参照して実装しており、実際のAPIレスポンスでの動作確認はできていない（このプロジェクトのサンドボックスからCloudflare APIへの認証済みアクセス手段がなかったため）。初回実行時にレスポンス構造が想定と異なる場合は生レスポンスの一部を出力するので、必要に応じてパース処理を実際のレスポンスに合わせて修正すること
+- 本スクリプトは実際のworkflow_dispatch実行（2026-08-14）でCloudflare APIから正常なレスポンスを取得できることを確認済み。想定外のレスポンス構造の場合は生レスポンスの一部を出力するので、必要に応じてパース処理を調整すること

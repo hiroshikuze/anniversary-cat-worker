@@ -9,25 +9,27 @@
  * 参照: https://developers.cloudflare.com/api/resources/workers/subresources/observability/subresources/telemetry/methods/query/
  * 保持期間: https://developers.cloudflare.com/workers/observability/logs/workers-logs/ （Free 3日 / Paid 7日）
  *
- * 注意: 上記の公式ドキュメントのみを参照して実装しており、実際のAPIレスポンスでの動作確認はできていない
- * （このプロジェクトのサンドボックスからCloudflare APIへの認証済みアクセス手段がなかったため）。
- * レスポンス構造が想定と異なる場合は生レスポンスの一部を出力するので、必要に応じてprintEvents()の
- * パース処理を実際のレスポンスに合わせて修正すること。
+ * 2026-08-14にGitHub Actions（workflow_dispatch）から実際に実行し、Cloudflare APIから正常な
+ * レスポンスを取得できることを確認済み。想定外のレスポンス構造の場合はprintEvents()が生データの
+ * 一部を出力するので、必要に応じてパース処理を調整すること。
  *
  * 必要な環境変数:
- *   CLOUDFLARE_API_TOKEN   - Workers Observability の読み取り権限が必要な可能性がある
- *                            （デプロイ用トークンとスコープが異なる場合、401/403が返る）
+ *   CLOUDFLARE_API_TOKEN   - デプロイ用トークン（checkCloudflareTokenが検証しているもの）で
+ *                            追加スコープなしに認証成功することを確認済み
  *   CLOUDFLARE_ACCOUNT_ID
  *
  * 実行例:
  *   CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-logs.mjs --grep fal --since 6h
- *   CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-logs.mjs --grep "019ffd27-796c" --since 2d
+ *   CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-logs.mjs --request-id 9f2cd1a2088fa79b69202ac5c3d2e940 --since 3d
  *
  * オプション:
- *   --grep <文字列>   $metadata.message に対する部分一致フィルター（省略時は絞り込みなし）
- *   --since <期間>    現在時刻からの遡り期間。例: 30m, 6h, 2d（省略時は 3h）
- *   --limit <件数>    取得件数上限（省略時は 200）
- *   --service <名前>  $metadata.service フィルター（省略時は "anniversary-cat-worker"）
+ *   --grep <文字列>        $metadata.message に対する部分一致フィルター（省略時は絞り込みなし）
+ *   --request-id <ID>     $metadata.requestId に対する完全一致フィルター。1回のWorker呼び出し
+ *                          （ctx.waitUntil()のバックグラウンド処理含む）の全ログ行を時系列で相関
+ *                          させたいときに使う。--grep と併用可（AND条件）
+ *   --since <期間>         現在時刻からの遡り期間。例: 30m, 6h, 2d（省略時は 3h）
+ *   --limit <件数>         取得件数上限（省略時は 200）
+ *   --service <名前>       $metadata.service フィルター（省略時は "anniversary-cat-worker"）
  */
 
 const CF_API_BASE = "https://api.cloudflare.com/client/v4";
@@ -57,14 +59,18 @@ export function parseSinceMs(since) {
  * @param {number} sinceMs - 遡る期間（ミリ秒）
  * @param {number} limit - 取得件数上限
  * @param {number} [nowMs] - テスト用。省略時は Date.now()
+ * @param {string|null} [requestId] - $metadata.requestId の完全一致フィルター値（nullなら未指定）
  * @returns {object}
  */
-export function buildQueryBody(service, grep, sinceMs, limit, nowMs = Date.now()) {
+export function buildQueryBody(service, grep, sinceMs, limit, nowMs = Date.now(), requestId = null) {
   const filters = [
     { key: "$metadata.service", operation: "eq", type: "string", value: service },
   ];
   if (grep) {
     filters.push({ key: "$metadata.message", operation: "includes", type: "string", value: grep });
+  }
+  if (requestId) {
+    filters.push({ key: "$metadata.requestId", operation: "eq", type: "string", value: requestId });
   }
   return {
     queryId: "claude-code-ad-hoc",
@@ -85,13 +91,14 @@ export function buildQueryBody(service, grep, sinceMs, limit, nowMs = Date.now()
  * @param {string[]} argv
  */
 export function parseArgs(argv) {
-  const args = { grep: null, since: DEFAULT_SINCE, limit: DEFAULT_LIMIT, service: DEFAULT_SERVICE };
+  const args = { grep: null, since: DEFAULT_SINCE, limit: DEFAULT_LIMIT, service: DEFAULT_SERVICE, requestId: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--grep") args.grep = argv[++i] ?? null;
     else if (a === "--since") args.since = argv[++i] ?? DEFAULT_SINCE;
     else if (a === "--limit") args.limit = Number(argv[++i]);
     else if (a === "--service") args.service = argv[++i] ?? DEFAULT_SERVICE;
+    else if (a === "--request-id") args.requestId = argv[++i] ?? null;
   }
   return args;
 }
@@ -151,8 +158,8 @@ async function main() {
   }
   const args = parseArgs(process.argv.slice(2));
   const sinceMs = parseSinceMs(args.since);
-  const body = buildQueryBody(args.service, args.grep, sinceMs, args.limit);
-  console.log(`[cf-logs] クエリ実行: service=${args.service} grep=${args.grep ?? "(なし)"} since=${args.since} limit=${args.limit}`);
+  const body = buildQueryBody(args.service, args.grep, sinceMs, args.limit, Date.now(), args.requestId);
+  console.log(`[cf-logs] クエリ実行: service=${args.service} grep=${args.grep ?? "(なし)"} requestId=${args.requestId ?? "(なし)"} since=${args.since} limit=${args.limit}`);
   const data = await queryLogs(accountId, apiToken, body);
   printEvents(data);
 }

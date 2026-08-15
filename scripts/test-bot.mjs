@@ -1167,15 +1167,37 @@ console.log("\n[buildQueryBody]");
   assert("buildQueryBody: grep未指定時はフィルターが1件", body.parameters.filters.length === 1);
 }
 
+{
+  // 正常系: requestId指定時はrequestIdフィルターがeqで追加される
+  const body = buildQueryBody("anniversary-cat-worker", null, 60_000, 50, 1_000_000, "9f2cd1a2088fa79b69202ac5c3d2e940");
+  assert("buildQueryBody: requestId指定時はフィルターが2件", body.parameters.filters.length === 2);
+  assert("buildQueryBody: requestIdフィルターがeqで追加される",
+    body.parameters.filters.some((f) => f.key === "$metadata.requestId" && f.operation === "eq" && f.value === "9f2cd1a2088fa79b69202ac5c3d2e940"));
+}
+
+{
+  // 正常系: grepとrequestId併用時は3フィルター（AND条件）
+  const body = buildQueryBody("anniversary-cat-worker", "fal", 60_000, 50, 1_000_000, "9f2cd1a2088fa79b69202ac5c3d2e940");
+  assert("buildQueryBody: grep+requestId併用時はフィルターが3件", body.parameters.filters.length === 3);
+  assert("buildQueryBody: filterCombinationはand", body.parameters.filterCombination === "and");
+}
+
+{
+  // 境界値: requestIdがnullの場合はrequestIdフィルターが追加されない
+  const body = buildQueryBody("anniversary-cat-worker", null, 60_000, 50, 1_000_000, null);
+  assert("buildQueryBody: requestId未指定時はフィルターが1件", body.parameters.filters.length === 1);
+}
+
 console.log("\n[parseArgs (query-worker-logs)]");
 
 {
   // 正常系: 全オプション指定
-  const args = parseQueryLogArgs(["--grep", "fal", "--since", "6h", "--limit", "50", "--service", "test-worker"]);
+  const args = parseQueryLogArgs(["--grep", "fal", "--since", "6h", "--limit", "50", "--service", "test-worker", "--request-id", "abc123"]);
   assert("parseArgs: grep が反映される", args.grep === "fal");
   assert("parseArgs: since が反映される", args.since === "6h");
   assert("parseArgs: limit が反映される", args.limit === 50);
   assert("parseArgs: service が反映される", args.service === "test-worker");
+  assert("parseArgs: request-id が反映される", args.requestId === "abc123");
 }
 
 {
@@ -1185,6 +1207,7 @@ console.log("\n[parseArgs (query-worker-logs)]");
   assert("parseArgs: since のデフォルトは 3h", args.since === "3h");
   assert("parseArgs: limit のデフォルトは 200", args.limit === 200);
   assert("parseArgs: service のデフォルトは anniversary-cat-worker", args.service === "anniversary-cat-worker");
+  assert("parseArgs: requestId のデフォルトは null", args.requestId === null);
 }
 
 // ---------------------------------------------------------------------------
