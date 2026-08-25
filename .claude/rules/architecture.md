@@ -31,6 +31,7 @@ anniversary-cat-worker/
 │   ├── fal.js                        ← fal.ai ESRGAN 2xアップスケーリング（Queue API）
 │   ├── suzuri.js                     ← SUZURI API連携（商品生成・削除）
 │   ├── http-utils.js                 ← 共通HTTPユーティリティ（fetchWithRetry・2026-07追加）
+│   ├── image-utils.js                ← Photon共有ローダー・自動トリミング（2026-08追加）
 │   └── r2-storage.js                 ← Cloudflare R2ストレージ操作
 ├── frontend/
 │   ├── index.html                    ← フロントエンド（PWA対応、JP/EN切り替え）
@@ -487,6 +488,8 @@ GeminiのAPIレスポンスに含まれる`usageMetadata.totalTokenCount`を取�
 
 **同一KVキーへの並行書き込み race の回避**: `generate`と`generate-jsonParse`はどちらも同じKVキー（`cpu-time:YYYY-MM-DD`）にGET→PUTするため、2つのPromiseを先に生成してから並行して`ctx.waitUntil()`/`_deferOrAwait()`に渡すと、read-modify-writeが競合し一方の更新が失われる（`incrementCpuTimeKv()`はアトミックインクリメントではない）。実装時にこの競合を作り込みテストで検出したため、同じKVキーに書き込む2つのチェックポイントは1つの非同期関数にまとめて内部で直列に`await`し、`_deferOrAwait()`には単一のPromiseとして渡す（`usagePromise`は別キー`usage:YYYY-MM-DD`のため引き続き並行実行してよい）。同じ日次ドキュメントに複数ステップを記録する箇所を追加する際は、既存の書き込みとキーが重複していないか確認し、重複する場合は直列化する。
 
+**`generate-autoCrop`（自動トリミング計測）の扱い**: この計測は`handleGenerate()`の外側（`/generate`ハンドラー、`handleGenerate()`が返った後）で行うため、`handleGenerate()`内部の`cpuPromise`（`generate`/`generate-jsonParse`をまとめて書き込む背景タスク）へは呼び出し元からアクセスできず直列化できない。そのため`_recordAutoCropCpu()`は`ctx`を渡さず常に同期`await`し、少なくとも自分自身の書き込みは単発化することで競合の可能性を下げている。それでも`handleGenerate()`側の背景書き込みとの完全な排他は保証されない（診断用の集計値のため、稀な取りこぼしは許容している）。
+
 **KV書き込み回数の制約による対象範囲の線引き（2026-08追加）:**
 
 Workers KV Free プランは書き込み1日1,000回までという厳しい制限があるため、全経路にKV集計を入れるのではなく、既存のレート制限で書き込み量が自然に上限管理されている経路のみを対象にする。
@@ -551,7 +554,38 @@ Do not render the scene as if painted, printed, or mounted on a plate, dish, fan
 
 - `_buildGeminiPrompt()`: `Setting`行の直後・`Style`行の直前に`Composition:`行を追加。末尾の否定指示（Bug#27の円形フレーム禁止文）に続けて「余白を残さない」念押しの否定指示を1文追加（Bug#27と同じ「構図指示＋念のための否定指示」の二段構え）
 - `_buildPollinationsPrompt()`: keyword列挙形式のため、`parts`配列の末尾（`"pastel colors, white background"`の後）に`"full frame composition, minimal empty space"`を追加。フルセンテンスではなくキーワードで同じ意図を伝える
-- **効果は未確定な部分あり**: ユーザーの手動テスト（無料版Gemini・象の日テーマ）では「完璧ではないが前より余白が減った」という結果。プロンプトのみでの完全解決は保証されない。四隅の余白がなお気になる場合は生成後の自動トリミング（Canvas後処理）が次の選択肢だが、ウォーターマーク配置・缶バッジ/アクキーの円形クロップ計算・漢字背面テクスチャとの整合に影響するため実装コストが高く、現時点では見送っている
+- **効果は未確定な部分あり**: ユーザーの手動テスト（無料版Gemini・象の日テーマ）では「完璧ではないが前より余白が減った」という結果。プロンプトのみでの完全解決は保証されない。2026-08時点でBot投稿（`bot/2026-08-26`）で再び余白過多が確認され、プロンプト指示だけでは不安定と判明した
+
+### 生成後の自動トリミング（コード側補正・2026-08追加・計測フェーズ）
+
+プロンプト指示が不安定なため、Photon（WASM画像処理ライブラリ、`worker/bot.js`の`shrinkImageIfNeeded()`ですでに使用）でコード側から余白を検出・トリミングする機能を追加した。
+
+**重要な前提**: Bot投稿（`runBot()`）は生成〜R2保存〜Bluesky/Mastodon投稿まで**フロントエンドを一切経由しない**（`frontend/index.html`のCanvas処理が動くのは訪問者がSUZURI登録するときだけ）。そのためBot投稿画像の余白を直すには**Worker側（サーバー側）でのコード補正が必須**で、フロントのCanvas処理だけでは解決しない。
+
+**アルゴリズム（`worker/image-utils.js`）:**
+
+1. Photonで画像をデコードし、64×64程度に縮小（`resize`）
+2. 縮小画像のピクセル（`get_raw_pixels()`）をJSでスキャンし、各辺から内側に向かって「ほぼ白」の行・列を探索して被写体のバウンディングボックスを検出（`_detectCropBox()`・WASM非依存の純粋関数）
+3. 検出した比率（0〜1）をフル解像度の座標に換算し、フル解像度画像を`crop()`
+4. 安全策: 検出した余白が閾値未満ならトリミングしない（`minMarginRatio`）、1辺あたりの最大クロップ率に上限（`maxMarginRatio`）、被写体ギリギリまで詰めない安全パディング（`paddingRatio`）
+
+**CPU時間の実測結果（Node.js環境・1024×1024画像・2026-08計測）:**
+
+| 処理 | 所要時間 |
+| --- | --- |
+| デコード | 約3ms |
+| 64×64縮小 | 約10ms |
+| 縮小画像のピクセル取得＋余白スキャン（JS） | 1ms未満 |
+| フル解像度クロップ | 約12〜20ms |
+| PNG再エンコード | 約22〜27ms |
+| **合計** | **約45〜60ms** |
+
+余白検出のJSスキャン自体は想定通り軽量（1ms未満）だが、**Photonネイティブのcrop/エンコード処理自体が支配的コスト**であることが判明。`shrinkImageIfNeeded()`（Bluesky上限超過時のみ発動する条件付き処理）と異なり、この処理は生成のたびに無条件で発生するため、Workers Freeプランの公式CPU上限（10ms/リクエスト）は大きく超過する。Bug#32で観測された非公式な猶予（243〜297ms）の範囲内ではあるが、その猶予自体が2026-08に一度枯渇して障害化した経緯があるため、無条件に本番投入するのは危険と判断した。
+
+**ロールアウト方針（2026-08時点）**: リスクを抑えるため、**まず`/generate`（ユーザー生成・レート制限あり: IP 3回/日・グローバル50回/日）のみ**に適用し、`runBot()`（平日Cron・1日1回・失敗時のリカバリー手段なし）には組み込まない。`recordCpuCheckpoint("generate-autoCrop", ms, env.RATE_KV)`で実際のCloudflare Workers（`workerd`）上のCPU時間を`/cpu-usage`から確認し、安全と判断できてから`runBot()`への適用を検討する（Node.js計測はあくまで目安で、実際のWorkersランタイムとは特性が異なる可能性がある）。
+
+- 失敗時（Photon読み込み失敗・例外等）は元の未トリミング画像にフォールバックし、生成自体は失敗させない
+- 出力は常にPNG（`get_bytes()`）に統一し、`mimeType`もそれに合わせて上書きする
 
 **季節補充フォールバックのkana/英語フィールド（`getSeasonalFlowerKana()`/`getSeasonalFlowerEn()`・2026-07追加・Bug#31）:**
 

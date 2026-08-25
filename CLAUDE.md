@@ -169,6 +169,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | 記念日リサーチ（Gemini + Google Search grounding） | `worker/index.js` `handleResearch()` | 稼働中 |
 | visualHint（テーマ依存の英語視覚ヒント、`handleResearch()`のJSON出力に含む） | `worker/index.js` | 稼働中 |
 | 画像生成 2フェーズ方式（`_twoPhaseRace`） | `worker/index.js` | 稼働中 |
+| 生成後の余白自動トリミング（Photon・`/generate`のみ・計測フェーズ） | `worker/image-utils.js` `autoCropImage()` | 計測中（`runBot()`未適用） |
 | GeminiプロンプトStyle行の季節カラー（`getSeasonalStyleTone()`・年間固定色調による桜花の誤生成を回避） | `worker/index.js` `_buildGeminiPrompt()` | 稼働中 |
 | 猫ペルソナ（`CAT_PERSONAS` 13種・重み付き） | `worker/index.js` `pickPersona()` | 稼働中 |
 | 猫の性格（`CAT_PERSONALITIES` 6種 + おまかせ・重み付き） | `worker/index.js` `pickPersonality()` | 稼働中 |

@@ -12,6 +12,7 @@
 import { updateMetaInR2, collectMaterialIds } from "../worker/r2-storage.js";
 import { parseExpiryDate } from "./audit-suzuri-materials.mjs";
 import { parseSinceMs, buildQueryBody, parseArgs as parseQueryLogArgs } from "./query-worker-logs.mjs";
+import { _detectCropBox, autoCropImage } from "../worker/image-utils.js";
 import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptionForTest } from "../worker/suzuri.js";
 
 import {
@@ -19,7 +20,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta,
 } from "../worker/bot.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _deferOrAwait } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 
@@ -1211,6 +1212,164 @@ console.log("\n[parseArgs (query-worker-logs)]");
 }
 
 // ---------------------------------------------------------------------------
+// _detectCropBox（worker/image-utils.js）
+// ---------------------------------------------------------------------------
+console.log("\n[_detectCropBox]");
+
+/**
+ * 白背景（255,255,255,255）に、中央に幅marginRatio分の余白を空けて
+ * 単色の「被写体」を配置したRGBAピクセル配列を作るテストヘルパー。
+ * 上下左右で異なる余白にしたい場合は margins={top,bottom,left,right} を渡す。
+ */
+function makeTestImage(width, height, margins) {
+  const { top, bottom, left, right } = margins;
+  const t = Math.round(height * top);
+  const b = height - 1 - Math.round(height * bottom);
+  const l = Math.round(width * left);
+  const r = width - 1 - Math.round(width * right);
+  const pixels = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const inSubject = x >= l && x <= r && y >= t && y <= b;
+      pixels[i]     = inSubject ? 0 : 255;
+      pixels[i + 1] = inSubject ? 0 : 255;
+      pixels[i + 2] = inSubject ? 0 : 255;
+      pixels[i + 3] = 255;
+    }
+  }
+  return pixels;
+}
+
+{
+  // 正常系: 全辺15%の余白 → デフォルト閾値（min3%/max20%）の範囲内なのでトリミングボックスを返す
+  const pixels = makeTestImage(64, 64, { top: 0.15, bottom: 0.15, left: 0.15, right: 0.15 });
+  const box = _detectCropBox(pixels, 64, 64);
+  assert("_detectCropBox: 15%余白でボックスを返す", box !== null);
+  assert("_detectCropBox: x1が0より大きくpaddingRatio分マージンより内側", box.x1 > 0 && box.x1 < 0.15);
+  assert("_detectCropBox: x2が1より小さい", box.x2 < 1 && box.x2 > 0.85);
+  assert("_detectCropBox: y1/y2も同様に対称", Math.abs(box.y1 - box.x1) < 0.001 && Math.abs(box.y2 - box.x2) < 0.001);
+}
+
+{
+  // 正常系: 上下左右で余白が異なる場合、辺ごとに独立して検出される
+  const pixels = makeTestImage(64, 64, { top: 0.3, bottom: 0.05, left: 0.15, right: 0.15 });
+  const box = _detectCropBox(pixels, 64, 64);
+  assert("_detectCropBox: 上の余白が大きい方がx1相当のy1も大きい", box !== null && box.y1 > box.x1);
+}
+
+{
+  // 境界値: 余白がminMarginRatio(3%)未満なら全辺そろっていてもnull（トリミング不要）
+  const pixels = makeTestImage(64, 64, { top: 0.01, bottom: 0.01, left: 0.01, right: 0.01 });
+  const box = _detectCropBox(pixels, 64, 64);
+  assert("_detectCropBox: 余白1%（閾値未満）はnull", box === null);
+}
+
+{
+  // 境界値: 余白がmaxMarginRatio(20%)を超える場合は20%にキャップされる
+  const pixels = makeTestImage(64, 64, { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 });
+  const box = _detectCropBox(pixels, 64, 64);
+  assert("_detectCropBox: 40%余白は20%上限でキャップされる", box !== null && box.x1 <= 0.2 && box.x1 > 0.15);
+}
+
+{
+  // エラー系: 全面白（被写体なし）はnull
+  const pixels = new Uint8Array(64 * 64 * 4).fill(255);
+  const box = _detectCropBox(pixels, 64, 64);
+  assert("_detectCropBox: 全面白はnull", box === null);
+}
+
+{
+  // エラー系: 全面被写体（余白なし）はnull
+  const pixels = new Uint8Array(64 * 64 * 4).fill(0);
+  for (let i = 3; i < pixels.length; i += 4) pixels[i] = 255; // alpha
+  const box = _detectCropBox(pixels, 64, 64);
+  assert("_detectCropBox: 全面被写体（余白ゼロ）はnull", box === null);
+}
+
+{
+  // オプション上書き: whiteThresholdを下げると、やや暗いグレーも背景とみなされる
+  const width = 64, height = 64;
+  const pixels = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const inSubject = x >= 20 && x <= 43 && y >= 20 && y <= 43;
+      const bg = 230; // やや暗いグレー背景
+      pixels[i] = inSubject ? 0 : bg;
+      pixels[i + 1] = inSubject ? 0 : bg;
+      pixels[i + 2] = inSubject ? 0 : bg;
+      pixels[i + 3] = 255;
+    }
+  }
+  const boxDefault = _detectCropBox(pixels, width, height); // whiteThreshold=245ではbgが背景と判定されない
+  assert("_detectCropBox: 閾値245ではグレー230は被写体扱いされnull（境界まで被写体扱い）", boxDefault === null);
+  const boxLowThreshold = _detectCropBox(pixels, width, height, { whiteThreshold: 220 });
+  assert("_detectCropBox: whiteThreshold=220に下げるとグレー背景を検出しボックスを返す", boxLowThreshold !== null);
+}
+
+// ---------------------------------------------------------------------------
+// autoCropImage（worker/image-utils.js・依存注入でPhotonをモック）
+// ---------------------------------------------------------------------------
+console.log("\n[autoCropImage]");
+
+/**
+ * autoCropImage()用のPhotonモック一式を作る。
+ * @param {Uint8Array} smallPixels - resize()後のget_raw_pixels()が返すピクセル（_detectCropBoxの入力）
+ * @param {Uint8Array} croppedBytes - crop()後のget_bytes()が返すバイト列
+ */
+function makeAutoCropDeps(smallPixels, croppedBytes) {
+  const freed = { small: false, img: false, cropped: false };
+  const img = {
+    get_width:  () => 1000,
+    get_height: () => 800,
+    free: () => { freed.img = true; },
+  };
+  const smallImage = {
+    get_raw_pixels: () => smallPixels,
+    free: () => { freed.small = true; },
+  };
+  const croppedImage = {
+    get_bytes: () => croppedBytes,
+    free: () => { freed.cropped = true; },
+  };
+  const deps = {
+    ensurePhotonFn:   async () => {},
+    getPhotonImageFn: () => ({ new_from_byteslice: () => img }),
+    getPhotonFnsFn:   () => ({
+      resize: () => smallImage,
+      crop:   () => croppedImage,
+      SamplingFilter: { Nearest: 1 },
+    }),
+  };
+  return { deps, freed };
+}
+
+{
+  // 正常系: トリミングされた場合、cropped:trueでbase64化されたcrop後バイト列を返す
+  const smallPixels = makeTestImage(64, 64, { top: 0.15, bottom: 0.15, left: 0.15, right: 0.15 });
+  const croppedBytes = new Uint8Array([1, 2, 3]); // ダミーのPNGバイト列
+  const { deps, freed } = makeAutoCropDeps(smallPixels, croppedBytes);
+  const result = await autoCropImage("dGVzdA==", deps); // "test"のbase64
+  assert("autoCropImage: 余白ありなら cropped:true", result.cropped === true);
+  assert("autoCropImage: mimeTypeはimage/png", result.mimeType === "image/png");
+  assert("autoCropImage: imageDataがcrop後バイト列のbase64", result.imageData === Buffer.from(croppedBytes).toString("base64"));
+  assert("autoCropImage: small画像をfreeする", freed.small === true);
+  assert("autoCropImage: 元画像をfreeする", freed.img === true);
+  assert("autoCropImage: crop後画像をfreeする", freed.cropped === true);
+}
+
+{
+  // 境界値: 余白が閾値未満（検出ボックスがnull）の場合は元のimageDataをそのまま返す
+  const smallPixels = new Uint8Array(64 * 64 * 4).fill(255); // 全面白 → _detectCropBoxがnullを返す
+  const { deps } = makeAutoCropDeps(smallPixels, new Uint8Array());
+  const original = "dGVzdA==";
+  const result = await autoCropImage(original, deps);
+  assert("autoCropImage: 余白なしなら cropped:false", result.cropped === false);
+  assert("autoCropImage: 元のimageDataがそのまま返る", result.imageData === original);
+}
+
+// ---------------------------------------------------------------------------
 // updateMetaInR2
 // ---------------------------------------------------------------------------
 console.log("\n[updateMetaInR2]");
@@ -2389,6 +2548,41 @@ console.log("\n[_recordBackTextureDecodeCpu]");
   const today = new Date().toISOString().slice(0, 10);
   const stored = JSON.parse(kv.store[`cpu-time:${today}`] ?? "{}");
   assert("ctxなし: 応答が返るまでにKVへ書き込まれている", stored["suzuriCreate-backTextureDecode"]?.calls === 1);
+}
+
+// ---------------------------------------------------------------------------
+// _recordAutoCropCpu: /generateハンドラーの生成後自動トリミング計測を
+// ctx.waitUntil()で背景化するヘルパー（_recordBackTextureDecodeCpuと同じパターン）
+// ---------------------------------------------------------------------------
+console.log("\n[_recordAutoCropCpu]");
+{
+  // ctxあり: put()が永久に解決しなくてもハングせず返り、ctx.waitUntil()に委譲される
+  const hangingKv = {
+    async get() { return null; },
+    async put(key) {
+      if (key.startsWith("cpu-time:")) return new Promise(() => {});
+    },
+  };
+  const waited = [];
+  const mockCtx = { waitUntil(p) { waited.push(p); } };
+
+  let threw = false;
+  try {
+    await _recordAutoCropCpu(45.6, { RATE_KV: hangingKv }, mockCtx);
+  } catch {
+    threw = true;
+  }
+
+  assert("ctxあり: put()が解決しなくてもハングせず返る", !threw);
+  assert("ctxあり: ctx.waitUntil()が呼ばれる", waited.length === 1);
+}
+{
+  // ctxなし: 従来通りKV書き込み完了までawaitされ、KVに実際に記録される（後方互換の確認）
+  const kv = makeKvMock();
+  await _recordAutoCropCpu(50, { RATE_KV: kv });
+  const today = new Date().toISOString().slice(0, 10);
+  const stored = JSON.parse(kv.store[`cpu-time:${today}`] ?? "{}");
+  assert("ctxなし: 応答が返るまでにKVへ書き込まれている", stored["generate-autoCrop"]?.calls === 1);
 }
 
 // ---------------------------------------------------------------------------
