@@ -14,6 +14,7 @@ import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, 
 import { createSuzuriProducts, deleteSuzuriMaterial } from "./suzuri.js";
 import { submitFalJob, getFalResult } from "./fal.js";
 import { fetchWithRetry } from "./http-utils.js";
+import { autoCropImage } from "./image-utils.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -248,6 +249,12 @@ export async function _deferOrAwait(promise, ctx) {
 // _pollFalAndGetTexture()と同じ「依存関数を引数で受け取る」パターンでテスト可能な形に切り出した
 export async function _recordBackTextureDecodeCpu(cpuMs, env, ctx = null) {
   await _deferOrAwait(recordCpuCheckpoint("suzuriCreate-backTextureDecode", cpuMs, env.RATE_KV), ctx);
+}
+
+// 生成後の余白自動トリミング（計測フェーズ・2026-08追加）のCPU計測。
+// 上記_recordBackTextureDecodeCpu()と同じパターン。
+export async function _recordAutoCropCpu(cpuMs, env, ctx = null) {
+  await _deferOrAwait(recordCpuCheckpoint("generate-autoCrop", cpuMs, env.RATE_KV), ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -1619,6 +1626,28 @@ ${itemsXml}
           }
         }
         result = await handleGenerate(body, apiKey, env, ctx);
+
+        // 生成後の余白自動トリミング（計測フェーズ・2026-08追加）
+        // /generate（レート制限あり）のみに適用し、runBot()には組み込まない。
+        // 詳細はarchitecture.mdの「生成後の自動トリミング」参照
+        if (result.imageData) {
+          const tCropStart = performance.now();
+          try {
+            const cropResult = await autoCropImage(result.imageData);
+            // handleGenerate()内部のgenerate/generate-jsonParse計測は同じKVキー（cpu-time:YYYY-MM-DD）に
+            // ctx.waitUntil()で背景書き込みされており、ここでも同じctxで背景化すると2つの独立した
+            // background taskがGET→PUTで競合し一方の更新を失う（architecture.mdの「同一KVキーへの
+            // 並行書き込みraceの回避」と同じ問題）。handleGenerate()内部のPromiseへは外部から
+            // アクセスできず直列化できないため、ctxを渡さず常に同期awaitすることでこの書き込み自体を
+            // 単発化し、競合の可能性を下げる（計測フェーズの診断値のため取りこぼしがあっても致命的ではない）
+            await _recordAutoCropCpu(performance.now() - tCropStart, env, null);
+            if (cropResult.cropped) {
+              result = { ...result, imageData: cropResult.imageData, mimeType: cropResult.mimeType };
+            }
+          } catch (e) {
+            console.warn(`[generate] 自動トリミング失敗（元画像で継続）: ${e.message}`);
+          }
+        }
 
         // R2保存（best-effort: 失敗しても imageData は返す）
         // SUZURI商品生成はフロントでウォーターマーク合成後に /suzuri-create で行う
