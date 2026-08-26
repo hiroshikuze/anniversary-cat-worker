@@ -584,6 +584,8 @@ Do not render the scene as if painted, printed, or mounted on a plate, dish, fan
 
 **ロールアウト方針（2026-08時点）**: リスクを抑えるため、**まず`/generate`（ユーザー生成・レート制限あり: IP 3回/日・グローバル50回/日）のみ**に適用し、`runBot()`（平日Cron・1日1回・失敗時のリカバリー手段なし）には組み込まない。`recordCpuCheckpoint("generate-autoCrop", ms, env.RATE_KV)`で実際のCloudflare Workers（`workerd`）上のCPU時間を`/cpu-usage`から確認し、安全と判断できてから`runBot()`への適用を検討する（Node.js計測はあくまで目安で、実際のWorkersランタイムとは特性が異なる可能性がある）。
 
+**CPU計測は機能しないことが判明（2026-08・保留中）**: 実際に`/generate`を実行し`/cpu-usage`を確認したところ、`generate-autoCrop`は常に`0.0ms`だった（エラーなし・機能自体は正常動作）。原因はCloudflare Workersの仕様で、`performance.now()`は**I/Oが発生したときしか進まない**（Spectre対策。[公式ドキュメント](https://developers.cloudflare.com/workers/runtime-apis/performance/)で確認済み）ため。`autoCropImage()`はPhotonのデコード・縮小・crop・エンコードがすべて同期処理でI/Oを挟まず、区間内で`performance.now()`が一切進まないため差分が原理的に常に0になる。`recordCpuCheckpoint()`ベースの計測はこの種の純粋同期処理には使えないと判明した。実CPUコストの確認にはCloudflareダッシュボードの分析画面（アカウント所有者のみ閲覧可能）等、JSコードから観測できない経路が必要。ユーザー指示により本件は保留中（`/generate`限定・`runBot()`未適用のロールアウト状態を維持）。詳細は`.claude/revision_log.md`の2026-08エントリ参照
+
 - 失敗時（Photon読み込み失敗・例外等）は元の未トリミング画像にフォールバックし、生成自体は失敗させない
 - 出力は常にPNG（`get_bytes()`）に統一し、`mimeType`もそれに合わせて上書きする
 
