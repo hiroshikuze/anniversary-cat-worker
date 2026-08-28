@@ -16,6 +16,7 @@
 import { saveToR2 } from "./r2-storage.js";
 import { createSuzuriProducts } from "./suzuri.js";
 import { pickFromPool, recordCpuCheckpoint, _deferOrAwait } from "./index.js";
+import { getActiveSaleInfo } from "./sale.js";
 
 // Photonは動的importで遅延ロード（Node.jsテスト環境での.wasmロード失敗を回避）
 let _photonReady = false;
@@ -194,6 +195,30 @@ export function buildMastodonText(theme, description, themeEn = "", descriptionE
     enHeader + enDesc + enArtworkLine + enCta + "\n\n" + jaHeader + jaDesc + artworkLine + jaCta + `\n\n${tagStr}`,
     MASTODON_MAX_GRAPHEMES
   );
+}
+
+const MONTH_NAMES_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function enMonthDay(month, day) {
+  return `${MONTH_NAMES_EN[month - 1]} ${day}`;
+}
+
+/**
+ * セール告知リプライ文（Bluesky用・日本語のみ、buildPostText()と同じ方針）。
+ * @param {{discountYen: number, endDisplay: {month: number, day: number, weekdayJa: string}, url: string}} sale - getActiveSaleInfo()の戻り値
+ */
+export function buildSaleReplyTextJa(sale) {
+  const { month, day, weekdayJa } = sale.endDisplay;
+  return `🛍️ 今なら${sale.url}で最大${sale.discountYen}円OFF中！（${month}/${day}(${weekdayJa})まで）\n\n${sale.url}`;
+}
+
+/**
+ * セール告知リプライ文（Mastodon用・英語優先→日本語、buildMastodonText()と同じ方針）。
+ * @param {{discountYen: number, endDisplay: {month: number, day: number, weekdayJa: string}, url: string}} sale - getActiveSaleInfo()の戻り値
+ */
+export function buildSaleReplyTextBilingual(sale) {
+  const { month, day } = sale.endDisplay;
+  return `🛍️ SUZURI Sale! Up to ¥${sale.discountYen} off until ${enMonthDay(month, day)}\n${sale.url}\n\n` +
+         `🛍️ 今なら最大${sale.discountYen}円OFF中！（${month}/${day}まで）\n${sale.url}`;
 }
 
 /**
@@ -453,6 +478,48 @@ async function createPost(accessJwt, did, text, blobRef, mimeType, altText, page
   return data;
 }
 
+/**
+ * 既存投稿へのリプライを作成する（セール告知リプライ用）。
+ * createPost()とほぼ同じHTTP呼び出しパターンだが、共通化は2箇所のみのため見送り
+ * （future-ideas.mdの3箇所ルールに達しない）。
+ * @param {string} accessJwt
+ * @param {string} did
+ * @param {string} text
+ * @param {string} url - リプライ本文中のリンク（facet化用）
+ * @param {{uri: string, cid: string}} parentRef - 親（リプライ先）投稿の参照
+ * @param {{uri: string, cid: string}} [rootRef] - スレッドrootの参照（単発リプライのためデフォルトはparentRefと同一）
+ */
+async function createReplyPost(accessJwt, did, text, url, parentRef, rootRef = parentRef) {
+  const record = {
+    $type:     "app.bsky.feed.post",
+    text,
+    facets:    buildUrlFacets(text, url),
+    reply:     { root: { uri: rootRef.uri, cid: rootRef.cid }, parent: { uri: parentRef.uri, cid: parentRef.cid } },
+    createdAt: new Date().toISOString(),
+  };
+
+  const res = await fetch(`${BLUESKY_API}/com.atproto.repo.createRecord`, {
+    method:  "POST",
+    headers: {
+      "Authorization": `Bearer ${accessJwt}`,
+      "Content-Type":  "application/json",
+    },
+    body:   JSON.stringify({ repo: did, collection: "app.bsky.feed.post", record }),
+    signal: AbortSignal.timeout(BLUESKY_POST_TIMEOUT_MS),
+  });
+  const resText = await res.text();
+  let data = {};
+  try {
+    data = JSON.parse(resText);
+  } catch (e) {
+    data = { error: `Blueskyリプライ：レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
+  }
+  if (!res.ok) {
+    throw new Error(`Blueskyリプライ作成失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
+  }
+  return data;
+}
+
 // ---------------------------------------------------------------------------
 // Mastodon 投稿
 // ---------------------------------------------------------------------------
@@ -482,10 +549,11 @@ async function uploadMediaToMastodon(instanceUrl, accessToken, imageBytes, mimeT
   return data.id;
 }
 
-/** Mastodon にステータスを投稿する。 */
-async function postStatusToMastodon(instanceUrl, accessToken, text, mediaId) {
+/** Mastodon にステータスを投稿する。inReplyToId指定時はセール告知リプライ等のスレッド返信になる。 */
+async function postStatusToMastodon(instanceUrl, accessToken, text, mediaId = null, inReplyToId = null) {
   const params = new URLSearchParams({ status: text });
   if (mediaId) params.append("media_ids[]", mediaId);
+  if (inReplyToId) params.append("in_reply_to_id", inReplyToId);
 
   const res = await fetch(`${instanceUrl}/api/v1/statuses`, {
     method:  "POST",
@@ -733,6 +801,40 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
       console.error(`${prefix} Mastodon 投稿 失敗: ${isAuthError ? "設定エラー（認証失敗）: " : ""}${mastoErrMsg}`);
     }
 
+    // ── 5.5. セール告知リプライ（セール期間中のみ・本体投稿成功時にbest-effort） ──────
+    // 本体投稿の成否とは独立したbest-effort。本体が失敗した媒体にはparent情報がなく
+    // 物理的にリプライを送れないため、bskyOk/mastoOkそれぞれの成功時のみ実行する。
+    let saleReplyBskyOk = null;
+    let saleReplyMastoOk = null;
+    const activeSale = getActiveSaleInfo();
+    if (activeSale) {
+      if (bskyOk) {
+        try {
+          const { accessJwt, did } = await createBlueskySession(env.BLUESKY_IDENTIFIER, env.BLUESKY_APP_PASSWORD);
+          const parentRef = { uri: bskyResult.value.uri, cid: bskyResult.value.cid };
+          await createReplyPost(accessJwt, did, buildSaleReplyTextJa(activeSale), activeSale.url, parentRef);
+          saleReplyBskyOk = true;
+          console.log(`${prefix} セールリプライ Bluesky 完了`);
+        } catch (err) {
+          saleReplyBskyOk = false;
+          console.warn(`${prefix} セールリプライ Bluesky 失敗: ${err.message}`);
+        }
+      }
+      if (mastoOk) {
+        try {
+          await postStatusToMastodon(
+            env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN,
+            buildSaleReplyTextBilingual(activeSale), null, mastoResult.value.id
+          );
+          saleReplyMastoOk = true;
+          console.log(`${prefix} セールリプライ Mastodon 完了`);
+        } catch (err) {
+          saleReplyMastoOk = false;
+          console.warn(`${prefix} セールリプライ Mastodon 失敗: ${err.message}`);
+        }
+      }
+    }
+
     // ── 6. Discord通知（成否によらず常に送信） ──────────────────────────
     try {
       const bskyLine  = bskyOk
@@ -749,9 +851,13 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
       // 正規化されずnullになりうる。いずれのケースも正規表現は不要で単純な値比較で足りる
       const _k = research.kanjiChar;
       const kanjiLine = `🈁 裏面漢字: ${_k && _k !== "😺" ? `${_k}（採用）` : "なし→🐾"}`;
+      const saleReplyLine = activeSale
+        ? `🛍️ セールリプライ: Bluesky${saleReplyBskyOk === null ? "-" : saleReplyBskyOk ? "✅" : "❌"} / Mastodon${saleReplyMastoOk === null ? "-" : saleReplyMastoOk ? "✅" : "❌"}`
+        : null;
       const lines = [
         bskyLine,
         mastoLine,
+        saleReplyLine,
         `📅 テーマ: ${research.theme}`,
         research.description ? `📝 説明: ${research.description}` : null,
         research.visualHint  ? `🎨 視覚ヒント: ${research.visualHint}` : null,

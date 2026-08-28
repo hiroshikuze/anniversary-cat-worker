@@ -18,7 +18,9 @@ import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptio
 import {
   buildPostText, buildMastodonText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta,
+  buildSaleReplyTextJa, buildSaleReplyTextBilingual,
 } from "../worker/bot.js";
+import { _setSaleForTest } from "../worker/sale.js";
 
 import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
@@ -4579,6 +4581,153 @@ console.log("\n[formatDateKana]");
   // 月（がつ）と月曜日（げつようび）が混在しても正しく分離される
   // 月曜日の結果: "...月<ruby>月曜日..." ではなく "...<ruby>月曜日..." になっているはず
   assert("月（数字）と月曜日が二重にrubyにならない", !monResult.includes('<ruby>月<rp>(</rp><rt>がつ</rt><rp>)</rp></ruby><ruby>月曜日'));
+}
+
+// ---------------------------------------------------------------------------
+// buildSaleReplyTextJa / buildSaleReplyTextBilingual
+// ---------------------------------------------------------------------------
+console.log("\n[buildSaleReplyTextJa / buildSaleReplyTextBilingual]");
+{
+  const sale = {
+    id: "test-sale",
+    discountYen: 800,
+    endDisplay: { month: 9, day: 3, weekdayJa: "木" },
+    url: "https://suzuri.jp/nyanmusu",
+  };
+
+  const ja = buildSaleReplyTextJa(sale);
+  assert("buildSaleReplyTextJa: URLが含まれる", ja.includes(sale.url));
+  assert("buildSaleReplyTextJa: 割引額が含まれる", ja.includes("800円"));
+  assert("buildSaleReplyTextJa: 終了日が含まれる", ja.includes("9/3"));
+  assert("buildSaleReplyTextJa: 曜日が含まれる", ja.includes("木"));
+
+  const bi = buildSaleReplyTextBilingual(sale);
+  assert("buildSaleReplyTextBilingual: URLが含まれる", bi.includes(sale.url));
+  assert("buildSaleReplyTextBilingual: 日本語割引額が含まれる", bi.includes("800円"));
+  assert("buildSaleReplyTextBilingual: 英語割引額が含まれる", bi.includes("¥800"));
+  assert("buildSaleReplyTextBilingual: 英語が日本語より先に来る", bi.indexOf("Sale") < bi.indexOf("今なら"));
+}
+
+// ---------------------------------------------------------------------------
+// runBot: セール告知リプライ
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: セール告知リプライ]");
+{
+  const MASTO_INSTANCE = "https://mstdn-sale.example";
+  const SALE = {
+    id: "test-sale", startUtcMs: Date.now() - 1000, endUtcMs: Date.now() + 1000 * 60 * 60 * 24,
+    discountYen: 800, endDisplay: { month: 9, day: 3, weekdayJa: "木" }, url: "https://suzuri.jp/nyanmusu",
+  };
+
+  const mockResearch = async () => ({ theme: "テスト記念日", description: "テスト説明文", sourceUrl: "https://example.com" });
+  const mockGenerate = async () => ({ imageData: btoa("fake-image-data"), mimeType: "image/png", source: "gemini" });
+
+  function makeJsonResponse(body, status = 200) {
+    return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body) };
+  }
+
+  // セール期間中: createRecordが2回（本体+リプライ）、statusesが2回（本体+リプライ）呼ばれ、
+  // 2回目の呼び出しにそれぞれreply/in_reply_to_idが含まれる
+  {
+    _setSaleForTest(SALE);
+    let createRecordCalls = 0;
+    let statusesCalls = 0;
+    const bodies = [];
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("createSession"))  return makeJsonResponse({ accessJwt: "mock-jwt", did: "mock-did" });
+      if (u.includes("uploadBlob"))     return makeJsonResponse({ blob: { $type: "blob", ref: { $link: "r" }, mimeType: "image/png", size: 1 } });
+      if (u.includes("createRecord")) {
+        createRecordCalls++;
+        const body = JSON.parse(opts?.body ?? "{}");
+        bodies.push(body);
+        return createRecordCalls === 1
+          ? makeJsonResponse({ uri: "at://main-post", cid: "cid-main" })
+          : makeJsonResponse({ uri: "at://reply-post", cid: "cid-reply" });
+      }
+      if (u.includes("/api/v2/media"))  return makeJsonResponse({ id: "media123" });
+      if (u.includes("/api/v1/statuses")) {
+        statusesCalls++;
+        const params = new URLSearchParams(opts?.body ?? "");
+        bodies.push(Object.fromEntries(params));
+        return makeJsonResponse({ id: `status-${statusesCalls}`, url: `${MASTO_INSTANCE}/@user/${statusesCalls}` });
+      }
+      return makeJsonResponse({}, 204);
+    };
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: MASTO_INSTANCE, MASTODON_ACCESS_TOKEN: "masto-token",
+      },
+      mockResearch, mockGenerate
+    );
+    globalThis.fetch = origFetch;
+    _setSaleForTest(null);
+
+    assert("セール期間中: createRecordが2回呼ばれる（本体+リプライ）", createRecordCalls === 2);
+    assert("セール期間中: statusesが2回呼ばれる（本体+リプライ）", statusesCalls === 2);
+    const blueskyReplyBody = bodies.find(b => b.record?.reply);
+    assert("セール期間中: Blueskyリプライにreply.parentが含まれる", blueskyReplyBody?.record?.reply?.parent?.uri === "at://main-post");
+    const mastoReplyBody = bodies.find(b => b.in_reply_to_id);
+    assert("セール期間中: Mastodonリプライにin_reply_to_idが含まれる", mastoReplyBody?.in_reply_to_id === "status-1");
+  }
+
+  // セール期間外: リプライが送られない（既存フローに影響なし）
+  {
+    _setSaleForTest(null);
+    let createRecordCalls = 0;
+    let statusesCalls = 0;
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("createSession"))  return makeJsonResponse({ accessJwt: "mock-jwt", did: "mock-did" });
+      if (u.includes("uploadBlob"))     return makeJsonResponse({ blob: { $type: "blob", ref: { $link: "r" }, mimeType: "image/png", size: 1 } });
+      if (u.includes("createRecord")) { createRecordCalls++; return makeJsonResponse({ uri: "at://main-post", cid: "cid-main" }); }
+      if (u.includes("/api/v2/media"))  return makeJsonResponse({ id: "media123" });
+      if (u.includes("/api/v1/statuses")) { statusesCalls++; return makeJsonResponse({ id: "status-1" }); }
+      return makeJsonResponse({}, 204);
+    };
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: MASTO_INSTANCE, MASTODON_ACCESS_TOKEN: "masto-token",
+      },
+      mockResearch, mockGenerate
+    );
+    globalThis.fetch = origFetch;
+
+    assert("セール期間外: createRecordは1回のみ（リプライなし）", createRecordCalls === 1);
+    assert("セール期間外: statusesは1回のみ（リプライなし）", statusesCalls === 1);
+  }
+
+  // 本体投稿失敗時: リプライも送られない（parent情報がないため）
+  {
+    _setSaleForTest(SALE);
+    let createRecordCalls = 0;
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("createSession"))  return makeJsonResponse({ accessJwt: "mock-jwt", did: "mock-did" });
+      if (u.includes("uploadBlob"))     return makeJsonResponse({ blob: { $type: "blob", ref: { $link: "r" }, mimeType: "image/png", size: 1 } });
+      if (u.includes("createRecord")) { createRecordCalls++; return makeJsonResponse({ error: "InternalServerError" }, 500); }
+      return makeJsonResponse({}, 204);
+    };
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        // Mastodon未設定・Blueskyのみ検証
+      },
+      mockResearch, mockGenerate
+    );
+    globalThis.fetch = origFetch;
+    _setSaleForTest(null);
+
+    assert("本体投稿失敗時: createRecordは1回のみ（リプライも送られない）", createRecordCalls === 1);
+  }
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);

@@ -15,6 +15,7 @@ import { createSuzuriProducts, deleteSuzuriMaterial } from "./suzuri.js";
 import { submitFalJob, getFalResult } from "./fal.js";
 import { fetchWithRetry } from "./http-utils.js";
 import { autoCropImage } from "./image-utils.js";
+import { getActiveSaleInfo } from "./sale.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -1494,6 +1495,15 @@ ${itemsXml}
       );
       const nonEmpty = entries.filter(e => Object.keys(e).length > 1);
       return Response.json({ days: nonEmpty }, { headers: corsH });
+    }
+
+    // GET: 現在有効なSUZURIセール情報（一次情報源はworker/sale.jsのみ）
+    if (request.method === "GET" && url.pathname === "/sale-info") {
+      const sale = getActiveSaleInfo();
+      const payload = sale
+        ? { active: true, endUtcMs: sale.endUtcMs, discountYen: sale.discountYen, endDisplay: sale.endDisplay }
+        : { active: false };
+      return Response.json(payload, { headers: { ...corsH, "Cache-Control": "public, max-age=300" } });
     }
 
     // GET: fal.ai高解像度画像をR2から返す（SUZURI向け安定URL）
