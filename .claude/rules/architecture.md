@@ -33,6 +33,7 @@ anniversary-cat-worker/
 │   ├── http-utils.js                 ← 共通HTTPユーティリティ（fetchWithRetry・2026-07追加）
 │   ├── image-utils.js                ← Photon共有ローダー・自動トリミング（2026-08追加）
 │   ├── sale.js                       ← SUZURIセール期間・金額の一元管理（2026-08追加）
+│   ├── sale-check.js                 ← SUZURIニュース一覧のセール自動検知Cron（2026-08追加）
 │   └── r2-storage.js                 ← Cloudflare R2ストレージ操作
 ├── frontend/
 │   ├── index.html                    ← フロントエンド（PWA対応、JP/EN切り替え）
@@ -225,6 +226,47 @@ export function _setSaleForTest(sale) { ... } // テスト用
 - `renderSaleBanner()`が`saleInfo`と`currentLang`から`#g-sale-banner`の表示テキストを組み立てる。**文章の骨格（テンプレート）は言語ごとに固定文字列として保持し、日付・金額のみ動的に埋め込む**方針（機械生成の不自然な文章化を避けつつ、更新漏れが起きやすい数値部分だけを一元化する）
 - かなモードの曜日ふりがなは、既存の`formatDateKana()`内の`weekdayKana`対応表（`"日曜日": "にちようび"`等）をモジュールスコープに引き上げて再利用する`kanaForWeekday1Char(char)`ヘルパー経由で参照する。**新しい変換表は作らない**（過去に曜日読み間違いのバグがあったため、対応表を二重管理しない）
 - `setLang()`（言語切り替え時）でも`renderSaleBanner()`を再呼び出しする
+
+---
+
+## SUZURIセール自動検知Cron（`worker/sale-check.js`・2026-08追加）
+
+### 背景
+
+`worker/sale.js`の`_currentSale`は「セール開催をユーザーがClaudeに伝える」→Claude Codeセッションが手動で編集、という運用だった。SUZURIはニュース一覧（<https://suzuri.jp/media/category/news/>）にセール告知記事を掲載するため、これを1日1回自動チェックし、新しいセール記事を検知したらDiscordに通知することで、ユーザーからの都度の指示を待たずに準備を始められるようにした。
+
+### 方針: 自動検知はするが「本番反映は自動化しない」
+
+- セール情報のHTML構造は毎回微妙に異なる（2026-08「ニンニンSALE」は商品カテゴリー別の階層的な割引で、単純な1商品1金額ではなかった）
+- このショップが扱う4商品（t-shirt/sticker/can-badge/acrylic-keychain）のうち**どれが対象でどれが対象外か**の判断は、過去に実際にユーザーと相談して決めた経緯がある（例: ステッカーがニンニンSALE対象外だった件）
+- 抽出ミスがそのまま本番のセールバナー・Bot投稿に自動反映されるのはリスクが高い
+
+→ **Cronジョブは「候補を検知し、Discordに通知する」までを担当し、`worker/sale.js`の`_currentSale`への反映は引き続き人間（またはレビューするClaude Codeセッション）が行う。**
+
+### Worker側`fetch()`のsuzuri.jp疎通確認（実装前の検証結果）
+
+`.claude/future-ideas.md`に記載していた「suzuri.jpはWAFでWebFetchを403で弾く」は、Claude CodeのWebFetchツールに対する制約であり、Cloudflare Worker自身の`fetch()`が同様にブロックされるかは別問題として未検証だった。実装前にBashの`curl`から`https://suzuri.jp/media/category/news/`へ直接アクセスしたところ200 OKで取得でき、実際のHTML内に`journal_ninnin-sale_202608`（現行セールの記事URL）が一覧の最上部（＝新着順で先頭）に含まれることを確認した。
+
+ただしこれはこのセッションのサンドボックス環境からの疎通確認であり、**Cloudflare Workersのエッジネットワークからの`fetch()`が同様に成功するかは、実際にデプロイしてCronを発火させるまで確定しない**（WAFがCloudflare WorkersのIPレンジを特別扱いしている可能性は理論上残る）。そのため`checkForNewSale()`は取得失敗時にDiscordへ「⚠️ SUZURIセールチェック失敗（ニュース一覧取得エラー）」を通知する設計にしており、初回のCron発火（または`testing.md`の「Botの手動テスト」と同じ手順での手動Scheduled発火）で疎通の成否がDiscord通知として可視化される。ブロックされていた場合はこの通知が「自動検知不可・手動確認が必要」のシグナルとして機能する。
+
+### Cronトリガー
+
+`wrangler.toml`の`crons`に`"0 16 * * *"`（1:00 JST）を追加。既存の`"0 15 * * *"`（リサーチプール生成）の直後、Bot Cron（`"0 22 * * 1-5"`）とは独立した`scheduled()`invocationとして実行される（同一invocation内で実行されるBot Cronの負荷とは合算されない）。
+
+### 処理フロー（`checkForNewSale(env, ctx, notifyFn)`）
+
+1. ニュース一覧を`fetchWithRetry()`で取得。失敗時はDiscordに手動確認要の通知を送って終了（KVは更新しない＝翌日また自然にリトライされる）
+2. `extractLatestSaleArticleUrl(html)`（純粋関数）で、一覧中の`/media/journal_*`リンクのうちスラッグに`sale`を含む最初の1件（＝新着順で最初に見つかったセール関連記事）のURLを抽出。見つからなければ通常運用としてログのみで終了
+3. KV（`sale-check:last-notified`）に保存済みのURLと比較。**同一なら即return**（Gemini呼び出しを行わない。大半の日はここで終了しCPU時間はごく僅か）
+4. 新しい記事の場合のみ、記事本文を取得しGeminiへ構造化抽出を依頼（`gemini-2.5-flash-lite`・`responseMimeType: "application/json"`）。対象商品4種それぞれの`included`/`discountYen`をGeminiに判定させる（ステッカー対象外のような過去の判断パターンをプロンプトで委ねる）
+5. 抽出結果が`isSale: true`の場合、`buildSaleCandidateMessage()`（純粋関数）でDiscord通知文を組み立てて送信。**Discord通知を先に送り、KVへの「通知済みURL」書き込みはその後**（notify→mark-seenの順）。理由: 途中でCPU時間切れ・強制終了が起きても、KVが未更新なら翌日また同じURLで再試行される自己修復的な設計。逆の順序だと「検知したのに誰にも知らされない」まま次回スキップされてしまう
+6. `isSale: false`と判定された記事（値上げ告知等、セール以外のニュース）もKVに記録し、翌日以降の無駄な再抽出を防ぐ
+
+### テスト・実装上の注意
+
+- `extractLatestSaleArticleUrl()`・`buildSaleCandidateMessage()`はhandleResearch()と同じ「fetchモック・純粋関数切り出し」パターンでテスト（`scripts/test-bot.mjs`）。`extractLatestSaleArticleUrl()`のテストには実際に取得したニュース一覧HTMLの実データ（記事URLパターン）を使用し、机上の推測パターンでテストしない
+- `worker/sale-check.js`は`worker/index.js`から`recordCpuCheckpoint`・`_deferOrAwait`をimportする（既存の循環import許容パターン）。`notifyDiscord`は`worker/bot.js`が持つため、`worker/index.js`の`scheduled()`から関数として注入する形にし、`sale-check.js`が`bot.js`への新規importを持たないようにしている（循環importを増やさない設計判断）
+- Gemini抽出フェーズ（記事取得〜構造化抽出）の所要時間は`recordCpuCheckpoint("sale-check-extract", ms, env.RATE_KV)`で計測する。この区間はfetch・KV操作というI/Oを挟むため、`performance.now()`の「I/Oがない同期区間では進まない」制約（自動トリミング機能の計測時に判明・`.claude/revision_log.md`の2026-08エントリ参照）には該当せず、ある程度実測可能と見込んでいるが、正確な値になるかは`/cpu-usage`の実測で確認する
 
 ---
 

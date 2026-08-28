@@ -21,6 +21,7 @@ import {
   buildSaleReplyTextJa, buildSaleReplyTextBilingual,
 } from "../worker/bot.js";
 import { _setSaleForTest } from "../worker/sale.js";
+import { extractLatestSaleArticleUrl, buildSaleCandidateMessage } from "../worker/sale-check.js";
 
 import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
@@ -4728,6 +4729,78 @@ console.log("\n[runBot: セール告知リプライ]");
 
     assert("本体投稿失敗時: createRecordは1回のみ（リプライも送られない）", createRecordCalls === 1);
   }
+}
+
+// ---------------------------------------------------------------------------
+// extractLatestSaleArticleUrl / buildSaleCandidateMessage
+// ---------------------------------------------------------------------------
+console.log("\n[extractLatestSaleArticleUrl / buildSaleCandidateMessage]");
+{
+  // 2026-08にSUZURIニュース一覧（https://suzuri.jp/media/category/news/）を実際に取得し、
+  // <a class="c_linkto" href="...">の並び順（新着順）をそのまま再現した実データフィクスチャ。
+  // 机上の推測パターンではなく、実際のHTML構造でテストする（testing.mdの外部API調査ルールに準拠）
+  function makeArticleLinksHtml(slugs) {
+    return slugs
+      .map(slug => `<a class="c_linkto" href="https://suzuri.jp/media/journal_${slug}/">`)
+      .join("\n");
+  }
+
+  const SLUGS_SALE_FIRST = [
+    "ninnin-sale_202608", "gift-feature", "gift-free-shipping-campaign-2607",
+    "price-revision-20260818", "terms-revision-20260806", "news_20260729",
+  ];
+  const SLUGS_SALE_LATER = [
+    "gift-feature", "gift-free-shipping-campaign-2607", "price-revision-20260818",
+    "terms-revision-20260806", "news_20260729", "1account_20260728",
+    "tshirt-sale-campaign_202607", "commission_20260724",
+  ];
+  const SLUGS_NO_SALE = [
+    "operation_schedule-202608", "can-badge-disposal", "silk-screen-printing", "present",
+  ];
+
+  {
+    const html = makeArticleLinksHtml(SLUGS_SALE_FIRST);
+    const url = extractLatestSaleArticleUrl(html);
+    assert("先頭がセール記事: そのURLを返す", url === "https://suzuri.jp/media/journal_ninnin-sale_202608/");
+  }
+
+  {
+    const html = makeArticleLinksHtml(SLUGS_SALE_LATER);
+    const url = extractLatestSaleArticleUrl(html);
+    assert("セール記事が先頭でなくても、スラッグにsaleを含む最初の記事を返す",
+      url === "https://suzuri.jp/media/journal_tshirt-sale-campaign_202607/");
+  }
+
+  {
+    const html = makeArticleLinksHtml(SLUGS_NO_SALE);
+    const url = extractLatestSaleArticleUrl(html);
+    assert("セール関連記事が存在しない場合はnullを返す", url === null);
+  }
+
+  {
+    const url = extractLatestSaleArticleUrl("");
+    assert("空HTMLでもクラッシュせずnullを返す", url === null);
+  }
+
+  const sampleSaleInfo = {
+    isSale: true,
+    saleName: "ニンニンSALE",
+    startDisplay: "2026-08-28 12:00 JST",
+    endDisplay: "2026-09-03 23:59 JST",
+    items: [
+      { name: "Tシャツ", discountYen: 800, included: true },
+      { name: "缶バッジ", discountYen: 100, included: true },
+      { name: "アクリルキーホルダー", discountYen: 100, included: true },
+      { name: "ステッカー", discountYen: 0, included: false },
+    ],
+  };
+  const msg = buildSaleCandidateMessage(sampleSaleInfo, "https://suzuri.jp/media/journal_ninnin-sale_202608/");
+  assert("buildSaleCandidateMessage: セール名が含まれる", msg.includes("ニンニンSALE"));
+  assert("buildSaleCandidateMessage: 期間が含まれる", msg.includes("2026-08-28 12:00 JST") && msg.includes("2026-09-03 23:59 JST"));
+  assert("buildSaleCandidateMessage: 対象商品の割引額が含まれる", msg.includes("Tシャツ 800円引き"));
+  assert("buildSaleCandidateMessage: 対象外商品が明示される", msg.includes("ステッカー 対象外"));
+  assert("buildSaleCandidateMessage: 元記事URLが含まれる", msg.includes("https://suzuri.jp/media/journal_ninnin-sale_202608/"));
+  assert("buildSaleCandidateMessage: _currentSale更新の案内が含まれる", msg.includes("worker/sale.js"));
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);

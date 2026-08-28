@@ -9,7 +9,7 @@ preview_urls = false
 # Cloudflare Workers の曜日指定は 1=日曜日 のため、1-5=日〜木UTC=月〜金JST
 # 2026-08-06: Aug 4 22:00 UTC以降Cronイベントが1件も記録されなくなったため、
 # Cron Trigger再登録を目的に本コメントのみの変更で再デプロイを実施
-crons = ["0 15 * * *", "0 22 * * 1-5"]
+crons = ["0 15 * * *", "0 16 * * *", "0 22 * * 1-5"]
 
 [vars]
 # GitHub Pages の URL を設定（デプロイ後に実際の URL に変更してください）

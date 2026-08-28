@@ -16,6 +16,7 @@ import { submitFalJob, getFalResult } from "./fal.js";
 import { fetchWithRetry } from "./http-utils.js";
 import { autoCropImage } from "./image-utils.js";
 import { getActiveSaleInfo } from "./sale.js";
+import { checkForNewSale } from "./sale-check.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -1288,10 +1289,16 @@ export async function _pollFalAndGetTexture(falRequestId, env, r2Id, workerOrigi
 export default {
   // ── Cron Trigger ──────────────────────────────────────────────────────────
   // "0 15 * * *"   → 毎日 0:00 JST  リサーチプール生成
-  // "0 10 * * 2-6" → 月〜金 19:00 JST  Bluesky 営業 Bot
+  // "0 16 * * *"   → 毎日 1:00 JST  SUZURIセール自動検知（sale-check.js）
+  // "0 22 * * 1-5" → 月〜金 7:00 JST  Bluesky/Mastodon 営業 Bot
   async scheduled(event, env, ctx) {
     if (event.cron === "0 15 * * *") {
       ctx.waitUntil(generateResearchPool(env, ctx));
+      return;
+    }
+
+    if (event.cron === "0 16 * * *") {
+      ctx.waitUntil(checkForNewSale(env, ctx, notifyDiscord));
       return;
     }
 

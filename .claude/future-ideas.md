@@ -1299,6 +1299,8 @@ WebFetchはHTTPリクエストのみでJavaScriptを実行しない。そのた�
 
 現状は手動スクリーンショットをClaudeに渡す運用で対応している。
 
+**Worker側`fetch()`は別問題として2026-08に部分検証済み**: 上記はClaude CodeのWebFetchツールに対する制約であり、Cloudflare Worker自身の`fetch()`が同様にブロックされるかは別物だった。SUZURIセール自動検知Cron（`worker/sale-check.js`）の実装前に、このセッションのサンドボックスから`curl`で`https://suzuri.jp/media/category/news/`へ直接アクセスしたところ200 OKで取得でき、想定していた記事URLパターン（`journal_ninnin-sale_202608`等）も実際に確認できた。ただしこれはサンドボックス環境からの疎通確認であり、Cloudflare Workersのエッジネットワークからの`fetch()`が同様に成功するかは実際のデプロイ・Cron発火まで確定しない。詳細・失敗時の設計は`.claude/rules/architecture.md`の「SUZURIセール自動検知Cron」参照。
+
 ### 解決策：Playwright MCPサーバー（無料）
 
 ```bash
