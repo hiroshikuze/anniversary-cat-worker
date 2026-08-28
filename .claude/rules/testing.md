@@ -12,6 +12,7 @@
 | `scripts/test-fal-models.mjs` | `FAL_KEY=xxx node scripts/test-fal-models.mjs` | fal.ai API | fal.aiモデル比較（解像度・サイズ・速度の実測） |
 | `scripts/audit-suzuri-materials.mjs` | `SUZURI_API_KEY=xxx node scripts/audit-suzuri-materials.mjs [--delete]` | SUZURI API | 孤立SUZURIマテリアルの棚卸し・削除（デフォルトはdry-run・`--delete`時のみ実削除） |
 | `scripts/query-worker-logs.mjs` | GitHub Actions推奨（`.github/workflows/query-worker-logs.yml`をworkflow_dispatchで手動発火）。ローカル実行も可: `CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-logs.mjs --grep fal --since 6h` | Cloudflare Workers Observability API | Cloudflare Workers Logs（`console.log`の内容）をキーワード検索。詳細は次項参照 |
+| `scripts/test-sale.mjs` | `npm test`（2026-08よりCI接続） | 不要 | worker/sale.jsユニットテスト（`isSaleActive`/`getActiveSaleInfo`の正常系・境界値・エラー系） |
 
 ## ユニットテスト方針
 

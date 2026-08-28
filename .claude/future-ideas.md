@@ -1223,7 +1223,7 @@ const KANJI_FONT_STACK = '"Hiragino Mincho ProN", "Yu Mincho", "游明朝", "Not
 修正確定事項:
 
 - `saleBanner`の`火`→`<ruby>火<rt>かようび</rt></ruby>`（曜日略語のため「かようび」と読む）
-- `saleBanner`はセール期間変更のたびにClaudeCodeに相談して`ja`/`kana`両方を更新する
+- `saleBanner`は2026-08以降、`worker/sale.js`の`_currentSale`を1箇所編集するだけでよくなった（`GET /sale-info`経由でfrontendが取得・`ja`/`en`/`kana`いずれも動的に日付・金額を埋め込む方式に変更したため、frontend側のハードコード更新は不要）。詳細は`.claude/rules/architecture.md`の「SUZURIセール情報の一元管理」参照
 
 #### applyLang() の innerHTML 対応
 
@@ -1270,7 +1270,7 @@ if (currentLang === "kana" || key === "footer") {
 
 **補足事項:**
 
-- `saleBanner`の`火`は「かようび」と読む（設計メモ確定事項）。kuroshiro自動生成は「ひ」と誤読したため手動修正済み。次回セール期間変更時も同様に修正すること
+- `saleBanner`の`火`は「かようび」と読む（設計メモ確定事項）。kuroshiro自動生成は「ひ」と誤読したため手動修正済み。2026-08以降は`worker/sale.js`側の`endDisplay.weekdayJa`（例:「木」）をfrontendの`kanaForWeekday1Char()`が既存の`weekdayKana`対応表で自動的に正しい読みに変換するため、セール期間変更のたびに`saleBanner`側を手動修正する必要はなくなった
 - `health-check.yml`に`translations.kana`・`setLang`・`formatDateKana`・`setErrText`チェックを追加済み
 - `testing.md`のチェックリストを更新済み（かなモード4件追加・`toggleLang`→`setLang`説明修正）
 

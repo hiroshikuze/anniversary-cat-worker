@@ -151,6 +151,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | fal.ai Queue APIのrequest_idは`ctx.waitUntil()`より前にR2へ保存 | ctx.waitUntil()がwall-clock超過で強制終了しても、IDだけは確実に残す保証が必要 |
 | fal.aiポーリング予算（3回×5秒）を安易に増やさない | 2026-08実測で成功ケース（3回目でCOMPLETED）は`bg開始`から`right グループ完了`まで約25.6秒かかっており、28秒予算に対し残り margin は約2.4秒しかない。ポーリングを1〜2秒伸ばすだけでも、CDN取得＋R2保存＋SUZURI登録という重い後処理ごと強制終了され、成功に近いケースほど「何も保存されない」方向に倒れるリスクがある。詳細は`.claude/revision_log.md`の2026-08エントリ参照 |
 | 外部APIレスポンスをMapにする際は整数IDをキーにする | 文字列名はAPIバージョン・ロケールで表記が変わる（過去バグ: SUZURI item.name 表記ゆれ） |
+| SUZURIセール期間・金額の一次情報源は`worker/sale.js`の`_currentSale`のみ | frontendが独自にセール日付・文言をハードコードして更新漏れが起きる事故を防ぐため。frontendは`GET /sale-info`をfetchして表示する |
 | Pollinationsプロンプトの先頭は`kawaii watercolor cat`固定 | Fluxモデルは前半トークン重視。先頭に猫・スタイルを宣言することで一貫した品質を保つ |
 | GeminiプロンプトのStyle行は年間固定文言に戻さず`getSeasonalStyleTone()`で季節依存にする | 固定文言`light pink and beige tones`が季節・テーマと無関係に桜の花びらを連想させた（Bug#26）。詳細は`.claude/rules/architecture.md`の「Style行の季節カラー」参照 |
 | ボットはSUZURI登録しない。初回訪問者ブラウザに委譲する | ボット実行時間短縮 + ブラウザ側2048pxリサイズで印刷品質向上。重複防止はWorker側の`/suzuri-create`冒頭チェックで担保 |
@@ -198,6 +199,8 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | レート制限（`/generate`: IP 3回/日・グローバル 50回/日） | `worker/index.js` `checkRateLimit()` | 稼働中 |
 | かなモード（JP/かな/EN 3択・ruby furigana・Gemini生成`themeKana`/`descriptionKana`・日付`formatDateKana()`でふりがな） | `frontend/index.html` `translations.kana`/`setLang()`/`formatDateKana()` / `worker/index.js` `handleResearch()` | 稼働中 |
 | Bluesky/Mastodon投稿CTA行のローテーション（`CTA_VARIANTS`重み付き5パターン・毎回同一文言の反復を回避） | `worker/bot.js` `pickCta()` | 稼働中 |
+| SUZURIセール情報の一元管理（frontend/Bot双方が単一の情報源を参照） | `worker/sale.js` `getActiveSaleInfo()` / `worker/index.js` `GET /sale-info` | 稼働中 |
+| Bot投稿へのセール告知リプライ（セール期間中のみ、本体投稿成功時にbest-effortでスレッド返信） | `worker/bot.js` `runBot()` | 稼働中 |
 | 外部通信の共通リトライ（5xx・ネットワーク例外を指数バックオフでリトライ。SUZURI登録・fal.aiポーリング・共有URL画像取得等に適用） | `worker/http-utils.js` `fetchWithRetry()` `worker/index.js` `_pollFalAndGetTexture()` | 稼働中 |
 | Workers Traces有効化・CPU時間計測チェックポイント（Cron・HTTPエンドポイント問わず重い処理に`recordCpuCheckpoint()`で計測を恒久設置。Workers Free上限10ms対策のBug#32の一環） | `wrangler.toml` `[observability.traces]` `worker/index.js` `recordCpuCheckpoint()` `worker/bot.js` | 稼働中 |
 | CPU時間のステップ別KV集計・API化（`/usage`と同パターン。`/cpu-usage`でCIログから確認可能） | `worker/index.js` `incrementCpuTimeKv()` `recordCpuCheckpoint()` `/cpu-usage` `scripts/health-check.js` | 稼働中 |

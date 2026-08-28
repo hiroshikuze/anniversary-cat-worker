@@ -32,6 +32,7 @@ anniversary-cat-worker/
 │   ├── suzuri.js                     ← SUZURI API連携（商品生成・削除）
 │   ├── http-utils.js                 ← 共通HTTPユーティリティ（fetchWithRetry・2026-07追加）
 │   ├── image-utils.js                ← Photon共有ローダー・自動トリミング（2026-08追加）
+│   ├── sale.js                       ← SUZURIセール期間・金額の一元管理（2026-08追加）
 │   └── r2-storage.js                 ← Cloudflare R2ストレージ操作
 ├── frontend/
 │   ├── index.html                    ← フロントエンド（PWA対応、JP/EN切り替え）
@@ -69,6 +70,7 @@ anniversary-cat-worker/
 | GET | `/rss.xml` | RSSフィード（直近14日のボット作品・サムネイル画像付き） |
 | GET | `/usage` | Gemini APIトークン使用量（直近30日・認証なし・`{days:[{date,textCalls,textTokens,textModel,imageCalls,imageTokens}]}`） |
 | GET | `/cpu-usage` | ステップ別CPU時間集計（直近30日・認証なし・`{days:[{date,{step}:{calls,totalMs,maxMs}}]}`） |
+| GET | `/sale-info` | 現在有効なSUZURIセール情報（認証なし・`{active:true,endUtcMs,discountYen,endDisplay}`または`{active:false}`・`Cache-Control: public, max-age=300`） |
 | POST | `/suzuri-create` | ウォーターマーク済み画像を受け取りSUZURI登録・R2メタ更新 |
 
 ### /proxy-imageのセキュリティ制約
@@ -185,6 +187,44 @@ createSuzuriProducts(imageUrl, theme, env, slugFilter = null, backTexture = null
 - `description`・`r2Id`はフロントから`/suzuri-create`のリクエストボディで受け取り、`/resume-hires`ではR2メタから取得する
 - can-badge/acrylic-keychainグループの呼び出しでは`backTexture=null`を渡す（Tシャツへの背面印刷は右グループのみ）
 - 全商品に`resizeMode: "contain"`を設定（画像がアスペクト比を保ったまま収まる）
+
+---
+
+## SUZURIセール情報の一元管理（`worker/sale.js`・2026-08追加）
+
+### 背景
+
+SUZURIのセール（例: 2026-08「ニンニンSALE」、最大800円OFF）が開催されるたび、`frontend/index.html`内のセールバナー（期間の日時定数＋ja/en/kana各言語の文言に日付・金額を直書き、実質4箇所以上）をセッションごとに手動更新していた。更新漏れの事故リスクを避けるため、情報源を`worker/sale.js`の1箇所に集約した。
+
+### 設計
+
+`worker/sale.js`はPhoton（`image-utils.js`）と同じ「モジュールスコープの状態＋テスト用差し替え関数」パターンを踏襲する。
+
+```js
+let _currentSale = {
+  id:          "ninnin-sale-2026-08",
+  startUtcMs:  Date.UTC(2026, 7, 28, 3, 0),
+  endUtcMs:    Date.UTC(2026, 8, 3, 14, 59),
+  discountYen: 800,
+  endDisplay:  { month: 9, day: 3, weekdayJa: "木" },
+  url:         "https://suzuri.jp/nyanmusu",
+}; // セールがない期間はnullに書き換える
+
+export function isSaleActive(now = Date.now()) { ... }
+export function getActiveSaleInfo(now = Date.now()) { ... } // セール中はsaleオブジェクト、それ以外はnull
+export function _setSaleForTest(sale) { ... } // テスト用
+```
+
+- **次のセール開催が決まったら`_currentSale`を差し替えるだけでよい**。frontendのバナー表示・Bot投稿のリプライ判定の両方に自動的に反映される
+- `worker/index.js`・`worker/bot.js`双方が`worker/sale.js`から直接importする（新規の一方向import、既存の循環importは増やさない）
+- frontendは別デプロイ（GitHub Pages・ビルドステップなしの静的HTML）のためWorkerのコードを直接import出来ない。代わりに`GET /sale-info`エンドポイント経由でJSONを取得する
+
+### frontend側の連携（`frontend/index.html`）
+
+- `SALE_START_UTC`/`SALE_END_UTC`のハードコード定数は廃止。ページ初期化時に`loadSaleInfo()`が`/sale-info`をfetchし、結果をモジュールスコープの`saleInfo`に保持する（fetch失敗時は`null`＝バナー非表示にフォールバックし、サービス継続を優先する）
+- `renderSaleBanner()`が`saleInfo`と`currentLang`から`#g-sale-banner`の表示テキストを組み立てる。**文章の骨格（テンプレート）は言語ごとに固定文字列として保持し、日付・金額のみ動的に埋め込む**方針（機械生成の不自然な文章化を避けつつ、更新漏れが起きやすい数値部分だけを一元化する）
+- かなモードの曜日ふりがなは、既存の`formatDateKana()`内の`weekdayKana`対応表（`"日曜日": "にちようび"`等）をモジュールスコープに引き上げて再利用する`kanaForWeekday1Char(char)`ヘルパー経由で参照する。**新しい変換表は作らない**（過去に曜日読み間違いのバグがあったため、対応表を二重管理しない）
+- `setLang()`（言語切り替え時）でも`renderSaleBanner()`を再呼び出しする
 
 ---
 
@@ -703,6 +743,17 @@ CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言で
 - `pickCta()`は`runBot()`内で**1回だけ**呼び出し、`buildPostText()`と`buildMastodonText()`の両方に同じ結果を渡す（同じ投稿でBluesky版・Mastodon版のCTAトーンが食い違わないようにするため）
 - `CTA_VARIANTS[0]`（現行の固定文言・weight 40%）が`buildPostText()`/`buildMastodonText()`双方の`cta`引数のデフォルト値。デフォルト値のまま呼び出した場合は従来と完全に同一の文言を返す（後方互換）
 - 各バリアントは日本語版（`ja`）・英語版（`en`）をペアで保持し、トーンを揃える
+
+**セール告知リプライ（2026-08追加）:**
+
+`worker/sale.js`の`getActiveSaleInfo()`が現在有効なセール情報を返す場合（`_currentSale`の期間内）のみ、本体投稿（Bluesky/Mastodon）が成功した媒体に対してスレッドへのリプライ形式でSUZURIショップ（`https://suzuri.jp/nyanmusu`）への告知を追加投稿する。
+
+- **フック位置**: 本体投稿の`Promise.allSettled`（`bskyOk`/`mastoOk`判定）の直後、Discord通知ブロックより前。**本体投稿の成否と独立したbest-effort**（本体投稿が失敗した媒体にはリプライを送らない。物理的にreply先のuri/cid・ステータスIDが存在しないため）
+- Bluesky: `createReplyPost(accessJwt, did, text, parentRef, rootRef = parentRef)`。`com.atproto.repo.createRecord`の`record`に`reply: { root: {uri, cid}, parent: {uri, cid} }`を含める（単発リプライのためroot=parent）。本体投稿IIFEの`accessJwt`/`did`はローカルスコープに閉じているため、リプライ用に`createBlueskySession()`を再取得する
+- Mastodon: `postStatusToMastodon(instanceUrl, accessToken, text, mediaId, inReplyToId)`に第5引数`inReplyToId`を追加（省略時`null`・既存呼び出し箇所は4引数以下のままで後方互換）。指定時は`in_reply_to_id`パラメータを付与する
+- リプライ文言: `buildSaleReplyTextJa(sale)`（Bluesky・日本語のみ、`buildPostText()`と同じ方針）・`buildSaleReplyTextBilingual(sale)`（Mastodon・英語優先→日本語、`buildMastodonText()`と同じ方針）。URLのfacet化には既存の`buildUrlFacets()`を再利用する
+- 失敗時は`console.warn`のみで投稿全体を失敗させない
+- Discord通知（1通目）に`🛍️ セールリプライ: Bluesky✅ / Mastodon✅`のような1行を、セール対象時のみ追加する（既存の「値がなければnullを入れて`.filter(Boolean)`で除去」パターンを踏襲）
 
 **「の日」重複防止ロジック（`buildPostText`）:**
 
