@@ -23,7 +23,7 @@ AI-powered daily cat illustration generator inspired by today's anniversary.
 - 生成したイラストをSUZURIでグッズ購入可能（Tシャツ・ステッカー・缶バッジ・アクキー）
 - 共有URLで生成したイラストを友達と共有可能（生成後14日間）
 - 過去14日間のボット作品をギャラリーで閲覧可能
-- 毎平日19:00 JSTにBotがBlueskyへ自動投稿
+- 毎平日7:00 JSTにBotがBluesky・Mastodonへ自動投稿
 - 日本語・英語の表示切り替えに対応
 
 ## 使用方法
