@@ -141,6 +141,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | --- | --- |
 | BotはHTTP自己呼び出しをせず`handleResearch()`/`handleGenerate()`を直接呼ぶ | URL未設定・レート制限・BYPASS_TOKEN管理のリスクを排除 |
 | Cron式は`0 22 * * 1-5`（月〜金 7:00 JST・2026-05-01より） | 詳細は`.claude/rules/architecture.md`の「Bluesky Bot」参照 |
+| SUZURIセール自動検知Cron（`0 16 * * *`）は候補の検知・Discord通知のみ行い、`worker/sale.js`の`_currentSale`へは自動反映しない | 商品カテゴリー別の割引判定（例: ステッカーのみ対象外）はGeminiの抽出ミスが本番のセールバナー・Bot投稿へ直接影響するリスクが高く、人間・Claude Codeセッションによるレビューを必須にするため。詳細は`.claude/rules/architecture.md`の「SUZURIセール自動検知Cron」参照 |
 | ユーザーによる記念日の自由入力は実装しない | プロンプトインジェクションでGemini APIキーのGoogleアカウントがBanされるリスク |
 | Geminiコンテンツポリシー違反のBanはAPIキー所有者（hiroshikuzeのメインアカウント）に発生する | Gmail/Drive等のGoogleサービス全体に影響が及ぶ |
 | 画像生成は2フェーズ方式（priorityMs=12,000ms） | Gemini平均8361ms・最大10203ms（実測）。Phase1でGemini優先、失敗時Pollinationsで即返却 |
@@ -201,6 +202,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | Bluesky/Mastodon投稿CTA行のローテーション（`CTA_VARIANTS`重み付き5パターン・毎回同一文言の反復を回避） | `worker/bot.js` `pickCta()` | 稼働中 |
 | SUZURIセール情報の一元管理（frontend/Bot双方が単一の情報源を参照） | `worker/sale.js` `getActiveSaleInfo()` / `worker/index.js` `GET /sale-info` | 稼働中 |
 | Bot投稿へのセール告知リプライ（セール期間中のみ、本体投稿成功時にbest-effortでスレッド返信） | `worker/bot.js` `runBot()` | 稼働中 |
+| SUZURIセール自動検知Cron（毎日1回ニュース一覧をチェック・新着セール記事をGeminiで構造化抽出しDiscord通知。本番反映は手動） | `worker/sale-check.js` `checkForNewSale()` | 稼働中 |
 | 外部通信の共通リトライ（5xx・ネットワーク例外を指数バックオフでリトライ。SUZURI登録・fal.aiポーリング・共有URL画像取得等に適用） | `worker/http-utils.js` `fetchWithRetry()` `worker/index.js` `_pollFalAndGetTexture()` | 稼働中 |
 | Workers Traces有効化・CPU時間計測チェックポイント（Cron・HTTPエンドポイント問わず重い処理に`recordCpuCheckpoint()`で計測を恒久設置。Workers Free上限10ms対策のBug#32の一環） | `wrangler.toml` `[observability.traces]` `worker/index.js` `recordCpuCheckpoint()` `worker/bot.js` | 稼働中 |
 | CPU時間のステップ別KV集計・API化（`/usage`と同パターン。`/cpu-usage`でCIログから確認可能） | `worker/index.js` `incrementCpuTimeKv()` `recordCpuCheckpoint()` `/cpu-usage` `scripts/health-check.js` | 稼働中 |
