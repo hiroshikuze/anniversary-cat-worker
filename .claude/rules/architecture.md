@@ -44,6 +44,7 @@ anniversary-cat-worker/
     ├── health-check.js               ← E2E診断（GitHub Actionsのみ実行）
     ├── test-bot.mjs                  ← ユニットテスト（外部API不要）← npm test
     ├── test-suzuri.mjs               ← worker/suzuri.jsユニットテスト（外部API不要）← npm test（2026-07よりCI接続）
+    ├── test-sale.mjs                 ← worker/sale.jsユニットテスト（外部API不要）← npm test（2026-08よりCI接続）
     ├── test-suzuri-api.mjs           ← SUZURI API動作確認（実商品が生成される）
     ├── test-fal-models.mjs           ← fal.aiモデル比較（FAL_KEY必要）
     ├── test-gemini-image-timing.mjs  ← Gemini画像生成の所要時間計測（GEMINI_API_KEY必要）
@@ -226,6 +227,7 @@ export function _setSaleForTest(sale) { ... } // テスト用
 - `renderSaleBanner()`が`saleInfo`と`currentLang`から`#g-sale-banner`の表示テキストを組み立てる。**文章の骨格（テンプレート）は言語ごとに固定文字列として保持し、日付・金額のみ動的に埋め込む**方針（機械生成の不自然な文章化を避けつつ、更新漏れが起きやすい数値部分だけを一元化する）
 - かなモードの曜日ふりがなは、既存の`formatDateKana()`内の`weekdayKana`対応表（`"日曜日": "にちようび"`等）をモジュールスコープに引き上げて再利用する`kanaForWeekday1Char(char)`ヘルパー経由で参照する。**新しい変換表は作らない**（過去に曜日読み間違いのバグがあったため、対応表を二重管理しない）
 - `setLang()`（言語切り替え時）でも`renderSaleBanner()`を再呼び出しする
+- `scripts/health-check.js`（`WORKER_URL`設定時のE2Eチェック）が`GET /sale-info`の到達性・レスポンス形式をCIで検証する（`/usage`・`/cpu-usage`と同じパターン）
 
 ---
 
@@ -587,7 +589,7 @@ Workers KV Free プランは書き込み1日1,000回までという厳しい制�
 
 | 経路 | KV集計 | 理由 |
 | --- | --- | --- |
-| Cron `generateResearchPool()` / `runBot()` | 対象 | 1日2回のみ |
+| Cron `generateResearchPool()` / `runBot()` / `checkForNewSale()` | 対象 | 1日3回のみ（`checkForNewSale()`のGemini抽出自体は新着セール記事検知時のみさらに稀） |
 | `POST /research` / `POST /generate`（`handleResearch()`/`handleGenerate()`内部で計測） | 対象 | 既存レート制限（`/research` 10回/日/IP・`/generate` 3回/日/IP・50回/日グローバル）で書き込み量が有界 |
 | `POST /suzuri-create` | 対象 | 生成1回につき数回程度、同様に有界 |
 | `GET /image/:id`（`getImageFromR2()`） | **対象外**（`console.log`のみ） | レート制限がなく訪問のたびに呼ばれるため、KV書き込みすると1,000回/日の予算を圧迫しうる |

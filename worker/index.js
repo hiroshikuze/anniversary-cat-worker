@@ -18,7 +18,7 @@ import { autoCropImage } from "./image-utils.js";
 import { getActiveSaleInfo } from "./sale.js";
 import { checkForNewSale } from "./sale-check.js";
 
-const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+export const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 // ---------------------------------------------------------------------------
 // レート制限設定

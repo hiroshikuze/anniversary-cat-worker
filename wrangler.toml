@@ -5,6 +5,7 @@ preview_urls = false
 
 [triggers]
 # "0 15 * * *"   → 毎日 0:00 JST  リサーチプール生成（翌日分の記念日候補をR2に保存）
+# "0 16 * * *"   → 毎日 1:00 JST  SUZURIセール自動検知（2026-08追加・sale-check.js）
 # "0 22 * * 1-5" → 月〜金 7:00 JST  Bluesky 営業 Bot（2026-05-01より）
 # Cloudflare Workers の曜日指定は 1=日曜日 のため、1-5=日〜木UTC=月〜金JST
 # 2026-08-06: Aug 4 22:00 UTC以降Cronイベントが1件も記録されなくなったため、

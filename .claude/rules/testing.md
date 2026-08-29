@@ -158,6 +158,9 @@ PR #121のリグレッション（マージ競合で英語機能が黙って削�
 | `setLang` | かなモード | JP/かな/EN 3択切り替え関数 |
 | `formatDateKana` | かなモード | 日付ふりがな生成関数（削除されると日付の漢字が読めない状態になる） |
 | `setErrText` | かなモード | エラーテキストのkana対応ヘルパー（削除されるとエラーメッセージにruby HTMLが露出する） |
+| `loadSaleInfo` | SUZURIセール表示 | `/sale-info`取得関数（削除されるとセールバナーが常に非表示になる） |
+| `renderSaleBanner` | SUZURIセール表示 | セールバナーの表示/文言組み立て関数 |
+| `kanaForWeekday1Char` | かなモード | セールバナー曜日ふりがなヘルパー（`formatDateKana()`の`weekdayKana`対応表を再利用） |
 
 ### 運用ルール
 

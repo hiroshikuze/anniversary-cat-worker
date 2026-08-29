@@ -9,7 +9,7 @@
  */
 
 import { fetchWithRetry } from "./http-utils.js";
-import { recordCpuCheckpoint, _deferOrAwait, selectBestModel } from "./index.js";
+import { recordCpuCheckpoint, _deferOrAwait, selectBestModel, GEMINI_BASE } from "./index.js";
 
 const NEWS_URL             = "https://suzuri.jp/media/category/news/";
 const LAST_NOTIFIED_KV_KEY = "sale-check:last-notified";
@@ -58,7 +58,7 @@ ${(articleText ?? "").slice(0, 8000)}`;
 async function extractSaleInfoWithGemini(articleText, apiKey, kv, webhookUrl) {
   const model = await selectBestModel(apiKey, kv, webhookUrl);
   const res = await fetchWithRetry(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
     {
       method:  "POST",
       headers: { "Content-Type": "application/json" },

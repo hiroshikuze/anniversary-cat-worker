@@ -536,6 +536,19 @@ async function checkWorker(workerUrl, bypassToken) {
     }
   }
 
+  // SUZURIセール情報の一元管理（2026-08追加）が正しくデプロイされているか確認
+  console.log("\n[W5] Worker /sale-info エンドポイント確認");
+  const { ok: saleOk, res: saleRes, error: saleErr } = await safeFetch(`${workerUrl}/sale-info`);
+  if (check("Worker /sale-info 到達", saleOk, saleErr)) {
+    const saleData = await safeJson(saleRes);
+    check("HTTP 200", saleRes.status === 200, `status=${saleRes.status}`);
+    if (saleRes.ok) {
+      note(saleData.active
+        ? `セール中: discountYen=${saleData.discountYen} endUtcMs=${saleData.endUtcMs}`
+        : "セール非開催中");
+    }
+  }
+
   return data;
 }
 
