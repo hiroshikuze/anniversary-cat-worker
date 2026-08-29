@@ -44,6 +44,7 @@ anniversary-cat-worker/
     ├── health-check.js               ← E2E診断（GitHub Actionsのみ実行）
     ├── test-bot.mjs                  ← ユニットテスト（外部API不要）← npm test
     ├── test-suzuri.mjs               ← worker/suzuri.jsユニットテスト（外部API不要）← npm test（2026-07よりCI接続）
+    ├── test-sale.mjs                 ← worker/sale.jsユニットテスト（外部API不要）← npm test（2026-08よりCI接続）
     ├── test-suzuri-api.mjs           ← SUZURI API動作確認（実商品が生成される）
     ├── test-fal-models.mjs           ← fal.aiモデル比較（FAL_KEY必要）
     ├── test-gemini-image-timing.mjs  ← Gemini画像生成の所要時間計測（GEMINI_API_KEY必要）
@@ -226,6 +227,7 @@ export function _setSaleForTest(sale) { ... } // テスト用
 - `renderSaleBanner()`が`saleInfo`と`currentLang`から`#g-sale-banner`の表示テキストを組み立てる。**文章の骨格（テンプレート）は言語ごとに固定文字列として保持し、日付・金額のみ動的に埋め込む**方針（機械生成の不自然な文章化を避けつつ、更新漏れが起きやすい数値部分だけを一元化する）
 - かなモードの曜日ふりがなは、既存の`formatDateKana()`内の`weekdayKana`対応表（`"日曜日": "にちようび"`等）をモジュールスコープに引き上げて再利用する`kanaForWeekday1Char(char)`ヘルパー経由で参照する。**新しい変換表は作らない**（過去に曜日読み間違いのバグがあったため、対応表を二重管理しない）
 - `setLang()`（言語切り替え時）でも`renderSaleBanner()`を再呼び出しする
+- `scripts/health-check.js`（`WORKER_URL`設定時のE2Eチェック）が`GET /sale-info`の到達性・レスポンス形式をCIで検証する（`/usage`・`/cpu-usage`と同じパターン）
 
 ---
 
@@ -258,7 +260,7 @@ export function _setSaleForTest(sale) { ... } // テスト用
 1. ニュース一覧を`fetchWithRetry()`で取得。失敗時はDiscordに手動確認要の通知を送って終了（KVは更新しない＝翌日また自然にリトライされる）
 2. `extractLatestSaleArticleUrl(html)`（純粋関数）で、一覧中の`/media/journal_*`リンクのうちスラッグに`sale`を含む最初の1件（＝新着順で最初に見つかったセール関連記事）のURLを抽出。見つからなければ通常運用としてログのみで終了
 3. KV（`sale-check:last-notified`）に保存済みのURLと比較。**同一なら即return**（Gemini呼び出しを行わない。大半の日はここで終了しCPU時間はごく僅か）
-4. 新しい記事の場合のみ、記事本文を取得しGeminiへ構造化抽出を依頼（`gemini-2.5-flash-lite`・`responseMimeType: "application/json"`）。対象商品4種それぞれの`included`/`discountYen`をGeminiに判定させる（ステッカー対象外のような過去の判断パターンをプロンプトで委ねる）
+4. 新しい記事の場合のみ、記事本文を取得しGeminiへ構造化抽出を依頼（`responseMimeType: "application/json"`）。対象商品4種それぞれの`included`/`discountYen`をGeminiに判定させる（ステッカー対象外のような過去の判断パターンをプロンプトで委ねる）。**使用モデルは固定文字列で書かず、`worker/index.js`の`selectBestModel()`（export済み）で動的に選択する**（2026-08追加・下記「初回Cron発火で判明した問題」参照）
 5. 抽出結果が`isSale: true`の場合、`buildSaleCandidateMessage()`（純粋関数）でDiscord通知文を組み立てて送信。**Discord通知を先に送り、KVへの「通知済みURL」書き込みはその後**（notify→mark-seenの順）。理由: 途中でCPU時間切れ・強制終了が起きても、KVが未更新なら翌日また同じURLで再試行される自己修復的な設計。逆の順序だと「検知したのに誰にも知らされない」まま次回スキップされてしまう
 6. `isSale: false`と判定された記事（値上げ告知等、セール以外のニュース）もKVに記録し、翌日以降の無駄な再抽出を防ぐ
 
@@ -267,6 +269,15 @@ export function _setSaleForTest(sale) { ... } // テスト用
 - `extractLatestSaleArticleUrl()`・`buildSaleCandidateMessage()`はhandleResearch()と同じ「fetchモック・純粋関数切り出し」パターンでテスト（`scripts/test-bot.mjs`）。`extractLatestSaleArticleUrl()`のテストには実際に取得したニュース一覧HTMLの実データ（記事URLパターン）を使用し、机上の推測パターンでテストしない
 - `worker/sale-check.js`は`worker/index.js`から`recordCpuCheckpoint`・`_deferOrAwait`をimportする（既存の循環import許容パターン）。`notifyDiscord`は`worker/bot.js`が持つため、`worker/index.js`の`scheduled()`から関数として注入する形にし、`sale-check.js`が`bot.js`への新規importを持たないようにしている（循環importを増やさない設計判断）
 - Gemini抽出フェーズ（記事取得〜構造化抽出）の所要時間は`recordCpuCheckpoint("sale-check-extract", ms, env.RATE_KV)`で計測する。この区間はfetch・KV操作というI/Oを挟むため、`performance.now()`の「I/Oがない同期区間では進まない」制約（自動トリミング機能の計測時に判明・`.claude/revision_log.md`の2026-08エントリ参照）には該当せず、ある程度実測可能と見込んでいるが、正確な値になるかは`/cpu-usage`の実測で確認する
+
+### 初回Cron発火で判明した問題（2026-08・修正済み）
+
+デプロイ後の初回Cron発火（`0 16 * * *`）で実際にセール記事（ニンニンSALE）を検知し、Gemini構造化抽出を試みたところ`status=404`で失敗した（Discordに「⚠️ SUZURIセール候補を検知しましたが構造化抽出に失敗しました」の安全な通知が届いた）。`query-worker-logs.mjs`で実ログを確認した結果:
+
+- **フェーズ1（Worker側`fetch()`のsuzuri.jp疎通）は成功と確認できた**（`[sale-check] 新しい記事を検知 url=...`のログが出力されており、ニュース一覧取得〜記事URL抽出〜KV比較までは正常に完走していた）。「suzuri.jpはWAFでWebFetchを403で弾く」という制約はやはりClaude CodeのWebFetchツール固有のものであり、Cloudflare Worker自身の`fetch()`はブロックされないことが実際のCron発火で確定した
+- **実際の失敗原因**: 実装時に固定文字列で書いた`gemini-2.5-flash-lite`が「新規ユーザーには提供終了」というエラーで404になっていた（`.claude/revision_log.md`の2026-08エントリ参照）。`worker/index.js`には既にこの種のモデル廃止に対応する`selectBestModel()`（Discovery API・スコアリング・KV記憶・切替時Discord通知）が存在していたが、実装時に見落として固定文字列を書いてしまっていた
+- **修正**: `selectBestModel()`を`worker/index.js`からexportし、`sale-check.js`の`extractSaleInfoWithGemini()`が固定モデル名の代わりにこれを呼ぶよう変更した。これにより将来同種のモデル廃止が起きても`handleResearch()`と同じ自動フォールバック・Discord通知が働く
+- **設計した安全網が実際に機能した点**: KVへの「通知済みURL」書き込みをDiscord通知の後に行う設計（notify→mark-seenの順）だったため、この404失敗時点ではKVは更新されておらず、翌日以降のCronで同じ記事URLに対して自動的に再試行される状態を保っていた
 
 ---
 
@@ -509,6 +520,13 @@ if (ver) score -= parseInt(ver[1]) * 3 + parseInt(ver[2]);  // 低バージョ�
 - KV操作は`selectBestModel()`内でtry/catchし、失敗してもモデル選択自体はブロックしない
 - 同時並行リクエストで通知が数通重複する可能性がある（画像モデルと同じ設計判断・許容）
 
+**Discovery API呼び出し自体が失敗した場合の最終フォールバック（2026-08修正）:**
+
+`selectBestModel()`はDiscovery API（`GET /models`）へのfetch自体がネットワークエラー・タイムアウト等で失敗した場合、`catch`節で`_modelCache.name ?? FALLBACK_TEXT_MODEL`を返す。KVキャッシュ（1時間TTL）が空のコールドスタート直後にDiscovery API呼び出しが失敗するという稀なケース限定の保険。`_selectFromCandidates([])`（候補が0件の場合）も同じ定数を返す。
+
+- この定数は`FALLBACK_TEXT_MODEL`としてモジュールスコープに切り出し、2箇所で共有する（sale-check.jsのGeminiモデル404障害の調査で、この保険用の値自体も廃止済みモデルを指していたと判明したため。`.claude/revision_log.md`の2026-08エントリ参照）
+- **通常運用ではこの保険には到達しない**（Discovery API呼び出しが成功する限り、動的スコアリングが常に現行モデルから選ぶため、廃止されたモデルが再度選ばれることはない）。この保険はあくまで「動的選択アルゴリズム自体が動かせない」という別の障害モードに対するものであり、次回モデル廃止時に自動更新される仕組みではない点に注意
+
 **`handleResearch()`シグネチャ更新:**
 
 ```js
@@ -578,7 +596,7 @@ Workers KV Free プランは書き込み1日1,000回までという厳しい制�
 
 | 経路 | KV集計 | 理由 |
 | --- | --- | --- |
-| Cron `generateResearchPool()` / `runBot()` | 対象 | 1日2回のみ |
+| Cron `generateResearchPool()` / `runBot()` / `checkForNewSale()` | 対象 | 1日3回のみ（`checkForNewSale()`のGemini抽出自体は新着セール記事検知時のみさらに稀） |
 | `POST /research` / `POST /generate`（`handleResearch()`/`handleGenerate()`内部で計測） | 対象 | 既存レート制限（`/research` 10回/日/IP・`/generate` 3回/日/IP・50回/日グローバル）で書き込み量が有界 |
 | `POST /suzuri-create` | 対象 | 生成1回につき数回程度、同様に有界 |
 | `GET /image/:id`（`getImageFromR2()`） | **対象外**（`console.log`のみ） | レート制限がなく訪問のたびに呼ばれるため、KV書き込みすると1,000回/日の予算を圧迫しうる |

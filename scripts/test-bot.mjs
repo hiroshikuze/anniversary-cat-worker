@@ -21,9 +21,9 @@ import {
   buildSaleReplyTextJa, buildSaleReplyTextBilingual,
 } from "../worker/bot.js";
 import { _setSaleForTest } from "../worker/sale.js";
-import { extractLatestSaleArticleUrl, buildSaleCandidateMessage } from "../worker/sale-check.js";
+import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale } from "../worker/sale-check.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 
@@ -2289,6 +2289,19 @@ console.log("\n[_selectFromCandidates]");
   // 境界値: 候補が空 → フォールバック文字列を返す
   const result = _selectFromCandidates([]);
   assert("候補が空: フォールバック文字列を返す", typeof result === "string" && result.length > 0);
+  assert("候補が空: FALLBACK_TEXT_MODELと一致する", result === FALLBACK_TEXT_MODEL);
+}
+
+{
+  // 境界値: Discovery API呼び出し自体が失敗した場合、selectBestModel()はFALLBACK_TEXT_MODELを返す
+  // （2026-08: この保険用の値もgemini-2.5-flash-liteをハードコードしていたところ、実際に
+  // そのモデルが廃止されていたと判明。revision_log.md参照）
+  _resetModelCacheForTest();
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("network down"); };
+  const result = await selectBestModel("test-key", null, null);
+  globalThis.fetch = origFetch;
+  assert("Discovery API失敗時（キャッシュなし）: FALLBACK_TEXT_MODELを返す", result === FALLBACK_TEXT_MODEL);
 }
 
 {
@@ -4801,6 +4814,112 @@ console.log("\n[extractLatestSaleArticleUrl / buildSaleCandidateMessage]");
   assert("buildSaleCandidateMessage: 対象外商品が明示される", msg.includes("ステッカー 対象外"));
   assert("buildSaleCandidateMessage: 元記事URLが含まれる", msg.includes("https://suzuri.jp/media/journal_ninnin-sale_202608/"));
   assert("buildSaleCandidateMessage: _currentSale更新の案内が含まれる", msg.includes("worker/sale.js"));
+}
+
+// ---------------------------------------------------------------------------
+// checkForNewSale: 統合テスト
+// ---------------------------------------------------------------------------
+// 2026-08にgemini-2.5-flash-liteを固定文字列でハードコードしていたため、実際のCron発火で
+// モデル廃止(404)により抽出が失敗した（revision_log.md参照）。selectBestModel()による動的選択に
+// 修正したため、ここではモデル名を仮定せず「/models?key=」→「:generateContent」の順で
+// 呼ばれることを検証する（handleResearch()のテストと同じパターン）
+console.log("\n[checkForNewSale: 統合テスト]");
+{
+  const NEWS_HTML = `<a class="c_linkto" href="https://suzuri.jp/media/journal_ninnin-sale_202608/">`;
+  const ARTICLE_HTML = "<html><body>ニンニンSALE 開催中 Tシャツ800円引き</body></html>";
+  const GEMINI_SALE_JSON = {
+    isSale: true, saleName: "ニンニンSALE",
+    startDisplay: "2026-08-28 12:00 JST", endDisplay: "2026-09-03 23:59 JST",
+    items: [{ name: "Tシャツ", discountYen: 800, included: true }],
+  };
+
+  function makeFetchMock({ geminiJson = GEMINI_SALE_JSON, geminiStatus = 200 } = {}) {
+    return async (url) => {
+      const u = String(url);
+      if (u.includes("/media/category/news/")) {
+        return { ok: true, text: async () => NEWS_HTML };
+      }
+      if (u.includes("/models?key=")) {
+        // selectBestModel() 用（モデル名を固定せず動的に選択させる）
+        return {
+          ok: true,
+          text: async () => JSON.stringify({
+            models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
+          }),
+        };
+      }
+      if (/:generateContent/.test(u)) {
+        return {
+          ok: geminiStatus < 400,
+          status: geminiStatus,
+          text: async () => JSON.stringify(
+            geminiStatus < 400
+              ? { candidates: [{ content: { parts: [{ text: JSON.stringify(geminiJson) }] } }] }
+              : { error: { message: "not available" } }
+          ),
+        };
+      }
+      if (u.includes("journal_ninnin-sale_202608")) {
+        return { ok: true, text: async () => ARTICLE_HTML };
+      }
+      return { ok: true, text: async () => "{}" };
+    };
+  }
+
+  // ── 正常系: 新しいセール記事を検知→Gemini抽出成功→Discord通知→KV更新 ──
+  {
+    const kv = makeKvMock();
+    let discordMsg = null;
+    const notifyFn = async (webhookUrl, message) => { discordMsg = message; };
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = makeFetchMock();
+    await checkForNewSale({ RATE_KV: kv, GEMINI_API_KEY: "test-key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook" }, null, notifyFn);
+    globalThis.fetch = origFetch;
+
+    assert("動的モデル選択でも記事検知〜Gemini抽出〜Discord通知まで完走する", discordMsg?.includes("ニンニンSALE"));
+    assert("KVに通知済みURLが記録される（notify後に書き込み）",
+      kv.store["sale-check:last-notified"] === "https://suzuri.jp/media/journal_ninnin-sale_202608/");
+  }
+
+  // ── 境界値: 同じ記事URLが既に通知済みの場合は再通知しない ──
+  {
+    const kv = makeKvMock();
+    kv.store["sale-check:last-notified"] = "https://suzuri.jp/media/journal_ninnin-sale_202608/";
+    let notifyCalled = false;
+    const notifyFn = async () => { notifyCalled = true; };
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = makeFetchMock();
+    await checkForNewSale({ RATE_KV: kv, GEMINI_API_KEY: "test-key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook" }, null, notifyFn);
+    globalThis.fetch = origFetch;
+
+    assert("既知の記事URLは再通知しない", !notifyCalled);
+  }
+
+  // ── エラー系: Geminiモデルが404等で失敗した場合は「手動確認要」を通知しKVは更新しない ──
+  {
+    const kv = makeKvMock();
+    let discordMsg = null;
+    const notifyFn = async (webhookUrl, message) => { discordMsg = message; };
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = makeFetchMock({ geminiStatus: 404 });
+    await checkForNewSale({ RATE_KV: kv, GEMINI_API_KEY: "test-key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook" }, null, notifyFn);
+    globalThis.fetch = origFetch;
+
+    assert("Gemini抽出失敗時は手動確認要の通知を送る", discordMsg?.includes("手動確認"));
+    assert("Gemini抽出失敗時はKVを更新しない（翌日再試行される）", kv.store["sale-check:last-notified"] === undefined);
+  }
+
+  // ── エラー系: ニュース一覧取得自体が失敗した場合 ──
+  {
+    let discordMsg = null;
+    const notifyFn = async (webhookUrl, message) => { discordMsg = message; };
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: false, status: 500, text: async () => "error" });
+    await checkForNewSale({ RATE_KV: makeKvMock(), GEMINI_API_KEY: "test-key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook" }, null, notifyFn);
+    globalThis.fetch = origFetch;
+
+    assert("ニュース一覧取得失敗時は手動確認要の通知を送る", discordMsg?.includes("ニュース一覧取得エラー"));
+  }
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
