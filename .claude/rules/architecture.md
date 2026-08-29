@@ -258,7 +258,7 @@ export function _setSaleForTest(sale) { ... } // テスト用
 1. ニュース一覧を`fetchWithRetry()`で取得。失敗時はDiscordに手動確認要の通知を送って終了（KVは更新しない＝翌日また自然にリトライされる）
 2. `extractLatestSaleArticleUrl(html)`（純粋関数）で、一覧中の`/media/journal_*`リンクのうちスラッグに`sale`を含む最初の1件（＝新着順で最初に見つかったセール関連記事）のURLを抽出。見つからなければ通常運用としてログのみで終了
 3. KV（`sale-check:last-notified`）に保存済みのURLと比較。**同一なら即return**（Gemini呼び出しを行わない。大半の日はここで終了しCPU時間はごく僅か）
-4. 新しい記事の場合のみ、記事本文を取得しGeminiへ構造化抽出を依頼（`gemini-2.5-flash-lite`・`responseMimeType: "application/json"`）。対象商品4種それぞれの`included`/`discountYen`をGeminiに判定させる（ステッカー対象外のような過去の判断パターンをプロンプトで委ねる）
+4. 新しい記事の場合のみ、記事本文を取得しGeminiへ構造化抽出を依頼（`responseMimeType: "application/json"`）。対象商品4種それぞれの`included`/`discountYen`をGeminiに判定させる（ステッカー対象外のような過去の判断パターンをプロンプトで委ねる）。**使用モデルは固定文字列で書かず、`worker/index.js`の`selectBestModel()`（export済み）で動的に選択する**（2026-08追加・下記「初回Cron発火で判明した問題」参照）
 5. 抽出結果が`isSale: true`の場合、`buildSaleCandidateMessage()`（純粋関数）でDiscord通知文を組み立てて送信。**Discord通知を先に送り、KVへの「通知済みURL」書き込みはその後**（notify→mark-seenの順）。理由: 途中でCPU時間切れ・強制終了が起きても、KVが未更新なら翌日また同じURLで再試行される自己修復的な設計。逆の順序だと「検知したのに誰にも知らされない」まま次回スキップされてしまう
 6. `isSale: false`と判定された記事（値上げ告知等、セール以外のニュース）もKVに記録し、翌日以降の無駄な再抽出を防ぐ
 
@@ -267,6 +267,15 @@ export function _setSaleForTest(sale) { ... } // テスト用
 - `extractLatestSaleArticleUrl()`・`buildSaleCandidateMessage()`はhandleResearch()と同じ「fetchモック・純粋関数切り出し」パターンでテスト（`scripts/test-bot.mjs`）。`extractLatestSaleArticleUrl()`のテストには実際に取得したニュース一覧HTMLの実データ（記事URLパターン）を使用し、机上の推測パターンでテストしない
 - `worker/sale-check.js`は`worker/index.js`から`recordCpuCheckpoint`・`_deferOrAwait`をimportする（既存の循環import許容パターン）。`notifyDiscord`は`worker/bot.js`が持つため、`worker/index.js`の`scheduled()`から関数として注入する形にし、`sale-check.js`が`bot.js`への新規importを持たないようにしている（循環importを増やさない設計判断）
 - Gemini抽出フェーズ（記事取得〜構造化抽出）の所要時間は`recordCpuCheckpoint("sale-check-extract", ms, env.RATE_KV)`で計測する。この区間はfetch・KV操作というI/Oを挟むため、`performance.now()`の「I/Oがない同期区間では進まない」制約（自動トリミング機能の計測時に判明・`.claude/revision_log.md`の2026-08エントリ参照）には該当せず、ある程度実測可能と見込んでいるが、正確な値になるかは`/cpu-usage`の実測で確認する
+
+### 初回Cron発火で判明した問題（2026-08・修正済み）
+
+デプロイ後の初回Cron発火（`0 16 * * *`）で実際にセール記事（ニンニンSALE）を検知し、Gemini構造化抽出を試みたところ`status=404`で失敗した（Discordに「⚠️ SUZURIセール候補を検知しましたが構造化抽出に失敗しました」の安全な通知が届いた）。`query-worker-logs.mjs`で実ログを確認した結果:
+
+- **フェーズ1（Worker側`fetch()`のsuzuri.jp疎通）は成功と確認できた**（`[sale-check] 新しい記事を検知 url=...`のログが出力されており、ニュース一覧取得〜記事URL抽出〜KV比較までは正常に完走していた）。「suzuri.jpはWAFでWebFetchを403で弾く」という制約はやはりClaude CodeのWebFetchツール固有のものであり、Cloudflare Worker自身の`fetch()`はブロックされないことが実際のCron発火で確定した
+- **実際の失敗原因**: 実装時に固定文字列で書いた`gemini-2.5-flash-lite`が「新規ユーザーには提供終了」というエラーで404になっていた（`.claude/revision_log.md`の2026-08エントリ参照）。`worker/index.js`には既にこの種のモデル廃止に対応する`selectBestModel()`（Discovery API・スコアリング・KV記憶・切替時Discord通知）が存在していたが、実装時に見落として固定文字列を書いてしまっていた
+- **修正**: `selectBestModel()`を`worker/index.js`からexportし、`sale-check.js`の`extractSaleInfoWithGemini()`が固定モデル名の代わりにこれを呼ぶよう変更した。これにより将来同種のモデル廃止が起きても`handleResearch()`と同じ自動フォールバック・Discord通知が働く
+- **設計した安全網が実際に機能した点**: KVへの「通知済みURL」書き込みをDiscord通知の後に行う設計（notify→mark-seenの順）だったため、この404失敗時点ではKVは更新されておらず、翌日以降のCronで同じ記事URLに対して自動的に再試行される状態を保っていた
 
 ---
 

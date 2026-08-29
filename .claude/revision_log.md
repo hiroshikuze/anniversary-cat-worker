@@ -476,6 +476,14 @@
 - **教訓**: Cloudflare Workers上で`performance.now()`によるCPU時間計測を新規に設計する際は、計測対象区間に「I/Oを一切含まない完全に同期的な処理」が含まれる場合、その区間の計測値は原理的に信用できない（常に0または不正確）。事前に公式ドキュメントでこのタイマー仕様を確認してから計測方針を立てるべきだった。この種の処理（WASM画像処理等）の実CPUコストを知りたい場合は、Cloudflareダッシュボードの分析画面（アカウント所有者のみ閲覧可能）等、JSコードから観測できない経路での確認が必要
 - **現状**: 本件はユーザーの指示により保留中。`generate-autoCrop`の実CPUコストは未確認のまま、`/generate`限定・`runBot()`未適用のロールアウト状態を維持している
 
+### 2026-08 | sale-check.jsに固定Geminiモデル名をハードコードし、初回Cron発火で即404になった
+
+- **状況**: SUZURIセール自動検知Cron（`worker/sale-check.js`）の実装時、Gemini構造化抽出に使うモデルを`gemini-2.5-flash-lite`と直書きした。デプロイ後、初回のCron発火（`0 16 * * *`）で実際にセール記事を検知し、Gemini抽出を試みたところ`status=404 message=This model models/gemini-2.5-flash-lite is no longer available to new users.`でエラーになり、Discordに「構造化抽出に失敗しました」の通知が届いた
+- **原因**: `worker/index.js`にはこの問題（Geminiモデルの廃止）に対応するための`selectBestModel()`（Discovery APIでモデル一覧を取得しスコアリング・KV記憶・切替時Discord通知まで行う既存機構）が既に存在するにもかかわらず、新規実装時にそれを使わず固定文字列を書いてしまった。`architecture.md`の「Geminiモデル管理」セクションを実装前に読み返していれば防げた
+- **気づいた経緯**: フェーズ1（Worker側`fetch()`のsuzuri.jp疎通）が未検証だったため、実際にCronが発火するまで様子を見る設計にしていた。初回発火時のDiscord通知（設計通り「構造化抽出に失敗しました」という安全なフォールバック通知）でユーザーから報告を受け、`query-worker-logs.mjs`で実際のログを確認して原因を特定した。設計した安全網（失敗時にDiscord通知のみでKVは更新しない＝自己修復的リトライ）が実際に機能し、実害（誤情報の反映等）はなかった
+- **修正**: `selectBestModel()`を`worker/index.js`からexportし、`sale-check.js`が固定モデル名の代わりにこれを呼ぶよう変更。これにより将来同種のモデル廃止が起きても自動的にフォールバック・Discord通知される
+- **教訓**: 新しい箇所でGemini APIを呼ぶ実装を追加する際は、モデル名を固定文字列で書く前に、既存の`selectBestModel()`（テキスト用）・`_resolveImageModel()`（画像用）が使えないか必ず確認する。「動かしてみてから直す」という設計（Part Cのフェーズ1検証待ちの姿勢）自体は妥当だったが、その中でも防げたはずの初歩的な既存機構の見落としだった
+
 ```text
 ### YYYY-MM | タイトル
 - **状況**: 何をしようとしていたか

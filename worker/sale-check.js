@@ -9,7 +9,7 @@
  */
 
 import { fetchWithRetry } from "./http-utils.js";
-import { recordCpuCheckpoint, _deferOrAwait } from "./index.js";
+import { recordCpuCheckpoint, _deferOrAwait, selectBestModel } from "./index.js";
 
 const NEWS_URL             = "https://suzuri.jp/media/category/news/";
 const LAST_NOTIFIED_KV_KEY = "sale-check:last-notified";
@@ -49,10 +49,16 @@ function buildSaleExtractPrompt(articleText) {
 ${(articleText ?? "").slice(0, 8000)}`;
 }
 
-/** Geminiで記事本文からセール情報を構造化抽出する（handleResearch()と同じres.text()+JSON.parse()パターン） */
-async function extractSaleInfoWithGemini(articleText, apiKey) {
+/**
+ * Geminiで記事本文からセール情報を構造化抽出する（handleResearch()と同じres.text()+JSON.parse()パターン）。
+ * モデル名は固定文字列で書かず、worker/index.jsのselectBestModel()で動的に選択する
+ * （2026-08: gemini-2.5-flash-liteを固定文字列で書いていたところ、初回Cron発火時にモデル廃止(404)で
+ * 抽出が失敗した。revision_log.md参照）。
+ */
+async function extractSaleInfoWithGemini(articleText, apiKey, kv, webhookUrl) {
+  const model = await selectBestModel(apiKey, kv, webhookUrl);
   const res = await fetchWithRetry(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
     {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
@@ -157,7 +163,7 @@ export async function checkForNewSale(env, ctx, notifyFn) {
     const res = await fetchWithRetry(articleUrl, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) throw new Error(`status=${res.status}`);
     const articleHtml = await res.text();
-    saleInfo = await extractSaleInfoWithGemini(htmlToPlainText(articleHtml), env.GEMINI_API_KEY);
+    saleInfo = await extractSaleInfoWithGemini(htmlToPlainText(articleHtml), env.GEMINI_API_KEY, kv, env.DISCORD_WEBHOOK_URL);
   } catch (e) {
     console.warn(`[sale-check] 記事取得・Gemini抽出失敗: ${e.message}`);
     await notifyFn?.(

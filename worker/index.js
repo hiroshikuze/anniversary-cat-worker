@@ -101,7 +101,7 @@ export function _selectFromCandidates(shortNames) {
   return scored[0]?.name ?? "gemini-2.5-flash-lite";
 }
 
-async function selectBestModel(apiKey, kv = null, webhookUrl = null) {
+export async function selectBestModel(apiKey, kv = null, webhookUrl = null) {
   const now = Date.now();
   if (_modelCache.name && now < _modelCache.expiry) {
     return _modelCache.name;
