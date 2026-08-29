@@ -520,6 +520,13 @@ if (ver) score -= parseInt(ver[1]) * 3 + parseInt(ver[2]);  // 低バージョ�
 - KV操作は`selectBestModel()`内でtry/catchし、失敗してもモデル選択自体はブロックしない
 - 同時並行リクエストで通知が数通重複する可能性がある（画像モデルと同じ設計判断・許容）
 
+**Discovery API呼び出し自体が失敗した場合の最終フォールバック（2026-08修正）:**
+
+`selectBestModel()`はDiscovery API（`GET /models`）へのfetch自体がネットワークエラー・タイムアウト等で失敗した場合、`catch`節で`_modelCache.name ?? FALLBACK_TEXT_MODEL`を返す。KVキャッシュ（1時間TTL）が空のコールドスタート直後にDiscovery API呼び出しが失敗するという稀なケース限定の保険。`_selectFromCandidates([])`（候補が0件の場合）も同じ定数を返す。
+
+- この定数は`FALLBACK_TEXT_MODEL`としてモジュールスコープに切り出し、2箇所で共有する（sale-check.jsのGeminiモデル404障害の調査で、この保険用の値自体も廃止済みモデルを指していたと判明したため。`.claude/revision_log.md`の2026-08エントリ参照）
+- **通常運用ではこの保険には到達しない**（Discovery API呼び出しが成功する限り、動的スコアリングが常に現行モデルから選ぶため、廃止されたモデルが再度選ばれることはない）。この保険はあくまで「動的選択アルゴリズム自体が動かせない」という別の障害モードに対するものであり、次回モデル廃止時に自動更新される仕組みではない点に注意
+
 **`handleResearch()`シグネチャ更新:**
 
 ```js

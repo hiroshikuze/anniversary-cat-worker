@@ -23,7 +23,7 @@ import {
 import { _setSaleForTest } from "../worker/sale.js";
 import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale } from "../worker/sale-check.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 
@@ -2289,6 +2289,19 @@ console.log("\n[_selectFromCandidates]");
   // 境界値: 候補が空 → フォールバック文字列を返す
   const result = _selectFromCandidates([]);
   assert("候補が空: フォールバック文字列を返す", typeof result === "string" && result.length > 0);
+  assert("候補が空: FALLBACK_TEXT_MODELと一致する", result === FALLBACK_TEXT_MODEL);
+}
+
+{
+  // 境界値: Discovery API呼び出し自体が失敗した場合、selectBestModel()はFALLBACK_TEXT_MODELを返す
+  // （2026-08: この保険用の値もgemini-2.5-flash-liteをハードコードしていたところ、実際に
+  // そのモデルが廃止されていたと判明。revision_log.md参照）
+  _resetModelCacheForTest();
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("network down"); };
+  const result = await selectBestModel("test-key", null, null);
+  globalThis.fetch = origFetch;
+  assert("Discovery API失敗時（キャッシュなし）: FALLBACK_TEXT_MODELを返す", result === FALLBACK_TEXT_MODEL);
 }
 
 {

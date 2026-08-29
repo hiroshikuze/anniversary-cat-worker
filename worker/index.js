@@ -80,6 +80,17 @@ let _modelCache = { name: null, expiry: 0 };
 // RATE_KV内のキー。テキスト生成で現在有効なモデル名を記憶する（TTLなし）
 const TEXT_MODEL_KV_KEY = "text-model:active";
 
+// Discovery API呼び出し自体が失敗した場合の最終フォールバック（2026-08: gemini-2.5-flash-liteを
+// 2箇所にハードコードしていたところ、そのモデル自体が廃止されていたと判明したため定数化・一元化した。
+// 通常運用ではDiscovery APIが応答する限りこの値は使われない（動的スコアリングが常に現行モデルを選ぶ）。
+// architecture.mdの「Discovery API呼び出し自体が失敗した場合の最終フォールバック」参照
+export const FALLBACK_TEXT_MODEL = "gemini-2.5-flash";
+
+/** テスト用: モデルキャッシュをリセットする（selectBestModel()のDiscovery API失敗時フォールバックのテスト用） */
+export function _resetModelCacheForTest() {
+  _modelCache = { name: null, expiry: 0 };
+}
+
 /**
  * APIが返すモデル名の配列からコスト最適なモデルを選ぶ純粋関数（テスト可能）。
  * スコアリング哲学: このアプリの研究タスクは高度な推論不要 → コスト最小化優先。
@@ -98,7 +109,7 @@ export function _selectFromCandidates(shortNames) {
     return { name, score };
   });
   scored.sort((a, b) => b.score - a.score);
-  return scored[0]?.name ?? "gemini-2.5-flash-lite";
+  return scored[0]?.name ?? FALLBACK_TEXT_MODEL;
 }
 
 export async function selectBestModel(apiKey, kv = null, webhookUrl = null) {
@@ -168,7 +179,7 @@ export async function selectBestModel(apiKey, kv = null, webhookUrl = null) {
     return selected;
   } catch (e) {
     console.warn("[model-select] fallback due to:", e.message);
-    return _modelCache.name ?? "gemini-2.5-flash-lite";
+    return _modelCache.name ?? FALLBACK_TEXT_MODEL;
   }
 }
 
