@@ -656,6 +656,28 @@ Do not render the scene as if painted, printed, or mounted on a plate, dish, fan
 - `_buildPollinationsPrompt()`: keyword列挙形式のため、`parts`配列の末尾（`"pastel colors, white background"`の後）に`"full frame composition, minimal empty space"`を追加。フルセンテンスではなくキーワードで同じ意図を伝える
 - **効果は未確定な部分あり**: ユーザーの手動テスト（無料版Gemini・象の日テーマ）では「完璧ではないが前より余白が減った」という結果。プロンプトのみでの完全解決は保証されない。2026-08時点でBot投稿（`bot/2026-08-26`）で再び余白過多が確認され、プロンプト指示だけでは不安定と判明した
 
+### 猫以外への顔・擬人化の禁止（Bug#33・2026-09追加）
+
+**背景**: 「草の日」テーマの生成画像で、メインの猫（白いラグドール）とは別に、草むらの中に猫の顔がもう1つ描かれる事象が発生した。実際のプロンプトを確認したところ、`visualHint`が`cute green cat, lush grass field, tiny wildflowers, sunny morning, soft fur, playful expression`となっており、先頭の主役名詞がGeminiによって「草」を擬人化した「かわいい緑の猫」になっていた。2026-07の既知の未対応バグ（「visualHintで食材が主役名詞になると猫の絵に直接合成されて不気味になる」＝半夏生でタコの足が猫に生えた件）と同じ原因の類型で、対象が食材から植物に広がったケース。
+
+Bug#27（丸皿画像・原因未確定）と同じ考え方で、**原因が確定していても効果を確実にするため、対症療法（常時ネガティブ指示）を主策、根本原因への対処（visualHint生成プロンプトの調整）を補助策として両方実施**した。
+
+**主策: 常時ネガティブ指示（`_buildGeminiPrompt()`）**
+
+従来`eatingAction`が真のときのみ付与していた「食べ物には顔をつけない」指示を、常時・全要素対象に汎用化した。
+
+```text
+Only the cat(s) described above should have a face, eyes, or expression. Do not depict grass, plants, flowers, food, or any other scenery element with a face, eyes, or anthropomorphized expression.
+```
+
+- 末尾のネガティブ指示群（Bug#27の丸皿・円形フレーム禁止、余白禁止に続く）に追加し、`eatingAction`の有無にかかわらず常に含まれる
+- 旧来の`eatingAction`専用文言（`Only the cat has a face and expressions; all food items must be depicted as ordinary objects without faces or eyes.`）はこの汎用指示に統合し廃止（重複指示を避けるため）
+- `_buildPollinationsPrompt()`はkeyword列挙形式のため、`parts`配列末尾に`"only the cat has a face, no faces on other objects"`を追加
+
+**補助策: visualHint生成プロンプトの調整（`handleResearch()`）**
+
+主役名詞の抽出指示に「テーマ自体を動物・猫として擬人化しない」旨の制約を追加（詳細は下記「visualHintの役割」参照）。
+
 ### 生成後の自動トリミング（コード側補正・2026-08追加・計測フェーズ）
 
 プロンプト指示が不安定なため、Photon（WASM画像処理ライブラリ、`worker/bot.js`の`shrinkImageIfNeeded()`ですでに使用）でコード側から余白を検出・トリミングする機能を追加した。
@@ -713,9 +735,13 @@ Do not render the scene as if painted, printed, or mounted on a plate, dish, fan
 ```text
 今日の記念日テーマから主役となる名詞（動物・物・人物）を1〜2語で先頭に抽出し、
 続いて関連する背景・小物・雰囲気を3〜6語で続ける。ASCII英語、計5〜8語。
+主役名詞はテーマそのものの実際の姿で表現し、テーマを猫や他の動物に擬人化しない
+（例: 「草の日」→ 草はそのまま "grass" と表現し、"green cat" のような猫化はしない）。
 例: 図書館記念日 → library books, warm reading nook, wooden bookshelves, soft lamplight
 例: 象の日 → large friendly elephant, Kyoto imperial garden, pine trees, stone lanterns
 ```
+
+**Bug#33（2026-09追加）**: 上記「テーマを猫や他の動物に擬人化しない」制約を追加。「草の日」でGeminiが草を「かわいい緑の猫」として擬人化し、画像内にメインの猫とは別の猫顔が描画される事象への対処（詳細は上記「猫以外への顔・擬人化の禁止」参照）。
 
 **Pollinationsでのvisualの使い方（安全網ロジック）:**
 

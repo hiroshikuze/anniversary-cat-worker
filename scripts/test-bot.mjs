@@ -2944,6 +2944,32 @@ console.log("\n[handleResearch: kanjiChar正規化]");
   globalThis.fetch = origFetch;
 }
 
+// handleResearch: visualHint生成指示に「テーマを猫や他の動物に擬人化しない」制約が含まれる（Bug#33）
+console.log("\n[handleResearch: visualHint生成プロンプトの擬人化禁止制約]");
+{
+  const origFetch = globalThis.fetch;
+  let capturedPrompt;
+
+  globalThis.fetch = async (url, opts) => {
+    capturedPrompt = JSON.parse(opts.body).contents[0].parts[0].text;
+    return new Response(JSON.stringify({
+      candidates: [{
+        content: { parts: [{ text: JSON.stringify({
+          theme: "草の日", description: "説明", visualHint: "grass field, wildflowers",
+          foodItem: null, kanjiChar: null, sourceUrl: "https://example.com",
+        })}] },
+        groundingMetadata: {},
+      }],
+    }), { status: 200 });
+  };
+
+  await handleResearch({ date: "4月19日" }, "dummy-key");
+  assert("visualHint生成指示に擬人化禁止の制約が含まれる",
+    capturedPrompt.includes("テーマを猫や他の動物に擬人化しない"));
+
+  globalThis.fetch = origFetch;
+}
+
 // ---------------------------------------------------------------------------
 // 【回帰】runBot - R2メタに kanjiChar が保存される
 // ボット画像の初回訪問者がSUZURI登録する際に漢字が🐾にならないための保証
@@ -3861,8 +3887,25 @@ console.log("\n[_buildGeminiPrompt]");
     assert("personalityが含まれる", prompt.includes("Cat personality and pose: curious wide-eyed pose."));
     assert("emotionが含まれる", prompt.includes("Cat facial expression and emotion: eyes wide with surprise."));
     assert("eatingActionが含まれる", prompt.includes("Cat action: nibbling a treat."));
-    assert("eatingAction時はfood items無表情指示が付く", prompt.includes("food items must be depicted as ordinary objects"));
     assert("guestが含まれる", prompt.includes("Guest animal in the scene: a small fluffy dog."));
+  }
+
+  // ── 回帰: Bug#33（草の日で草が猫に擬人化され2匹目の猫顔が出現）。
+  //    猫以外への顔・擬人化禁止の常時ネガティブ指示はeatingActionの有無にかかわらず含まれる ──
+  {
+    const withEatingAction = _buildGeminiPrompt(
+      "ねこの日", "猫を愛でる日", null, null, null, null, "nibbling a treat"
+    );
+    assert("eatingActionありでも常時ネガティブ指示が含まれる",
+      withEatingAction.includes("Only the cat(s) described above should have a face, eyes, or expression"));
+    assert("旧来のfood items専用文言は統合済み・重複しない",
+      !withEatingAction.includes("all food items must be depicted as ordinary objects without faces or eyes"));
+
+    const withoutEatingAction = _buildGeminiPrompt("草の日", "草を楽しむ日", null, null, "lush grass field, tiny wildflowers");
+    assert("eatingActionなしでも常時ネガティブ指示が含まれる（Bug#33の再発防止）",
+      withoutEatingAction.includes("Only the cat(s) described above should have a face, eyes, or expression"));
+    assert("草・植物への顔禁止が明記される",
+      withoutEatingAction.includes("Do not depict grass, plants, flowers, food, or any other scenery element with a face, eyes, or anthropomorphized expression."));
   }
 
   // ── 境界値: theme/description以外すべてnull・空文字でもクラッシュしない ──
@@ -3986,6 +4029,16 @@ console.log("\n[_buildPollinationsPrompt: themeEn/visualHint先頭]");
     const prompt = _buildPollinationsPrompt("ねこの日", "猫を愛でる日", persona, personality);
     assert("full frame compositionキーワードが含まれる", prompt.includes("full frame composition, minimal empty space"));
     assert("white backgroundの後に続く", prompt.indexOf("pastel colors, white background") < prompt.indexOf("full frame composition"));
+  }
+
+  // ── 回帰: Bug#33（草が猫に擬人化され2匹目の猫顔が出現）。
+  //    猫以外への顔禁止キーワードがeatingAction有無にかかわらず常に含まれる ──
+  {
+    const withEatingAction = _buildPollinationsPrompt("ねこの日", "猫を愛でる日", persona, personality, null, null, "nibbling a treat");
+    assert("eatingActionありでも顔禁止キーワードが含まれる", withEatingAction.includes("only the cat has a face, no faces on other objects"));
+
+    const withoutEatingAction = _buildPollinationsPrompt("草の日", "草を楽しむ日", persona, personality, "lush grass field, tiny wildflowers");
+    assert("eatingActionなしでも顔禁止キーワードが含まれる（Bug#33の再発防止）", withoutEatingAction.includes("only the cat has a face, no faces on other objects"));
   }
 }
 

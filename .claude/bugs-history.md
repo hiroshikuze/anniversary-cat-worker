@@ -336,4 +336,16 @@
   - **自己招入したレースコンディション・テストで検出（同日）**: `generate-jsonParse`追加実装時、`recordCpuCheckpoint("generate", ...)`と`recordCpuCheckpoint("generate-jsonParse", ...)`の2つのPromiseを先に生成してから並行して`_deferOrAwait()`に渡す設計にしたところ、両者が同じKVキー（`cpu-time:YYYY-MM-DD`）へ並行してGET→PUTする形になり、read-modify-writeが競合して一方の更新が失われるバグを自ら作り込んでいた。事前に追加していたテスト（`ctxなし: 応答が返るまでにcpu-time KVへ書き込まれている`）がこれを即座に検出した。修正は、同じKVキーに書き込む2つのチェックポイントを1つの非同期関数にまとめて内部で直列に`await`し、`ctx.waitUntil()`/`_deferOrAwait()`には単一のPromiseとして渡す形にした（`usagePromise`は別キー`usage:YYYY-MM-DD`のため引き続き並行実行してよい）
   - **教訓（同じKVキーへの並行書き込み）**: 「Promiseを先に生成してから並行実行する」という最適化パターン（`usagePromise`/`cpuPromise`を先に作ってから`_deferOrAwait()`に渡す設計）は、書き込み先のKVキーが異なる場合にのみ安全。同じ日次ドキュメント（`usage:YYYY-MM-DD`・`cpu-time:YYYY-MM-DD`等）に対して複数のステップを記録する箇所を追加する際は、既存の書き込みと同じキーを共有していないか必ず確認し、共有する場合は直列化する
 
+### 33. visualHintの主役名詞がテーマを猫に擬人化し画像内に2匹目の猫顔が出現（2026-09）
+
+- **症状**: 「草の日」テーマの生成画像で、メインの猫（白いラグドール）とは別に、草むらの中に猫の顔がもう1つ描かれているとユーザーから報告。生成に使われた実際のプロンプトも合わせて共有された
+- **原因**: `handleResearch()`のvisualHint生成指示「主役となる名詞（動物・物・人物）を1〜2語で先頭に抽出」に従い、Geminiが「草」というテーマ自体を擬人化して`cute green cat`という主役名詞を選んでいた。`_buildGeminiPrompt()`のSetting行にそのまま挿入されるため、画像生成モデルが「猫を含むシーンに、さらにもう1匹の緑の猫」を描画してしまう。2026-07に未対応のまま残っていたバグ（食材が主役名詞になり猫に合成される＝半夏生でタコの足が生えた件・`.claude/rules/architecture.md`参照）と同じ原因の類型で、対象が食材から植物に広がったケース
+- **修正**: Bug#27（丸皿画像）と同じ「原因が確定していても対症療法を主策・原因対処を補助策とする」方針で両方実施
+  1. **主策**: `_buildGeminiPrompt()`の末尾ネガティブ指示群に`Only the cat(s) described above should have a face, eyes, or expression. Do not depict grass, plants, flowers, food, or any other scenery element with a face, eyes, or anthropomorphized expression.`を常時追加。従来`eatingAction`が真のときのみ付与していた食べ物専用の同種指示はこれに統合・廃止した（重複防止）。`_buildPollinationsPrompt()`にも同趣旨のキーワード`only the cat has a face, no faces on other objects`を追加
+  2. **補助策**: `handleResearch()`のvisualHint生成指示に「主役名詞はテーマそのものの実際の姿で表現し、テーマを猫や他の動物に擬人化しない」制約を追加
+- **副次的な確認事項**: ユーザーが同時に指摘した「Discord通知のプロンプト表示が途中で途切れる」件は、`notifyDiscord()`の2,000文字上限による表示上の切り詰め（既存仕様どおり）であり、実際にGemini APIへ送信されるプロンプト自体は途切れていないことを確認した
+- **テスト**: `scripts/test-bot.mjs`の`_buildGeminiPrompt`テスト群に、常時ネガティブ指示（猫以外への顔禁止）が`eatingAction`の有無にかかわらず含まれることの回帰テストを追加。`_buildPollinationsPrompt`にも同趣旨のキーワードが含まれることを確認するテストを追加
+- **場所**: `worker/index.js` `_buildGeminiPrompt()` `_buildPollinationsPrompt()` `handleResearch()`（visualHint生成プロンプト文言）
+- **教訓**: 2026-07に「設計の影響範囲が広いため別セッションで判断」として先送りしたバグは、症状の対象（食材→植物）を変えて再発した。visualHintの主役名詞抽出という設計そのものが「テーマを動物・人物として表現する」ことを許容している限り、対象を変えた再発は今後も起こりうる。先送りしたバグはドキュメントに記録するだけでなく、根本にある設計判断（主役名詞に動物・人物も許可する）自体が抱えるリスクとして次回発生時にすぐ参照できる形にしておく
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
