@@ -656,6 +656,28 @@ Do not render the scene as if painted, printed, or mounted on a plate, dish, fan
 - `_buildPollinationsPrompt()`: keyword列挙形式のため、`parts`配列の末尾（`"pastel colors, white background"`の後）に`"full frame composition, minimal empty space"`を追加。フルセンテンスではなくキーワードで同じ意図を伝える
 - **効果は未確定な部分あり**: ユーザーの手動テスト（無料版Gemini・象の日テーマ）では「完璧ではないが前より余白が減った」という結果。プロンプトのみでの完全解決は保証されない。2026-08時点でBot投稿（`bot/2026-08-26`）で再び余白過多が確認され、プロンプト指示だけでは不安定と判明した
 
+### 猫以外への顔・擬人化の禁止（Bug#33・2026-09追加）
+
+**背景**: 「草の日」テーマの生成画像で、メインの猫（白いラグドール）とは別に、草むらの中に猫の顔がもう1つ描かれる事象が発生した。実際のプロンプトを確認したところ、`visualHint`が`cute green cat, lush grass field, tiny wildflowers, sunny morning, soft fur, playful expression`となっており、先頭の主役名詞がGeminiによって「草」を擬人化した「かわいい緑の猫」になっていた。2026-07の既知の未対応バグ（「visualHintで食材が主役名詞になると猫の絵に直接合成されて不気味になる」＝半夏生でタコの足が猫に生えた件）と同じ原因の類型で、対象が食材から植物に広がったケース。
+
+Bug#27（丸皿画像・原因未確定）と同じ考え方で、**原因が確定していても効果を確実にするため、対症療法（常時ネガティブ指示）を主策、根本原因への対処（visualHint生成プロンプトの調整）を補助策として両方実施**した。
+
+**主策: 常時ネガティブ指示（`_buildGeminiPrompt()`）**
+
+従来`eatingAction`が真のときのみ付与していた「食べ物には顔をつけない」指示を、常時・全要素対象に汎用化した。
+
+```text
+Only the cat(s) described above should have a face, eyes, or expression. Do not depict grass, plants, flowers, food, or any other scenery element with a face, eyes, or anthropomorphized expression.
+```
+
+- 末尾のネガティブ指示群（Bug#27の丸皿・円形フレーム禁止、余白禁止に続く）に追加し、`eatingAction`の有無にかかわらず常に含まれる
+- 旧来の`eatingAction`専用文言（`Only the cat has a face and expressions; all food items must be depicted as ordinary objects without faces or eyes.`）はこの汎用指示に統合し廃止（重複指示を避けるため）
+- `_buildPollinationsPrompt()`はkeyword列挙形式のため、`parts`配列末尾に`"only the cat has a face, no faces on other objects"`を追加
+
+**補助策: visualHint生成プロンプトの調整（`handleResearch()`）**
+
+主役名詞の抽出指示に「テーマ自体を動物・猫として擬人化しない」旨の制約を追加（詳細は下記「visualHintの役割」参照）。
+
 ### 生成後の自動トリミング（コード側補正・2026-08追加・計測フェーズ）
 
 プロンプト指示が不安定なため、Photon（WASM画像処理ライブラリ、`worker/bot.js`の`shrinkImageIfNeeded()`ですでに使用）でコード側から余白を検出・トリミングする機能を追加した。
@@ -682,9 +704,11 @@ Do not render the scene as if painted, printed, or mounted on a plate, dish, fan
 
 余白検出のJSスキャン自体は想定通り軽量（1ms未満）だが、**Photonネイティブのcrop/エンコード処理自体が支配的コスト**であることが判明。`shrinkImageIfNeeded()`（Bluesky上限超過時のみ発動する条件付き処理）と異なり、この処理は生成のたびに無条件で発生するため、Workers Freeプランの公式CPU上限（10ms/リクエスト）は大きく超過する。Bug#32で観測された非公式な猶予（243〜297ms）の範囲内ではあるが、その猶予自体が2026-08に一度枯渇して障害化した経緯があるため、無条件に本番投入するのは危険と判断した。
 
-**ロールアウト方針（2026-08時点）**: リスクを抑えるため、**まず`/generate`（ユーザー生成・レート制限あり: IP 3回/日・グローバル50回/日）のみ**に適用し、`runBot()`（平日Cron・1日1回・失敗時のリカバリー手段なし）には組み込まない。`recordCpuCheckpoint("generate-autoCrop", ms, env.RATE_KV)`で実際のCloudflare Workers（`workerd`）上のCPU時間を`/cpu-usage`から確認し、安全と判断できてから`runBot()`への適用を検討する（Node.js計測はあくまで目安で、実際のWorkersランタイムとは特性が異なる可能性がある）。
+**ロールアウト方針（2026-08時点）**: リスクを抑えるため、**まず`/generate`（ユーザー生成・レート制限あり: IP 3回/日・グローバル50回/日）のみ**に適用し、`runBot()`（平日Cron・1日1回・失敗時のリカバリー手段なし）には組み込まない。`recordCpuCheckpoint("generate-autoCrop", ms, env.RATE_KV)`で実際のCloudflare Workers（`workerd`）上のCPU時間を`/cpu-usage`から確認し、安全と判断できてから`runBot()`への適用を検討する（Node.js計測はあくまで目安で、実際のWorkersランタイムとは特性が異なる可能性がある）。**2026-09に`runBot()`へも適用済み（下記「`runBot()`への適用」参照）。**
 
-**CPU計測は機能しないことが判明（2026-08・保留中）**: 実際に`/generate`を実行し`/cpu-usage`を確認したところ、`generate-autoCrop`は常に`0.0ms`だった（エラーなし・機能自体は正常動作）。原因はCloudflare Workersの仕様で、`performance.now()`は**I/Oが発生したときしか進まない**（Spectre対策。[公式ドキュメント](https://developers.cloudflare.com/workers/runtime-apis/performance/)で確認済み）ため。`autoCropImage()`はPhotonのデコード・縮小・crop・エンコードがすべて同期処理でI/Oを挟まず、区間内で`performance.now()`が一切進まないため差分が原理的に常に0になる。`recordCpuCheckpoint()`ベースの計測はこの種の純粋同期処理には使えないと判明した。実CPUコストの確認にはCloudflareダッシュボードの分析画面（アカウント所有者のみ閲覧可能）等、JSコードから観測できない経路が必要。ユーザー指示により本件は保留中（`/generate`限定・`runBot()`未適用のロールアウト状態を維持）。詳細は`.claude/revision_log.md`の2026-08エントリ参照
+**CPU計測は機能しないことが判明（2026-08）**: 実際に`/generate`を実行し`/cpu-usage`を確認したところ、`generate-autoCrop`は常に`0.0ms`だった（エラーなし・機能自体は正常動作）。原因はCloudflare Workersの仕様で、`performance.now()`は**I/Oが発生したときしか進まない**（Spectre対策。[公式ドキュメント](https://developers.cloudflare.com/workers/runtime-apis/performance/)で確認済み）ため。`autoCropImage()`はPhotonのデコード・縮小・crop・エンコードがすべて同期処理でI/Oを挟まず、区間内で`performance.now()`が一切進まないため差分が原理的に常に0になる。`recordCpuCheckpoint()`ベースの計測はこの種の純粋同期処理には使えないと判明した。実CPUコストの確認にはCloudflareダッシュボードの分析画面（アカウント所有者のみ閲覧可能）等、JSコードから観測できない経路が必要。詳細は`.claude/revision_log.md`の2026-08エントリ参照
+
+**`runBot()`への適用（2026-09追加）**: CPU実測は上記の理由で未確認のままだったが、実際の本番投稿画像（`bot/2026-09-03`）に対して`_detectCropBox()`を実データで検証したところ、余白（上10.5%・下12.1%・左右5.8%）を正しく検出できることを確認した。Node.js実測（約45〜60ms/回）とBug#32で観測された非公式CPU猶予（243〜297ms実績）を踏まえ、ユーザーの承認を得て`runBot()`にも適用した。`worker/bot.js`の`runBot()`が`handleGenerate()`の直後、R2保存の前に`autoCropImage()`を呼ぶ（`/generate`ハンドラーと同じ「常に同期await・ctx未使用」パターン。理由は同じKVキーへの並行書き込みraceを避けるため）。失敗時は元の未トリミング画像にフォールバックし、投稿自体は失敗させない
 
 - 失敗時（Photon読み込み失敗・例外等）は元の未トリミング画像にフォールバックし、生成自体は失敗させない
 - 出力は常にPNG（`get_bytes()`）に統一し、`mimeType`もそれに合わせて上書きする
@@ -713,9 +737,13 @@ Do not render the scene as if painted, printed, or mounted on a plate, dish, fan
 ```text
 今日の記念日テーマから主役となる名詞（動物・物・人物）を1〜2語で先頭に抽出し、
 続いて関連する背景・小物・雰囲気を3〜6語で続ける。ASCII英語、計5〜8語。
+主役名詞はテーマそのものの実際の姿で表現し、テーマを猫や他の動物に擬人化しない
+（例: 「草の日」→ 草はそのまま "grass" と表現し、"green cat" のような猫化はしない）。
 例: 図書館記念日 → library books, warm reading nook, wooden bookshelves, soft lamplight
 例: 象の日 → large friendly elephant, Kyoto imperial garden, pine trees, stone lanterns
 ```
+
+**Bug#33（2026-09追加）**: 上記「テーマを猫や他の動物に擬人化しない」制約を追加。「草の日」でGeminiが草を「かわいい緑の猫」として擬人化し、画像内にメインの猫とは別の猫顔が描画される事象への対処（詳細は上記「猫以外への顔・擬人化の禁止」参照）。
 
 **Pollinationsでのvisualの使い方（安全網ロジック）:**
 

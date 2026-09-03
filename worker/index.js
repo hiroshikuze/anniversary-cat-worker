@@ -527,7 +527,7 @@ export async function handleResearch(body, apiKey, env = null, ctx = null) {
     `今日は${date}です。この日の日本の記念日・季節の行事・季節の花を` +
     `Google検索で調べ、最も特徴的なものを1つ選んでください（速報ニュース・災害・事故・訃報は除く）。` +
     `回答は以下のJSONのみ（マークダウン・説明文は不要）:\n` +
-    `{"theme":"記念日名","themeEn":"English name of this theme (5 words max, ASCII only)","description":"50文字以内の説明（日付・曜日は含めない）","descriptionEn":"English description in 50 chars or less (ASCII only, omit dates/weekdays)","themeKana":"themeをHTML ruby形式でふりがな付きに変換（例: <ruby>大仏<rt>だいぶつ</rt></ruby>の<ruby>日<rt>ひ</rt></ruby>）。ひらがなのみ・カタカナ・英数字はrubyなしそのまま","descriptionKana":"descriptionをHTML ruby形式でふりがな付きに変換。漢字のみrubyを付ける","visualHint":"このテーマをかわいい猫のイラストで表現するとき使えるASCII英語キーワード5〜8語。テーマの象徴となる動物・物・人物を先頭1〜2語に必ず含め、続いて背景・小物・雰囲気を続ける（例: 象の日→large friendly elephant, Kyoto imperial garden, pine trees, stone lanterns）","foodItem":"その記念日の主な行為・目的が食べることである場合のみ食材・料理名をASCII英語で1〜3語。農業・収穫・行事の象徴として食材が登場するだけの場合はnull。そうでなければnull","kanjiChar":"このテーマを象徴する漢字一字（常用漢字・旧字体不可）。具体的な漢字が思い浮かばない場合はnull","sourceUrl":"参照した実際のURL"}`;
+    `{"theme":"記念日名","themeEn":"English name of this theme (5 words max, ASCII only)","description":"50文字以内の説明（日付・曜日は含めない）","descriptionEn":"English description in 50 chars or less (ASCII only, omit dates/weekdays)","themeKana":"themeをHTML ruby形式でふりがな付きに変換（例: <ruby>大仏<rt>だいぶつ</rt></ruby>の<ruby>日<rt>ひ</rt></ruby>）。ひらがなのみ・カタカナ・英数字はrubyなしそのまま","descriptionKana":"descriptionをHTML ruby形式でふりがな付きに変換。漢字のみrubyを付ける","visualHint":"このテーマをかわいい猫のイラストで表現するとき使えるASCII英語キーワード5〜8語。テーマの象徴となる動物・物・人物を先頭1〜2語に必ず含め、続いて背景・小物・雰囲気を続ける。先頭の名詞はテーマそのものの実際の姿で表現し、テーマを猫や他の動物に擬人化しない（例: 象の日→large friendly elephant, Kyoto imperial garden, pine trees, stone lanterns。草の日のような植物テーマではgreen catのような猫化はせずgrass fieldのようにそのまま表現する）","foodItem":"その記念日の主な行為・目的が食べることである場合のみ食材・料理名をASCII英語で1〜3語。農業・収穫・行事の象徴として食材が登場するだけの場合はnull。そうでなければnull","kanjiChar":"このテーマを象徴する漢字一字（常用漢字・旧字体不可）。具体的な漢字が思い浮かばない場合はnull","sourceUrl":"参照した実際のURL"}`;
 
   const res = await fetchWithRetry(
     `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
@@ -972,7 +972,7 @@ export function _buildPollinationsPrompt(theme, description, persona, personalit
   // visualHintをsubjectより前に置くことでFluxモデルが前半トークンを重視する特性を活用
   // 「kawaii watercolor cat」にcatが含まれるため persona が null のときの "cat" フォールバックは不要
   const guestPart  = guest ? `with ${guest.appearance}` : null;
-  const parts = ["kawaii watercolor cat", vhForParts, subject, descAscii || null, persona, personality, emotion, eatingAction, guestPart, "pastel colors, white background", "full frame composition, minimal empty space"];
+  const parts = ["kawaii watercolor cat", vhForParts, subject, descAscii || null, persona, personality, emotion, eatingAction, guestPart, "pastel colors, white background", "full frame composition, minimal empty space", "only the cat has a face, no faces on other objects"];
   return parts.filter(Boolean).join(", ");
 }
 
@@ -997,8 +997,8 @@ export function _buildGeminiPrompt(theme, description, persona, personality, vis
     `IMPORTANT: Do not include any text, letters, words, titles, captions, or typography in the image. ` +
     `Do not add cherry blossoms, falling flower petals, or other seasonal decorations that are not explicitly mentioned in the Theme, Context, or Setting above. ` +
     `Do not render the scene as if painted, printed, or mounted on a plate, dish, fan, tapestry, or any other physical object, and do not add a circular frame, border, or vignette around the subject. ` +
-    `Do not leave large blank margins or empty corners around the subject.` +
-    (eatingAction ? ` Only the cat has a face and expressions; all food items must be depicted as ordinary objects without faces or eyes.` : "")
+    `Do not leave large blank margins or empty corners around the subject. ` +
+    `Only the cat(s) described above should have a face, eyes, or expression. Do not depict grass, plants, flowers, food, or any other scenery element with a face, eyes, or anthropomorphized expression.`
   );
 }
 
