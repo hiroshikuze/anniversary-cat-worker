@@ -171,7 +171,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | 記念日リサーチ（Gemini + Google Search grounding） | `worker/index.js` `handleResearch()` | 稼働中 |
 | visualHint（テーマ依存の英語視覚ヒント、`handleResearch()`のJSON出力に含む） | `worker/index.js` | 稼働中 |
 | 画像生成 2フェーズ方式（`_twoPhaseRace`） | `worker/index.js` | 稼働中 |
-| 生成後の余白自動トリミング（Photon・`/generate`のみ・計測フェーズ） | `worker/image-utils.js` `autoCropImage()` | 保留中（`recordCpuCheckpoint()`のCPU計測がI/Oなし同期処理では機能しないと判明。`runBot()`未適用） |
+| 生成後の余白自動トリミング（Photon・`/generate`・`runBot()`両方に適用） | `worker/image-utils.js` `autoCropImage()` | 稼働中（`recordCpuCheckpoint()`のCPU計測はI/Oなし同期処理のため機能しないが、実データでの検出精度確認・Node.js実測〔約45〜60ms/回〕・Bug#32の非公式CPU猶予〔243〜297ms実績〕を踏まえ2026-09にユーザー承認のうえ`runBot()`へ適用） |
 | GeminiプロンプトStyle行の季節カラー（`getSeasonalStyleTone()`・年間固定色調による桜花の誤生成を回避） | `worker/index.js` `_buildGeminiPrompt()` | 稼働中 |
 | 猫ペルソナ（`CAT_PERSONAS` 13種・重み付き） | `worker/index.js` `pickPersona()` | 稼働中 |
 | 猫の性格（`CAT_PERSONALITIES` 6種 + おまかせ・重み付き） | `worker/index.js` `pickPersonality()` | 稼働中 |

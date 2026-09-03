@@ -12,7 +12,7 @@
 import { updateMetaInR2, collectMaterialIds } from "../worker/r2-storage.js";
 import { parseExpiryDate } from "./audit-suzuri-materials.mjs";
 import { parseSinceMs, buildQueryBody, parseArgs as parseQueryLogArgs } from "./query-worker-logs.mjs";
-import { _detectCropBox, autoCropImage } from "../worker/image-utils.js";
+import { _detectCropBox, autoCropImage, _setPhotonForTest as _setImageUtilsPhotonForTest } from "../worker/image-utils.js";
 import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptionForTest } from "../worker/suzuri.js";
 
 import {
@@ -3025,6 +3025,96 @@ console.log("\n[runBot: R2メタにkanjiCharが保存される]");
     );
     const meta = bucket._getMeta();
     assert("【回帰】kanjiChar=nullもR2メタのキーとして保存される", meta !== null && "kanjiChar" in meta && meta.kanjiChar === null);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// runBot: 生成後の自動トリミングが適用される（2026-09追加・runBot()への展開）
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: 自動トリミング適用]");
+{
+  const makeEnvWithBucket = () => {
+    const store = {};
+    const bucket = {
+      async put(key, value) { store[key] = value; },
+      async get(key) {
+        if (!(key in store)) return null;
+        return { json: async () => JSON.parse(store[key]) };
+      },
+      _getImageBase64() {
+        const key = Object.keys(store).find(k => k.includes("/web."));
+        if (!key) return null;
+        const bytes = store[key];
+        return Buffer.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)).toString("base64");
+      },
+    };
+    return {
+      bucket,
+      env: {
+        GEMINI_API_KEY: "test-key",
+        BLUESKY_IDENTIFIER: "", BLUESKY_APP_PASSWORD: "",
+        DISCORD_WEBHOOK_URL: "",
+        IMAGE_BUCKET: bucket,
+      },
+    };
+  };
+  const mockResearch = async () => ({ theme: "テスト記念日", description: "説明", sourceUrl: "https://example.com" });
+  const mockGenerate = async () => ({ imageData: btoa("original-image-data"), mimeType: "image/png", source: "gemini" });
+
+  // 余白あり: トリミング後の画像がR2に保存される
+  {
+    const smallPixels = makeTestImage(64, 64, { top: 0.15, bottom: 0.15, left: 0.15, right: 0.15 });
+    const croppedBytes = new Uint8Array([9, 9, 9]);
+    const img         = { get_width: () => 1000, get_height: () => 800, free: () => {} };
+    const smallImage  = { get_raw_pixels: () => smallPixels, free: () => {} };
+    const croppedImage = { get_bytes: () => croppedBytes, free: () => {} };
+    _setImageUtilsPhotonForTest(
+      { new_from_byteslice: () => img },
+      { resize: () => smallImage, crop: () => croppedImage, SamplingFilter: { Nearest: 1 } }
+    );
+
+    const { bucket, env } = makeEnvWithBucket();
+    await runBot(env, mockResearch, mockGenerate);
+    _setImageUtilsPhotonForTest(null);
+
+    assert("runBot: 余白ありの場合トリミング後の画像がR2に保存される",
+      bucket._getImageBase64() === Buffer.from(croppedBytes).toString("base64"));
+  }
+
+  // 余白なし（検出ボックスnull）: 元の画像がそのままR2に保存される
+  {
+    const smallPixels = new Uint8Array(64 * 64 * 4).fill(255); // 全面白 → 検出不可
+    const img         = { get_width: () => 1000, get_height: () => 800, free: () => {} };
+    const smallImage  = { get_raw_pixels: () => smallPixels, free: () => {} };
+    _setImageUtilsPhotonForTest(
+      { new_from_byteslice: () => img },
+      { resize: () => smallImage, crop: () => { throw new Error("cropは呼ばれないはず"); }, SamplingFilter: { Nearest: 1 } }
+    );
+
+    const { bucket, env } = makeEnvWithBucket();
+    await runBot(env, mockResearch, mockGenerate);
+    _setImageUtilsPhotonForTest(null);
+
+    assert("runBot: 余白なしの場合は元の画像がそのままR2に保存される",
+      bucket._getImageBase64() === btoa("original-image-data"));
+  }
+
+  // Photon読み込み失敗時: 元の画像にフォールバックし投稿自体は失敗しない
+  {
+    _setImageUtilsPhotonForTest({ new_from_byteslice: () => { throw new Error("Photon読み込み失敗"); } }, {});
+
+    const { bucket, env } = makeEnvWithBucket();
+    let threw = false;
+    try {
+      await runBot(env, mockResearch, mockGenerate);
+    } catch {
+      threw = true;
+    }
+    _setImageUtilsPhotonForTest(null);
+
+    assert("runBot: 自動トリミング失敗時も例外を投げず継続する", !threw);
+    assert("runBot: 自動トリミング失敗時は元の画像がR2に保存される",
+      bucket._getImageBase64() === btoa("original-image-data"));
   }
 }
 

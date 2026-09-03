@@ -15,8 +15,9 @@
 
 import { saveToR2 } from "./r2-storage.js";
 import { createSuzuriProducts } from "./suzuri.js";
-import { pickFromPool, recordCpuCheckpoint, _deferOrAwait } from "./index.js";
+import { pickFromPool, recordCpuCheckpoint, _deferOrAwait, _recordAutoCropCpu } from "./index.js";
 import { getActiveSaleInfo } from "./sale.js";
+import { autoCropImage } from "./image-utils.js";
 
 // Photonは動的importで遅延ロード（Node.jsテスト環境での.wasmロード失敗を回避）
 let _photonReady = false;
@@ -685,6 +686,23 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
       ctx
     );
     console.log(`${prefix} generate 完了 source=${generated.source}`);
+
+    // 生成後の余白自動トリミング（2026-09: /generateに続きrunBot()にも適用。
+    // /generateハンドラーと同じパターン：ctxを渡さず常に同期awaitする（同一KVキーへの
+    // 並行書き込みraceを避けるため。architecture.mdの「runBot()への適用」参照）
+    if (generated.imageData) {
+      const tCropStart = performance.now();
+      try {
+        const cropResult = await autoCropImage(generated.imageData);
+        await _recordAutoCropCpu(performance.now() - tCropStart, env, null);
+        if (cropResult.cropped) {
+          generated.imageData = cropResult.imageData;
+          generated.mimeType  = cropResult.mimeType;
+        }
+      } catch (e) {
+        console.warn(`${prefix} 自動トリミング失敗（元画像で継続）: ${e.message}`);
+      }
+    }
 
     // ── 3. R2 保存（best-effort） ─────────────────────────────────────────
     // SUZURI商品登録はボットでは行わない。
