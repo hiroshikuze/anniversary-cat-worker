@@ -115,28 +115,59 @@ export async function deleteFromR2(bucket, id) {
  * R2のメタデータを部分更新する。画像は変更せずmeta.jsonのみ上書きする。
  * products フィールドはスラッグ単位でマージ（上書きではなくupsert）する。
  * materialIds フィールドは重複排除しつつ蓄積する。
- * 複数グループ（right/center）が別々に更新しても全商品・全マテリアルIDが保持される。
+ * 複数グループ（right/center）・`/resume-hires`が別々のタイミングで更新しても
+ * 全商品・全マテリアルIDが保持される。
+ *
+ * R2の条件付きPUT（`onlyIf: { etagMatches }`）による楽観的並行性制御+有界リトライで
+ * 書き込みを排他する（Bug#34）。以前はget→JSでマージ→putの非アトミック実装だったため、
+ * 複数の呼び出し元が競合すると後勝ちが先勝ちの結果を黙って上書きするロストアップデートが
+ * 発生し、実際に本番でmaterialIdがmeta.jsonから消失しSUZURI商品の多重登録を招いた。
+ * `onlyIf.etagMatches`にはhttpEtag（クォート付き文字列）を渡す。理由は
+ * `.claude/bugs-history.md`のBug#34参照（実行検証はできておらず、公式ドキュメント＋
+ * Miniflare参照実装ソースの読解による判断）。
+ *
+ * リトライ対象は`put()`が`null`を返すCAS競合のみ。`get()`/`put()`が例外を投げる
+ * 本物のネットワークエラー等はリトライせずそのままthrowする。
+ *
+ * `get()`が`null`を返す（id自体が存在しない）場合は即return。このコードベースの
+ * 呼び出し経路ではmeta.jsonは`/suzuri-create`到達前（`/generate`成功時のsaveToR2()）に
+ * 必ず作成済みのため、この分岐は実質的に「真に存在しないid」のみを意味する
+ * （＝新規作成との競合は想定しなくてよい）。
+ *
  * @param {R2Bucket} bucket
  * @param {string} id
  * @param {object} updates - 既存メタに上書きするフィールド
+ * @param {number} maxRetries - CAS競合時の最大リトライ回数
  */
-export async function updateMetaInR2(bucket, id, updates) {
-  const existing = await getMetaFromR2(bucket, id);
-  if (!existing) return;
-  let merged = { ...existing, ...updates };
-  if (updates.products) {
-    const map = new Map((existing.products ?? []).map(p => [p.slug, p]));
-    for (const p of updates.products) map.set(p.slug, p);
-    merged.products = [...map.values()];
+export async function updateMetaInR2(bucket, id, updates, maxRetries = 5) {
+  const key = `${id}/meta.json`;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const obj = await bucket.get(key);
+    if (!obj) return;
+    const existing = await obj.json();
+    let merged = { ...existing, ...updates };
+    if (updates.products) {
+      const map = new Map((existing.products ?? []).map(p => [p.slug, p]));
+      for (const p of updates.products) map.set(p.slug, p);
+      merged.products = [...map.values()];
+    }
+    if (updates.materialIds) {
+      const set = new Set(existing.materialIds ?? []);
+      for (const materialId of updates.materialIds) set.add(materialId);
+      merged.materialIds = [...set];
+    }
+    const result = await bucket.put(key, JSON.stringify(merged), {
+      httpMetadata: { contentType: "application/json" },
+      onlyIf: { etagMatches: obj.httpEtag },
+    });
+    if (result !== null) return;
+    if (attempt > 0) {
+      // 初回の衝突は即リトライ（まれ・解消が速いため）。2回目以降のみ短いジッター付き待機を挟む。
+      await new Promise(resolve => setTimeout(resolve, 10 + Math.random() * 30));
+    }
+    console.warn(`[updateMetaInR2] etag競合のためリトライ id=${id} attempt=${attempt + 1}`);
   }
-  if (updates.materialIds) {
-    const set = new Set(existing.materialIds ?? []);
-    for (const materialId of updates.materialIds) set.add(materialId);
-    merged.materialIds = [...set];
-  }
-  await bucket.put(`${id}/meta.json`, JSON.stringify(merged), {
-    httpMetadata: { contentType: "application/json" },
-  });
+  throw new Error(`[updateMetaInR2] ${maxRetries}回リトライしても書き込めませんでした id=${id}`);
 }
 
 /**

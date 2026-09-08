@@ -1594,13 +1594,20 @@ ${itemsXml}
         console.log(`[resume-hires] base64フォールバック`);
       }
 
+      let sr;
       try {
-        const sr = await createSuzuriProducts(suzuriTexture, meta.theme ?? "", env, RIGHT_SLUGS, null, meta.description ?? "", id, meta.guestSuzuriTag ?? null);
+        sr = await createSuzuriProducts(suzuriTexture, meta.theme ?? "", env, RIGHT_SLUGS, null, meta.description ?? "", id, meta.guestSuzuriTag ?? null);
         await updateMetaInR2(env.IMAGE_BUCKET, id, { materialIds: [sr.materialId], products: sr.products });
         console.log(`[resume-hires] SUZURI登録完了`);
         return Response.json({ products: sr.products }, { headers: corsH });
       } catch (e) {
         console.error(`[resume-hires] SUZURI登録失敗: ${e.message}`);
+        if (sr) {
+          // createSuzuriProducts()は成功済み（課金対象の商品ページが既に存在）だが
+          // updateMetaInR2()が失敗＝R2メタに未記録の孤立マテリアルの恐れ（Bug#34）
+          await notifyDiscord(env.DISCORD_WEBHOOK_URL,
+            `⚠️ [resume-hires] SUZURIマテリアル作成済み(materialId=${sr.materialId})だがR2メタ書き込みに失敗\nid=${id}\n${e.message}`);
+        }
         return Response.json({ error: e.message }, { status: 500, headers: corsH });
       }
     }
@@ -1803,14 +1810,21 @@ ${itemsXml}
               console.log(`[suzuri-create] base64フォールバック source=${hiresImageData ? "hires(2048px bicubic)" : "original"}`);
             }
             console.log(`[suzuri-create] texture type=${suzuriTexture.startsWith("data:") ? "base64" : "url"}`);
+            let sr;
             try {
-              const sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, resolvedBackTexture, description ?? "", r2Id ?? null, guestSuzuriTag);
+              sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, resolvedBackTexture, description ?? "", r2Id ?? null, guestSuzuriTag);
               if (r2Id && env.IMAGE_BUCKET) {
                 await updateMetaInR2(env.IMAGE_BUCKET, r2Id, { materialIds: [sr.materialId], products: sr.products });
               }
               console.log(`[suzuri-create] right グループ完了 slugs=${slugs?.join(",")}`);
             } catch (e) {
               console.error(`[suzuri-create] right グループ失敗: ${e.message}`);
+              if (sr) {
+                // createSuzuriProducts()は成功済み（課金対象の商品ページが既に存在）だが
+                // updateMetaInR2()が失敗＝R2メタに未記録の孤立マテリアルの恐れ（Bug#34）
+                await notifyDiscord(env.DISCORD_WEBHOOK_URL,
+                  `⚠️ [suzuri-create] rightグループ: SUZURIマテリアル作成済み(materialId=${sr.materialId})だがR2メタ書き込みに失敗\nr2Id=${r2Id}\n${e.message}`);
+              }
             }
           })());
           result = { queued: true, slugs };
@@ -1826,6 +1840,10 @@ ${itemsXml}
               });
             } catch (e) {
               console.warn(`[suzuri-create] R2メタ更新失敗: ${e.message}`);
+              // createSuzuriProducts()は成功済み（課金対象の商品ページが既に存在）だが
+              // updateMetaInR2()が失敗＝R2メタに未記録の孤立マテリアルの恐れ（Bug#34）
+              await notifyDiscord(env.DISCORD_WEBHOOK_URL,
+                `⚠️ [suzuri-create] centerグループ: SUZURIマテリアル作成済み(materialId=${suzuriResult.materialId})だがR2メタ書き込みに失敗\nr2Id=${r2Id}\n${e.message}`);
             }
           }
           result = { products: suzuriResult.products, materialId: suzuriResult.materialId };
