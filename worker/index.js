@@ -1606,7 +1606,7 @@ ${itemsXml}
           // createSuzuriProducts()は成功済み（課金対象の商品ページが既に存在）だが
           // updateMetaInR2()が失敗＝R2メタに未記録の孤立マテリアルの恐れ（Bug#34）
           await notifyDiscord(env.DISCORD_WEBHOOK_URL,
-            `⚠️ [resume-hires] SUZURIマテリアル作成済み(materialId=${sr.materialId})だがR2メタ書き込みに失敗\nid=${id}\n${e.message}`);
+            `[resume-hires] SUZURIマテリアル作成済み(materialId=${sr.materialId})だがR2メタ書き込みに失敗\nid=${id}\n${e.message}`);
         }
         return Response.json({ error: e.message }, { status: 500, headers: corsH });
       }
@@ -1823,7 +1823,7 @@ ${itemsXml}
                 // createSuzuriProducts()は成功済み（課金対象の商品ページが既に存在）だが
                 // updateMetaInR2()が失敗＝R2メタに未記録の孤立マテリアルの恐れ（Bug#34）
                 await notifyDiscord(env.DISCORD_WEBHOOK_URL,
-                  `⚠️ [suzuri-create] rightグループ: SUZURIマテリアル作成済み(materialId=${sr.materialId})だがR2メタ書き込みに失敗\nr2Id=${r2Id}\n${e.message}`);
+                  `[suzuri-create] rightグループ: SUZURIマテリアル作成済み(materialId=${sr.materialId})だがR2メタ書き込みに失敗\nr2Id=${r2Id}\n${e.message}`);
               }
             }
           })());
@@ -1843,7 +1843,7 @@ ${itemsXml}
               // createSuzuriProducts()は成功済み（課金対象の商品ページが既に存在）だが
               // updateMetaInR2()が失敗＝R2メタに未記録の孤立マテリアルの恐れ（Bug#34）
               await notifyDiscord(env.DISCORD_WEBHOOK_URL,
-                `⚠️ [suzuri-create] centerグループ: SUZURIマテリアル作成済み(materialId=${suzuriResult.materialId})だがR2メタ書き込みに失敗\nr2Id=${r2Id}\n${e.message}`);
+                `[suzuri-create] centerグループ: SUZURIマテリアル作成済み(materialId=${suzuriResult.materialId})だがR2メタ書き込みに失敗\nr2Id=${r2Id}\n${e.message}`);
             }
           }
           result = { products: suzuriResult.products, materialId: suzuriResult.materialId };
