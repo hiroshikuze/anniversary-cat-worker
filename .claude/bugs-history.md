@@ -162,7 +162,7 @@
   - **`worker/fal.js`（本番影響あり・最優先）**: `submitFalJob()`・`getFalResult()`内の3箇所（fal.ai Queue APIへの投入・ステータス確認・結果取得）が`res.ok`チェック後も`res.json()`を直接呼んでおり、fal.ai側が502等を平文で返すとBug#19と同じ構造でクラッシュしうる状態だった（`!res.ok`分岐は`res.text()`で正しく処理されていたのに、成功分岐だけ無防備という非対称な状態）。標準パターンに是正した
   - **`scripts/health-check.js`・`scripts/test-suzuri-api.mjs`・`scripts/test-fal-models.mjs`**: CI・手動実行スクリプト内の計13箇所も同様に是正した。いずれも`testing.md`で「GitHub Actionsのみ・外部API必要」に分類されたE2E専用スクリプトのため、`scripts/test-bot.mjs`への単体テストは追加していない（既存の`checkBlueskyAuth`等と同じ扱い）
   - **対象外とした箇所**: `frontend/index.html`（ブラウザから自Workerを呼ぶコードで文脈が異なるため、今回はユーザー判断で対象外とした）・`worker/r2-storage.js`や`worker/bot.js`/`worker/index.js`のR2オブジェクト`.json()`呼び出し（外部API通信ではなく自ドメインのR2ストレージ読み取りのため対象外）
-  - **教訓**: 特定のバグ修正パターンを導入した際、修正箇所と同じリスクを持つ「兄弟コード」（同種の外部API呼び出し）が他のファイルに残っていないか、修正直後にリポジトリ全体をgrepで確認する習慣が必要。今回は約4ヶ月後に別の作業（CPU計測）のついでに偶然発見された
+  - **教訓**: 特定のバグ修正パターンを導入した際、修正箇所と同じリスクを持つ「兄弟コード」（同種の外部API呼び出し）が他のファイルに残っていないか、修正直後にリポジトリ全体をgrepで確認する習慣が必要。今回は約4か月後に別の作業（CPU計測）のついでに偶然発見された
 
 ### 20. runBot()がR2リサーチプールを参照せずhandleResearch()を直接呼んでいた（2026-04）
 
@@ -213,7 +213,7 @@
 ### 25. 季節補充フォールバックのvisualHintが花以外の季節要素にも「花びら」を指示し季節と矛盾する画像になる（2026-06）
 
 - **症状**: ユーザーから「6月中旬なのに生成画像に桜の花びらのようなものが舞っていて季節と合わない」と報告。該当画像のテーマは6/16〜6/30の季節補充フォールバック「苔の季節」
-- **原因**: `generateResearchPool()`の季節補充ブロック（リサーチプールが3件未満の日に発動）が、`SEASONAL_FLOWERS`の全24エントリに対して`` `${flowerName} flowers, Japanese garden, soft petals, gentle breeze` ``という単一テンプレートで`visualHint`を生成していた。苔は花を咲かせない植物のため「flowers」「soft petals」という指示は実体と矛盾し、Gemini画像生成が代わりに「日本庭園で舞う柔らかい花びら」の中で最も学習データに近い桜の花びらを補完してしまっていた。同根の不一致が紅葉（葉を花扱い）・銀杏（葉を花扱い）・千両（実を花扱い）にも存在
+- **原因**: `generateResearchPool()`の季節補充ブロック（リサーチプールが3件未満の日に発動）が、`SEASONAL_FLOWERS`の全24エントリに対して`` `${flowerName} flowers, Japanese garden, soft petals, gentle breeze` ``という単一テンプレートで`visualHint`を生成していた。苔は花を咲かせない植物のため「flowers」「soft petals」という指示は実体と矛盾し、Gemini画像生成が代わりに「日本庭園で舞う柔らかい花びら」の中でもっとも学習データに近い桜の花びらを補完してしまっていた。同根の不一致が紅葉（葉を花扱い）・銀杏（葉を花扱い）・千両（実を花扱い）にも存在
 - **影響**: 6月下旬（苔）・11月下旬（紅葉）・12月上旬（銀杏）・12月下旬（千両）にリサーチプールが3件未満になった日、生成画像のビジュアルが季節・実際の植物と矛盾する確率が上がる
 - **修正**: `SEASONAL_FLOWERS`の各エントリに実際の見た目を記述したASCII英語`visual`フィールドを追加し、単一テンプレートを廃止。新規`getSeasonalFlowerVisual(dateStr)`で該当エントリの`visual`を取得し、`generateResearchPool()`の補充ブロックで`visualHint`に直接使用する
 - **テスト**: `scripts/test-bot.mjs`に`getSeasonalFlowerVisual()`の正常系（境界値）・苔/紅葉/銀杏/千両が「flower」「petal」を含まないことの回帰チェック・全24エントリがASCIIのみであることの検証を追加
@@ -224,7 +224,7 @@
 
 - **症状**: ユーザーから「6/26（露天風呂の日）投稿の生成画像に桜の花びららしきものが舞っていて時期として季節と合わない」と報告。当初Bug#25（季節補充フォールバックの`flowers, soft petals`テンプレート）の再発と推測したが、実際のDiscord通知ログを確認した結果、当日のテーマは通常のリサーチプール取得「露天風呂の日」であり`visualHint`にも花・花びら・桜への言及は一切なく、Bug#25とは無関係と判明
 - **原因**: `handleGenerate()`が組み立てるGeminiプロンプトのStyle指示が`` `soft pastel colors, light pink and beige tones, gentle watercolor brushstrokes, ... Japanese illustration style` ``という年間共通の固定文言だった。「light pink」「Japanese illustration style」「watercolor」の組み合わせが学習データ上の桜イメージと強く結びついており、テーマ・visualHintに花の言及がない場合でもGeminiモデルが装飾として桜の花びらを補完してしまっていた
-- **影響**: 一年を通じて常時発生しうる（季節補充フォールバック発動時のみではない）。桜が季節的に不自然な6月〜2月頃の生成画像で特に目立つ
+- **影響**: 一年を通じて常時発生しうる（季節補充フォールバック発動時のみではない）。桜が季節的に不自然な6月〜2月頃の生成画像でとくに目立つ
 - **修正**:
   - `SEASONAL_FLOWERS`の24エントリ（既存の`startMd`/`endMd`境界を再利用）に`style`フィールド（ASCII英語の色調記述）を追加。新規`getSeasonalStyleTone(dateStr)`で該当エントリの`style`を取得する
   - `handleGenerate()`のGeminiプロンプト構築を`_buildGeminiPrompt()`として切り出し、固定文言`light pink and beige tones`を`getSeasonalStyleTone(toJSTDateStringWorker(new Date()))`の戻り値に置き換え。季節補充フォールバック限定ではなく**すべてのGemini画像生成**に適用する
@@ -244,7 +244,7 @@
 - **テスト**: `scripts/test-bot.mjs`に`_buildGeminiPrompt()`の新ネガティブ指示文検証・`getSeasonalStyleTone("2026-07-01")`のpond不在/pink維持の回帰テストを追加
 - **場所**: `worker/index.js` `SEASONAL_FLOWERS` `_buildGeminiPrompt()`
 - **今後の観測ポイント**: 蓮期間（07-01〜07-15）以外の日に同種の丸皿化が再発した場合、pond語は原因ではなく別要因（モデルの確率的挙動・`Japanese illustration style`自体等）と判明する。その場合は本エントリを更新すること
-- **教訓**: 1件の観測結果から特定の単語を原因と断定しかけた。傍証（配色の一致）と直接因果（円形皿化の原因）を混同していた。ユーザーに「本当にそれが原因か」と問われて初めて、Theme/Context/Setting側に該当語が存在しないことを確認していなかったと気づいた。外部APIで検証手段がない場合は、原因を断定せず「効果はあるが原因非依存の対策」を優先し、ドキュメントにも確度を明記する
+- **教訓**: 1件の観測結果から特定の単語を原因と断定しかけた。傍証（配色の一致）と直接因果（円形皿化の原因）を混同していた。ユーザーに「本当にそれが原因か」と問われてはじめて、Theme/Context/Setting側に該当語が存在しないことを確認していなかったと気づいた。外部APIで検証手段がない場合は、原因を断定せず「効果はあるが原因非依存の対策」を優先し、ドキュメントにも確度を明記する
 
 ### 28. 外部通信リトライ監査で4つのギャップを発見・修正（2026-07）
 
@@ -275,7 +275,7 @@
 - **修正**: `updateResultButtons()`と同じ設計で`updateErrorRetryButton()`を新設し、`showGenerate("error")`時に呼び出す。`isSharedView === true`（共有URL閲覧中のエラー）なら`loadSharedImage(currentSharedId)`を再実行、`false`（通常生成中のエラー）なら従来通り`startResearch()`を実行するよう`.onclick`を動的に設定する。HTML側の`onclick="startResearch()"`固定値は削除
 - **テスト**: フロントエンドのDOM依存ロジックのためNode環境でのユニットテスト不可（`testing.md`の既存制約と同じ）。目視確認とする
 - **場所**: `frontend/index.html` `showGenerate()` `updateErrorRetryButton()`（新設）
-- **教訓**: 「共有URL閲覧中かどうか」で分岐が必要な画面遷移は`#g-result`だけでなく、同じUIコンポーネント（ボタン）を複数の文脈（通常生成・共有URL閲覧）で共有する画面すべてに存在しうる。新しい状態遷移・エラー画面を追加する際は、既存の`isSharedView`分岐パターン（`updateResultButtons()`）を横展開する必要がないか確認する
+- **教訓**:「共有URL閲覧中かどうか」で分岐が必要な画面遷移は`#g-result`だけでなく、同じUIコンポーネント（ボタン）を複数の文脈（通常生成・共有URL閲覧）で共有する画面すべてに存在しうる。新しい状態遷移・エラー画面を追加する際は、既存の`isSharedView`分岐パターン（`updateResultButtons()`）を横展開する必要がないか確認する
 
 ### 30. Geminiがtheme等のプレーンテキストフィールドにruby HTMLを混入させBluesky投稿が失敗（2026-07）
 
@@ -297,7 +297,7 @@
 - **影響範囲**: かなモード（`?lang=kana`）と英語モード（`?lang=en`）の両方。季節補充フォールバックは通常10%の確率でのみ選ばれる低頻度の分岐だが、リサーチプールが3件未満になる日（Gemini検索結果が乏しい日）には必ず発動する
 - **修正**: `SEASONAL_FLOWERS`配列の既存24エントリ（`visual`/`style`と同じ人手管理パターン）に、花の名前のふりがな用`kana`フィールド（ruby HTML、例: 桔梗→`<ruby>桔梗<rt>ききょう</rt></ruby>`）と英語名`en`フィールド（例: `Balloon Flower`）を追加。新規`getSeasonalFlowerKana(dateStr)`/`getSeasonalFlowerEn(dateStr)`を`getSeasonalFlowerVisual()`と同じパターンで新設し、`generateResearchPool()`の季節補充フォールバックで`theme`/`description`の固定テンプレート部分（「の季節」「今の季節を彩る」）のふりがなと組み合わせて`themeKana`/`descriptionKana`/`themeEn`/`descriptionEn`を組み立てる。GeminiのAPI呼び出しは追加しない（実行時コストゼロ・24種類の固定パターンのため事前に人手で用意可能）
 - **テスト**: `scripts/test-bot.mjs`に`getSeasonalFlowerKana()`/`getSeasonalFlowerEn()`の全24エントリ検証（kanaはruby HTML形式・enはASCIIのみ）を追加。`generateResearchPool()`自体は非exportのため既存の`getSeasonalFlowerVisual()`等と同じ方針でgetter関数単位のテストに留める
-- **場所**: `worker/index.js` `SEASONAL_FLOWERS` `getSeasonalFlowerKana()`（新設） `getSeasonalFlowerEn()`（新設） `generateResearchPool()`
+- **場所**: `worker/index.js` `SEASONAL_FLOWERS` `getSeasonalFlowerKana()`（新設）`getSeasonalFlowerEn()`（新設）`generateResearchPool()`
 - **教訓**: 通常経路（Gemini API呼び出し）とフォールバック経路（固定値の直接組み立て）が同じデータ構造（`theme`/`description`等のフィールド一式）を返す設計では、通常経路にフィールドを追加した際にフォールバック経路が追随しているか確認する。今回はかなモード追加（`themeKana`/`descriptionKana`）・英語モード追加（`themeEn`/`descriptionEn`）のどちらの実装時にも季節補充フォールバックへの反映が漏れていた
 
 ### 32. Cron Trigger実行がWorkers Free プランのCPU時間上限（10ms）を恒常的に超過し投稿が途中で止まる（2026-08）
@@ -320,25 +320,25 @@
   - `/image/:id`（`getImageFromR2()`）はレート制限がなく高頻度に呼ばれるため、Workers KV Freeプランの書き込み上限（1,000回/日）を圧迫しないよう`console.log`のみに留め、`recordCpuCheckpoint()`は使わない（循環import回避のため`r2-storage.js`は`worker/index.js`をimportしない設計上の理由もある）
   - `scripts/health-check.js`に`/cpu-usage`を呼びCIログにステップ別サマリーを出力するチェック（`[W4]`）を追加。これによりCloudflareダッシュボードを都度確認せずとも、Claude CodeセッションがGitHub Actionsログから実測CPU時間を確認できるようになった
 - **テスト**: 既存の`scripts/test-bot.mjs`（657件+26件）で全項目が動作変更なしであることを回帰確認。fast path追加箇所・`incrementCpuTimeKv()`・`recordCpuCheckpoint()`には正常系/累積/境界値のテストを追加
-- **場所**: `worker/bot.js`（`shrinkImageIfNeeded()` `graphemeLength()` `truncateToGraphemes()` `runBot()` `buildHashtagFacets()` `buildUrlFacets()`）・`worker/index.js`（`handleResearch()` `handleGenerate()` `incrementCpuTimeKv()`（新設） `recordCpuCheckpoint()`（新設） `/cpu-usage`（新設） `/suzuri-create`ハンドラー）・`worker/r2-storage.js`（`getImageFromR2()`）・`wrangler.toml`・`scripts/health-check.js`
+- **場所**: `worker/bot.js`（`shrinkImageIfNeeded()` `graphemeLength()` `truncateToGraphemes()` `runBot()` `buildHashtagFacets()` `buildUrlFacets()`）・`worker/index.js`（`handleResearch()` `handleGenerate()` `incrementCpuTimeKv()`（新設）`recordCpuCheckpoint()`（新設）`/cpu-usage`（新設）`/suzuri-create`ハンドラー）・`worker/r2-storage.js`（`getImageFromR2()`）・`wrangler.toml`・`scripts/health-check.js`
 - **教訓**: Cloudflare WorkersのCPU時間制限は「たまたま動いている」状態が長く続くことがあり、実際に制限を超過している事実に気づきにくい。定期的にダッシュボードのCronイベントログでCPU時間の実測値を確認し、プランの公式上限と比較する習慣が必要。またLLMエージェントが提案する「一見安全な簡略化」も、分岐の全パターン（今回は`null`という第3の値）を网羅しているか必ず自分で検証してから適用する。さらに、コード削減の最適化だけでなく「効果を実測で検証できる仕組み」自体を併せて整備しないと、修正が本当に効いたのか確認する手段がなくなる（`/usage`と同じKV集計＋API公開パターンをそのまま流用できた）
 - **追加調査・対応（2026-08、`/cpu-usage`稼働後の実測データ取得後）**: 上記の観測性追加後、初回の実測データ（`generateResearchPool()`の0:00 JST Cron分）で`research`ステップが`maxMs=94ms`（10ms上限の約9倍）という懸念のある値を示した。掘り下げたところ、`handleResearch()`/`handleGenerate()`の計測区間（`tCpuStart`〜`recordCpuCheckpoint()`呼び出し）に、本来除外すべき`incrementUsageKv()`の`await`（KV `get`→`put`の2回のネットワークラウンドトリップ）が含まれており、実際のCPUバウンドな同期処理（JSON.parse・正規表現・`stripHtmlTags()`等、通常1ms未満）ではなくこのKV往復が計測値を水増ししていたことが判明した。
   - **是正**: `performance.now() - tCpuStart`の計算を`incrementUsageKv()`呼び出しより前に移動し、KV往復を計測区間から除外した
-  - **副次対応**: `handleResearch()`/`handleGenerate()`・`generateResearchPool()`・`runBot()`・`scheduled()`・`fetch()`の`/research`・`/generate`ハンドラーに`ctx`（Workers `ExecutionContext`）を新たに通し、`incrementUsageKv()`・`recordCpuCheckpoint()`の呼び出しを`ctx.waitUntil()`で背景化した（`ctx`未指定時は従来通り`await`する後方互換設計）。これによりKV書き込みの完了を待たずに`handleResearch()`/`handleGenerate()`が結果を返せるようになり、HTTPエンドポイントの応答速度・Cron全体の壁時計時間の両方が改善する。`/suzuri-create`のfal.aiキュー処理で既に使われている`ctx.waitUntil()`パターンを踏襲した
+  - **副次対応**: `handleResearch()`/`handleGenerate()`・`generateResearchPool()`・`runBot()`・`scheduled()`・`fetch()`の`/research`・`/generate`ハンドラーに`ctx`（Workers `ExecutionContext`）を新たに通し、`incrementUsageKv()`・`recordCpuCheckpoint()`の呼び出しを`ctx.waitUntil()`で背景化した（`ctx`未指定時は従来通り`await`する後方互換設計）。これによりKV書き込みの完了を待たずに`handleResearch()`/`handleGenerate()`が結果を返せるようになり、HTTPエンドポイントの応答速度・Cron全体の壁時計時間の両方が改善する。`/suzuri-create`のfal.aiキュー処理ですでに使われている`ctx.waitUntil()`パターンを踏襲した
   - **検討したが採用しなかった案**: Cloudflare Workersは1 invocationにつき単一のV8アイソレート（真のマルチスレッド不可）のため、KV書き込みの「マルチスレッド化」自体は選択肢にならない。またCPU時間課金・上限はinvocation全体（`waitUntil()`の背景処理を含む）に対して適用されるため、`ctx.waitUntil()`はCPU時間予算そのものを増やすものではなく、あくまでI/O待ちをクリティカルパスから外すための手段である点に注意
-  - **教訓（追加）**: 「ネットワーク待ちを含まない同期処理のみを計測する」という設計意図があっても、計測区間の途中に見落としたawait（今回は使用量集計のKV書き込み）が紛れ込むと計測値が大きく歪む。計測ポイントを追加・変更する際は、区間内のコードを1行ずつ「これはCPUバウンドか、I/Oバウンドか」を確認する
+  - **教訓（追加）**:「ネットワーク待ちを含まない同期処理のみを計測する」という設計意図があっても、計測区間の途中に見落としたawait（今回は使用量集計のKV書き込み）が紛れ込むと計測値が大きく歪む。計測ポイントを追加・変更する際は、区間内のコードを1行ずつ「これはCPUバウンドか、I/Oバウンドか」を確認する
   - **横展開（同日追加）**: `/suzuri-create`ハンドラー内の`suzuriCreate-backTextureDecode`計測（`incrementUsageKv()`とのペアはなく`recordCpuCheckpoint()`単体だが、同じく`await`でクリティカルパスをブロックしていた）にも同じ「計測確定→ctxがあればwaitUntil・なければawait」パターンを適用した。この箇所は`fetch()`ハンドラー内にインラインで書かれておりexportされた関数がなかったため、`_recordBackTextureDecodeCpu(cpuMs, env, ctx)`としてテスト可能な形に切り出した（`_pollFalAndGetTexture()`等の既存の「依存関数を引数で受け取る」切り出しパターンを踏襲）
-  - **見落とし・追加是正（同日）**: `worker/bot.js` `runBot()`内の`shrinkImage`計測（`recordCpuCheckpoint("shrinkImage", ..., env.RATE_KV)`）にも同じブロッキングパターンが残っていた。`runBot()`は既に`ctx`を受け取るようになっていたにもかかわらず、この呼び出しだけ`ctx`を使わずawaitしたままだった（実装時の見落とし）。「ctxがあればwaitUntil・なければawait」パターンが4箇所目の重複になったため、共通ヘルパー`_deferOrAwait(promise, ctx)`に抽出し、`handleResearch()`・`handleGenerate()`・`_recordBackTextureDecodeCpu()`・`runBot()`のshrinkImage計測の4箇所すべてで使うようリファクタした
+  - **見落とし・追加是正（同日）**: `worker/bot.js` `runBot()`内の`shrinkImage`計測（`recordCpuCheckpoint("shrinkImage", ..., env.RATE_KV)`）にも同じブロッキングパターンが残っていた。`runBot()`はすでに`ctx`を受け取るようになっていたにもかかわらず、この呼び出しだけ`ctx`を使わずawaitしたままだった（実装時の見落とし）。「ctxがあればwaitUntil・なければawait」パターンが4箇所目の重複になったため、共通ヘルパー`_deferOrAwait(promise, ctx)`に抽出し、`handleResearch()`・`handleGenerate()`・`_recordBackTextureDecodeCpu()`・`runBot()`のshrinkImage計測の4箇所すべてで使うようリファクターした
   - **教訓（同種パターンの見落とし対策）**: 同じ設計変更を複数箇所に適用する際、grep等で`recordCpuCheckpoint(`・`incrementUsageKv(`の全呼び出し箇所を機械的に洗い出してから着手しないと、一部の呼び出し（今回は`env.RATE_KV`を渡している箇所のみが対象で、`kv`省略の呼び出しは対象外という判断が必要だった）を見落とす。修正対象の判定基準（第3引数にKVを渡しているかどうか）を明文化してから横展開すると漏れを防ぎやすい
   - **本番実測での確認（同日）**: 上記デプロイ後、フロントエンドの生成ボタンで実際に`/research`・`/generate`を呼び出し`/cpu-usage`を確認した。`generate`のcalls/totalMsは増加し`ctx.waitUntil()`背景化が機能していることを確認できた一方、`research`のcallsは変化しなかった。これは不具合ではなく、`/research`が当日のリサーチプール（`research-pool/YYYY-MM-DD.json`）にヒットする限り`handleResearch()`自体が呼ばれずCPU計測も発生しないという既存の設計（プール優先方式）通りの挙動である
   - **`generate`の残存する高い計測値の切り分け（同日）**: KV往復除去後も`generate`ステップは`maxMs=666ms`と依然として高い値を示した。原因を推測で済ませず実測で切り分けるため、`generate`ステップの計測区間のうち`JSON.parse(resText)`単体の所要時間だけを`generate-jsonParse`という別ステップとして追加計測することにした（Gemini画像生成レスポンスはbase64画像データを含む大きめのJSONのため、`JSON.parse()`自体が支配的コストである可能性が高いという仮説を検証する目的）
   - **CPU時間とネットワークI/O待ちの関係（公式ドキュメントで確認・同日）**: [Cloudflare Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)で「Waiting on network requests (such as fetch() calls, KV reads, or database queries) does not count toward CPU time」と明記されていることを確認した。CPU時間は実際にコードを実行している時間のみを測定し、fetch・KV等のI/O待ちは「Duration」（壁時計時間）には含まれるがCPU時間には計上されない。これは`ctx.waitUntil()`によるI/O待ちの背景化がCPU時間予算そのものを増やすものではなく、あくまでクリティカルパス（応答速度）を改善する手段であるという既存の理解と整合する
   - **自己招入したレースコンディション・テストで検出（同日）**: `generate-jsonParse`追加実装時、`recordCpuCheckpoint("generate", ...)`と`recordCpuCheckpoint("generate-jsonParse", ...)`の2つのPromiseを先に生成してから並行して`_deferOrAwait()`に渡す設計にしたところ、両者が同じKVキー（`cpu-time:YYYY-MM-DD`）へ並行してGET→PUTする形になり、read-modify-writeが競合して一方の更新が失われるバグを自ら作り込んでいた。事前に追加していたテスト（`ctxなし: 応答が返るまでにcpu-time KVへ書き込まれている`）がこれを即座に検出した。修正は、同じKVキーに書き込む2つのチェックポイントを1つの非同期関数にまとめて内部で直列に`await`し、`ctx.waitUntil()`/`_deferOrAwait()`には単一のPromiseとして渡す形にした（`usagePromise`は別キー`usage:YYYY-MM-DD`のため引き続き並行実行してよい）
-  - **教訓（同じKVキーへの並行書き込み）**: 「Promiseを先に生成してから並行実行する」という最適化パターン（`usagePromise`/`cpuPromise`を先に作ってから`_deferOrAwait()`に渡す設計）は、書き込み先のKVキーが異なる場合にのみ安全。同じ日次ドキュメント（`usage:YYYY-MM-DD`・`cpu-time:YYYY-MM-DD`等）に対して複数のステップを記録する箇所を追加する際は、既存の書き込みと同じキーを共有していないか必ず確認し、共有する場合は直列化する
+  - **教訓（同じKVキーへの並行書き込み）**:「Promiseを先に生成してから並行実行する」という最適化パターン（`usagePromise`/`cpuPromise`を先に作ってから`_deferOrAwait()`に渡す設計）は、書き込み先のKVキーが異なる場合にのみ安全。同じ日次ドキュメント（`usage:YYYY-MM-DD`・`cpu-time:YYYY-MM-DD`等）に対して複数のステップを記録する箇所を追加する際は、既存の書き込みと同じキーを共有していないか必ず確認し、共有する場合は直列化する
 
 ### 33. visualHintの主役名詞がテーマを猫に擬人化し画像内に2匹目の猫顔が出現（2026-09）
 
-- **症状**: 「草の日」テーマの生成画像で、メインの猫（白いラグドール）とは別に、草むらの中に猫の顔がもう1つ描かれているとユーザーから報告。生成に使われた実際のプロンプトも合わせて共有された
+- **症状**:「草の日」テーマの生成画像で、メインの猫（白いラグドール）とは別に、草むらの中に猫の顔がもう1つ描かれているとユーザーから報告。生成に使われた実際のプロンプトも合わせて共有された
 - **原因**: `handleResearch()`のvisualHint生成指示「主役となる名詞（動物・物・人物）を1〜2語で先頭に抽出」に従い、Geminiが「草」というテーマ自体を擬人化して`cute green cat`という主役名詞を選んでいた。`_buildGeminiPrompt()`のSetting行にそのまま挿入されるため、画像生成モデルが「猫を含むシーンに、さらにもう1匹の緑の猫」を描画してしまう。2026-07に未対応のまま残っていたバグ（食材が主役名詞になり猫に合成される＝半夏生でタコの足が生えた件・`.claude/rules/architecture.md`参照）と同じ原因の類型で、対象が食材から植物に広がったケース
 - **修正**: Bug#27（丸皿画像）と同じ「原因が確定していても対症療法を主策・原因対処を補助策とする」方針で両方実施
   1. **主策**: `_buildGeminiPrompt()`の末尾ネガティブ指示群に`Only the cat(s) described above should have a face, eyes, or expression. Do not depict grass, plants, flowers, food, or any other scenery element with a face, eyes, or anthropomorphized expression.`を常時追加。従来`eatingAction`が真のときのみ付与していた食べ物専用の同種指示はこれに統合・廃止した（重複防止）。`_buildPollinationsPrompt()`にも同趣旨のキーワード`only the cat has a face, no faces on other objects`を追加
@@ -347,5 +347,17 @@
 - **テスト**: `scripts/test-bot.mjs`の`_buildGeminiPrompt`テスト群に、常時ネガティブ指示（猫以外への顔禁止）が`eatingAction`の有無にかかわらず含まれることの回帰テストを追加。`_buildPollinationsPrompt`にも同趣旨のキーワードが含まれることを確認するテストを追加
 - **場所**: `worker/index.js` `_buildGeminiPrompt()` `_buildPollinationsPrompt()` `handleResearch()`（visualHint生成プロンプト文言）
 - **教訓**: 2026-07に「設計の影響範囲が広いため別セッションで判断」として先送りしたバグは、症状の対象（食材→植物）を変えて再発した。visualHintの主役名詞抽出という設計そのものが「テーマを動物・人物として表現する」ことを許容している限り、対象を変えた再発は今後も起こりうる。先送りしたバグはドキュメントに記録するだけでなく、根本にある設計判断（主役名詞に動物・人物も許可する）自体が抱えるリスクとして次回発生時にすぐ参照できる形にしておく
+
+### 34. updateMetaInR2()の非アトミックread-modify-writeによるロストアップデートでSUZURI商品が多重登録（2026-09）
+
+- **症状**: ユーザー報告「09-08『国際識字デー』の缶バッジ・アクリルキーホルダーが多重登録されている」。Workers Logsと本番R2メタを照合し、07:02 JST（中央グループ=can-badge+acrylic-keychain）と08:33 JST（別訪問者アクセス集中）に同一グループが2回登録され、SUZURI上に同titleのマテリアルが3件（正常時は右グループ・中央グループ各1件＝2件）存在することを確認した
+- **原因**: `worker/r2-storage.js` `updateMetaInR2()`が`get→JSでマージ→put`の非アトミックな実装だった。中央グループ（同期・07:02:41完了）の書き込み直後に、右グループ（`ctx.waitUntil()`内でfal.ai処理後・07:02:58完了）が古い状態を元に上書きし、`materialId=20867579`がR2メタの`materialIds`から消失（lost update）。R2側が「中央グループ未登録」という誤情報を持ち続けたため、`/suzuri-create`の重複防止チェックが機能せず08:33 JSTに再登録された。2026-06のBug#24（materialIdがR2に保存されず孤立）の直接の続編で、当時は配列化という対症療法のみで根本の非アトミック性は放置されていた
+- **手動復旧**: 孤立した`materialId=20867579`をユーザーがSUZURI APIから手動削除。過去3日（Logs保持上限）・14日（R2保持期間）を棚卸ししたが他に実害は見つからなかった
+- **修正**: `updateMetaInR2()`をR2条件付きPUT（`onlyIf: { etagMatches: obj.httpEtag }`）による楽観的並行性制御+有界リトライ（`maxRetries=5`）に書き換え。競合時（`put()`が`null`）は再取得してマージし直しリトライ。リトライ枯渇時はthrowし、SUZURIマテリアル作成済み（課金対象商品がすでに存在）の呼び出し箇所（右/中央グループ・`/resume-hires`）ではDiscord通知を追加
+  - **`httpEtag`と決めた根拠**: 公式ドキュメント（`developers.cloudflare.com/r2/api/workers/workers-api-reference/`を直接fetch）に実例はなかった。`wrangler dev --local`でのMiniflare実地検証はサンドボックスのネットワーク制約（`put()`単体で`Network connection lost`）により不可だったため、グローバルインストール済みwranglerが依存するMiniflareソース（`.../miniflare/dist/src/workers/r2/bucket.worker.js`）を直接読み、`etagMatches`が`// "If-Match"`とコメントされ（RFC 9110のIf-Matchはクォート付き必須）ていることから`httpEtag`と判断した。**実行検証はできておらず参照実装ソースの読解による判断**（誤っていても`onlyIf`が競合を検出できないだけで新規不具合は生まない設計にしてある）
+- **テスト**: `makeMockBucket()`をetag挙動（書込毎に更新・`onlyIf`不一致で`put()`が`null`）を再現するよう拡張し、2者/3者同時書き込みの回帰テスト・リトライ回数のpin・リトライ枯渇時のthrowを追加
+- **見送った項目**: `incrementUsageKv()`/`incrementCpuTimeKv()`/`sale-check.js`のKV書き込みにも同型の問題があるが、KVには条件付き書き込みがなく移植不可・実害も軽微なため対象外
+- **場所**: `worker/r2-storage.js` `updateMetaInR2()`・`worker/index.js`（Discord通知追加）・`scripts/test-bot.mjs`
+- **教訓**: 複数呼び出し元が同一キーへ非同期タイミングで書き込む設計の`get→merge→put`は必ずロストアップデートを起こしうる。対症療法（Bug#24の配列化）は症状を隠すだけで、根本原因から形を変えて再発する。外部APIの未確認挙動は実行検証できない場合、参照実装ソースという次善の一次情報を探し「実行検証していない」旨を明記して判断する
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）

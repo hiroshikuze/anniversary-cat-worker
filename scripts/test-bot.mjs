@@ -1377,19 +1377,56 @@ function makeAutoCropDeps(smallPixels, croppedBytes) {
 // ---------------------------------------------------------------------------
 console.log("\n[updateMetaInR2]");
 
+// R2のetag挙動（onlyIf.etagMatches不一致でput()がnullを返す）を再現するモック。
+// I/Oを一切挟まない同期的なget/put実装のため、Promise.all()での同時呼び出しは
+// JSのマイクロタスク実行順により決定的に同じ競合パターンを再現できる（flakyにならない）。
 function makeMockBucket(initialMeta) {
-  const store = {};
+  const store = {}; // key -> { value, etag }
+  let getCallCount = 0;
+  let putCallCount = 0;
   if (initialMeta !== undefined) {
-    store["test-id/meta.json"] = JSON.stringify(initialMeta);
+    store["test-id/meta.json"] = { value: JSON.stringify(initialMeta), etag: "etag-0" };
   }
+  let etagSeq = 1;
+  return {
+    async get(key) {
+      getCallCount++;
+      const entry = store[key];
+      if (!entry) return null;
+      return {
+        etag: entry.etag,
+        httpEtag: `"${entry.etag}"`,
+        json: async () => JSON.parse(entry.value),
+      };
+    },
+    async put(key, value, options) {
+      putCallCount++;
+      const onlyIf = options?.onlyIf;
+      if (onlyIf?.etagMatches !== undefined) {
+        const current = store[key];
+        const currentHttpEtag = current ? `"${current.etag}"` : undefined;
+        if (currentHttpEtag !== onlyIf.etagMatches) return null; // 競合: 書き込まない
+      }
+      store[key] = { value, etag: `etag-${etagSeq++}` };
+      return { etag: store[key].etag };
+    },
+    _read(key) { return store[key] ? JSON.parse(store[key].value) : undefined; },
+    _getCallCount() { return getCallCount; },
+    _putCallCount() { return putCallCount; },
+  };
+}
+
+// put()が常にnullを返す（＝常に競合する）スタブ。リトライ枯渇のテスト専用。
+function makeAlwaysConflictBucket(initialMeta) {
+  const store = { "test-id/meta.json": JSON.stringify(initialMeta) };
+  let putCallCount = 0;
   return {
     async get(key) {
       if (!(key in store)) return null;
-      const val = store[key];
-      return { json: async () => JSON.parse(val) };
+      return { etag: "e", httpEtag: '"e"', json: async () => JSON.parse(store[key]) };
     },
-    async put(key, value) { store[key] = value; },
-    _read(key) { return store[key] ? JSON.parse(store[key]) : undefined; },
+    async put() { putCallCount++; return null; },
+    _putCallCount() { return putCallCount; },
   };
 }
 
@@ -1532,6 +1569,88 @@ console.log("\n[updateMetaInR2: productsマージ]");
   const result = bucket._read("test-id/meta.json");
   assert("productsマージ: 既存空でも新productが追加される", result.products.length === 1);
   assert("productsマージ: 既存空でもt-shirtが存在する", result.products[0].slug === "t-shirt");
+}
+
+// ---------------------------------------------------------------------------
+// updateMetaInR2: 楽観ロック（etag）競合（Bug#34回帰テスト）
+// ---------------------------------------------------------------------------
+console.log("\n[updateMetaInR2: 楽観ロック（etag）競合]");
+
+{
+  // 競合なし: put()は1回のみで成功する
+  const bucket = makeMockBucket({ theme: "テスト", materialIds: [], products: [] });
+  await updateMetaInR2(bucket, "test-id", { materialIds: [1] });
+  assert("updateMetaInR2: 競合なしなら1回のputで書き込まれる", bucket._putCallCount() === 1);
+}
+
+{
+  // 本番インシデントの直接回帰テスト: 中央グループ・右グループが同時に書き込んでも
+  // 両方のmaterialIds・全4スラッグのproductsが保持される
+  const bucket = makeMockBucket({ theme: "テスト", materialIds: [], products: [] });
+  const centerUpdate = {
+    materialIds: [100],
+    products: [
+      { slug: "can-badge", sampleUrl: "https://suzuri.jp/cb", available: true },
+      { slug: "acrylic-keychain", sampleUrl: "https://suzuri.jp/ak", available: true },
+    ],
+  };
+  const rightUpdate = {
+    materialIds: [200],
+    products: [
+      { slug: "t-shirt", sampleUrl: "https://suzuri.jp/ts", available: true },
+      { slug: "sticker", sampleUrl: "https://suzuri.jp/st", available: true },
+    ],
+  };
+  await Promise.all([
+    updateMetaInR2(bucket, "test-id", centerUpdate),
+    updateMetaInR2(bucket, "test-id", rightUpdate),
+  ]);
+  const result = bucket._read("test-id/meta.json");
+  assert("updateMetaInR2: 中央/右グループ同時書き込みで両方のmaterialIdsが保持される（本番インシデント回帰）",
+    JSON.stringify(result.materialIds.sort()) === JSON.stringify([100, 200]));
+  assert("updateMetaInR2: 中央/右グループ同時書き込みで全4スラッグのproductsが保持される",
+    result.products.length === 4);
+  assert("updateMetaInR2: 2者競合時は敗者側が1回リトライし計3回putが呼ばれる", bucket._putCallCount() === 3);
+  assert("updateMetaInR2: 2者競合時のget呼び出しは計3回", bucket._getCallCount() === 3);
+}
+
+{
+  // 3者同時書き込み（中央・右グループ・resume-hires相当）でも全materialIdsが保持される
+  const bucket = makeMockBucket({ theme: "テスト", materialIds: [], products: [] });
+  await Promise.all([
+    updateMetaInR2(bucket, "test-id", { materialIds: [1], products: [{ slug: "can-badge", available: true }] }),
+    updateMetaInR2(bucket, "test-id", { materialIds: [2], products: [{ slug: "t-shirt", available: true }] }),
+    updateMetaInR2(bucket, "test-id", { materialIds: [3], products: [{ slug: "sticker", available: true }] }),
+  ]);
+  const result = bucket._read("test-id/meta.json");
+  assert("updateMetaInR2: 3者同時書き込みでも全materialIdsが保持される",
+    JSON.stringify(result.materialIds.sort()) === JSON.stringify([1, 2, 3]));
+  assert("updateMetaInR2: 3者同時書き込みでも全productsが保持される", result.products.length === 3);
+}
+
+{
+  // リトライ枯渇: put()が常に競合(null)を返す場合、maxRetries回試行してthrowする
+  const bucket = makeAlwaysConflictBucket({ theme: "テスト", materialIds: [], products: [] });
+  let threw = false;
+  try {
+    await updateMetaInR2(bucket, "test-id", { materialIds: [1] }, 3);
+  } catch {
+    threw = true;
+  }
+  assert("updateMetaInR2: maxRetries回連続で競合するとthrowする", threw === true);
+  assert("updateMetaInR2: リトライ枯渇時のput呼び出し回数がmaxRetriesと一致する", bucket._putCallCount() === 3);
+}
+
+{
+  // 境界値: maxRetriesが1でも競合なしなら成功する
+  const bucket = makeMockBucket({ theme: "テスト", materialIds: [], products: [] });
+  let threw = false;
+  try {
+    await updateMetaInR2(bucket, "test-id", { materialIds: [1] }, 1);
+  } catch {
+    threw = true;
+  }
+  assert("updateMetaInR2: maxRetriesが1でも競合なしなら成功する", !threw);
 }
 
 // ---------------------------------------------------------------------------
