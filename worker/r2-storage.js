@@ -122,9 +122,11 @@ export async function deleteFromR2(bucket, id) {
  * 書き込みを排他する（Bug#34）。以前はget→JSでマージ→putの非アトミック実装だったため、
  * 複数の呼び出し元が競合すると後勝ちが先勝ちの結果を黙って上書きするロストアップデートが
  * 発生し、実際に本番でmaterialIdがmeta.jsonから消失しSUZURI商品の多重登録を招いた。
- * `onlyIf.etagMatches`にはhttpEtag（クォート付き文字列）を渡す。理由は
- * `.claude/bugs-history.md`のBug#34参照（実行検証はできておらず、公式ドキュメント＋
- * Miniflare参照実装ソースの読解による判断）。
+ * `onlyIf.etagMatches`にはR2Objectの`etag`（クォートなしの生ハッシュ値）を渡す。
+ * `httpEtag`（HTTPヘッダー用のクォート付き文字列）を渡すと本物のworkerd R2 APIが
+ * `Conditional ETag should not be wrapped in quotes`で例外を投げる（2026-09本番で実際に
+ * 発生・`developers.cloudflare.com/r2/api/workers/workers-api-reference/`で確認済み。
+ * 詳細は`.claude/bugs-history.md`のBug#34追記参照）。
  *
  * リトライ対象は`put()`が`null`を返すCAS競合のみ。`get()`/`put()`が例外を投げる
  * 本物のネットワークエラー等はリトライせずそのままthrowする。
@@ -158,7 +160,7 @@ export async function updateMetaInR2(bucket, id, updates, maxRetries = 5) {
     }
     const result = await bucket.put(key, JSON.stringify(merged), {
       httpMetadata: { contentType: "application/json" },
-      onlyIf: { etagMatches: obj.httpEtag },
+      onlyIf: { etagMatches: obj.etag },
     });
     if (result !== null) return;
     if (attempt > 0) {
