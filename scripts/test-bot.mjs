@@ -1380,6 +1380,13 @@ console.log("\n[updateMetaInR2]");
 // R2のetag挙動（onlyIf.etagMatches不一致でput()がnullを返す）を再現するモック。
 // I/Oを一切挟まない同期的なget/put実装のため、Promise.all()での同時呼び出しは
 // JSのマイクロタスク実行順により決定的に同じ競合パターンを再現できる（flakyにならない）。
+//
+// Bug#34の教訓（2026-09-09追記）: 実際のworkerd R2 APIは onlyIf.etagMatches に
+// クォート付き文字列（httpEtag形式）を渡すと`Conditional ETag should not be wrapped
+// in quotes`で例外を投げる（本番で実際に発生・developers.cloudflare.com/r2/api/workers/
+// workers-api-reference/で確認済み）。以前のモックはクォート付き同士の比較で実装の誤り
+// （httpEtag使用）と平仄が合ってしまいテストで検知できなかったため、この制約を明示的に
+// 再現する（クォート付きが渡されたら即throw）。
 function makeMockBucket(initialMeta) {
   const store = {}; // key -> { value, etag }
   let getCallCount = 0;
@@ -1403,9 +1410,12 @@ function makeMockBucket(initialMeta) {
       putCallCount++;
       const onlyIf = options?.onlyIf;
       if (onlyIf?.etagMatches !== undefined) {
+        if (/^".*"$/.test(onlyIf.etagMatches)) {
+          throw new Error(`Conditional ETag should not be wrapped in quotes ("${onlyIf.etagMatches}")`);
+        }
         const current = store[key];
-        const currentHttpEtag = current ? `"${current.etag}"` : undefined;
-        if (currentHttpEtag !== onlyIf.etagMatches) return null; // 競合: 書き込まない
+        const currentEtag = current ? current.etag : undefined;
+        if (currentEtag !== onlyIf.etagMatches) return null; // 競合: 書き込まない
       }
       store[key] = { value, etag: `etag-${etagSeq++}` };
       return { etag: store[key].etag };
@@ -1581,6 +1591,20 @@ console.log("\n[updateMetaInR2: 楽観ロック（etag）競合]");
   const bucket = makeMockBucket({ theme: "テスト", materialIds: [], products: [] });
   await updateMetaInR2(bucket, "test-id", { materialIds: [1] });
   assert("updateMetaInR2: 競合なしなら1回のputで書き込まれる", bucket._putCallCount() === 1);
+}
+
+{
+  // 本番インシデントの直接回帰テスト（2026-09-09）: onlyIf.etagMatchesにhttpEtag（クォート付き）
+  // を渡すと本物のworkerd R2 APIが例外を投げる（Conditional ETag should not be wrapped in
+  // quotes）。updateMetaInR2()がクォートなしのetagを渡していることを確認する
+  const bucket = makeMockBucket({ theme: "テスト", materialIds: [], products: [] });
+  let threw = false;
+  try {
+    await updateMetaInR2(bucket, "test-id", { materialIds: [1] });
+  } catch {
+    threw = true;
+  }
+  assert("updateMetaInR2: onlyIf.etagMatchesにクォート付きhttpEtagを渡さない（Bug#34再発防止）", threw === false);
 }
 
 {
