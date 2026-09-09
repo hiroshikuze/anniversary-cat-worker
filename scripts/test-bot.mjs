@@ -23,7 +23,7 @@ import {
 import { _setSaleForTest } from "../worker/sale.js";
 import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale } from "../worker/sale-check.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 
@@ -2205,6 +2205,74 @@ function makeR2BucketMock() {
   });
   assert("IN_PROGRESS継続: maxAttempts回(3回)ポーリングする", calls === 3);
   assert("IN_PROGRESS継続: 最終的にnullを返す", texture === null);
+}
+
+// ---------------------------------------------------------------------------
+// _updateMetaOrRollback: updateMetaInR2()最終失敗時のSUZURIマテリアル削除ロールバック
+// テスト用にdeps（updateMetaInR2Fn/deleteSuzuriMaterialFn/notifyDiscordFn）を注入する
+// ---------------------------------------------------------------------------
+console.log("\n[_updateMetaOrRollback]");
+
+{
+  // 正常系: updateMetaInR2()が成功すればロールバック・通知は一切発生しない
+  let deleteCalls = 0;
+  let notifyCalls = 0;
+  const updateMetaInR2Fn = async () => {};
+  const deleteSuzuriMaterialFn = async () => { deleteCalls++; };
+  const notifyDiscordFn = async () => { notifyCalls++; };
+  await _updateMetaOrRollback({ IMAGE_BUCKET: {} }, "user/abc", { materialIds: [1] }, 1, "[test]", {
+    updateMetaInR2Fn, deleteSuzuriMaterialFn, notifyDiscordFn,
+  });
+  assert("正常系: deleteSuzuriMaterialは呼ばれない", deleteCalls === 0);
+  assert("正常系: notifyDiscordは呼ばれない", notifyCalls === 0);
+}
+
+{
+  // R2書き込み失敗→ロールバック成功: SUZURIマテリアルを削除し、Discord通知は行わない
+  let deleteCalls = 0;
+  let deletedMaterialId = null;
+  let notifyCalls = 0;
+  const updateMetaInR2Fn = async () => { throw new Error("etag競合、リトライ枯渇"); };
+  const deleteSuzuriMaterialFn = async (materialId) => { deleteCalls++; deletedMaterialId = materialId; };
+  const notifyDiscordFn = async () => { notifyCalls++; };
+  await _updateMetaOrRollback({ IMAGE_BUCKET: {} }, "user/abc", { materialIds: [42] }, 42, "[test]", {
+    updateMetaInR2Fn, deleteSuzuriMaterialFn, notifyDiscordFn,
+  });
+  assert("ロールバック成功: deleteSuzuriMaterialが1回呼ばれる", deleteCalls === 1);
+  assert("ロールバック成功: 削除対象のmaterialIdが渡される", deletedMaterialId === 42);
+  assert("ロールバック成功: 孤立が残らないためDiscord通知しない", notifyCalls === 0);
+}
+
+{
+  // R2書き込み・ロールバック両方失敗: 孤立マテリアルが実際に残るためDiscord通知する
+  let notifyCalls = 0;
+  let notifyMessage = "";
+  const updateMetaInR2Fn = async () => { throw new Error("etag競合、リトライ枯渇"); };
+  const deleteSuzuriMaterialFn = async () => { throw new Error("SUZURI削除失敗: status=500"); };
+  const notifyDiscordFn = async (webhookUrl, message) => { notifyCalls++; notifyMessage = message; };
+  await _updateMetaOrRollback({ IMAGE_BUCKET: {}, DISCORD_WEBHOOK_URL: "https://discord.example" }, "user/abc", { materialIds: [99] }, 99, "[test]", {
+    updateMetaInR2Fn, deleteSuzuriMaterialFn, notifyDiscordFn,
+  });
+  assert("両方失敗: Discord通知が1回呼ばれる", notifyCalls === 1);
+  assert("両方失敗: 通知にmaterialIdが含まれる", notifyMessage.includes("99"));
+  assert("両方失敗: 通知に書き込みエラーが含まれる", notifyMessage.includes("etag競合"));
+  assert("両方失敗: 通知に削除エラーが含まれる", notifyMessage.includes("SUZURI削除失敗"));
+}
+
+{
+  // _updateMetaOrRollback自体は例外を投げない（呼び出し元でtry/catch不要な設計）
+  const updateMetaInR2Fn = async () => { throw new Error("失敗"); };
+  const deleteSuzuriMaterialFn = async () => { throw new Error("失敗"); };
+  const notifyDiscordFn = async () => {};
+  let threw = false;
+  try {
+    await _updateMetaOrRollback({ IMAGE_BUCKET: {} }, "user/abc", {}, 1, "[test]", {
+      updateMetaInR2Fn, deleteSuzuriMaterialFn, notifyDiscordFn,
+    });
+  } catch {
+    threw = true;
+  }
+  assert("例外非伝播: 両方失敗してもthrowしない", threw === false);
 }
 
 // ---------------------------------------------------------------------------
