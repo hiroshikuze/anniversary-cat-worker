@@ -124,7 +124,14 @@ anniversary-cat-worker/
 
 右グループ（t-shirt/sticker）・中央グループ（can-badge/acrylic-keychain）はそれぞれ独立して`createSuzuriProducts()`を呼ぶため、`POST /api/v1/materials`が**2回**実行され、SUZURI側には別々の`materialId`を持つ2つのマテリアルが作成される。R2メタの`materialIds`（配列）は両方の呼び出し結果を`updateMetaInR2()`で蓄積し（`products`と同じupsertパターン）、14日後のクリーンアップ（`scheduled()`）が配列内の全IDを削除する。`/resume-hires/:id`（安全網エンドポイント）が右グループを再実行した場合も同様に`materialIds`へ追記する。
 
-**`updateMetaInR2()`の並行書き込み耐性（2026-09追加・Bug#34）:** 右グループ（`ctx.waitUntil()`内で15〜20秒後）・中央グループ（同期）・`/resume-hires`はいずれも同一`r2Id`のmeta.jsonへ独立したタイミングで書き込む。かつては単純な`get→JSでマージ→put`だったため、書き込みが競合すると後勝ちが先勝ちの結果を黙って上書きするロストアップデートが発生し、実際に本番でマテリアルIDが`materialIds`配列から消失する事故が起きた（詳細は`.claude/bugs-history.md`のBug#34参照）。現在はR2の条件付きPUT（`onlyIf: { etagMatches: obj.httpEtag }`）による楽観的並行性制御+有界リトライ（`maxRetries=5`）で、複数の書き込みが競合しても全て失われずマージされることを保証している。
+**`updateMetaInR2()`の並行書き込み耐性（2026-09追加・Bug#34）:** 右グループ（`ctx.waitUntil()`内で15〜20秒後）・中央グループ（同期）・`/resume-hires`はいずれも同一`r2Id`のmeta.jsonへ独立したタイミングで書き込む。かつては単純な`get→JSでマージ→put`だったため、書き込みが競合すると後勝ちが先勝ちの結果を黙って上書きするロストアップデートが発生し、実際に本番でマテリアルIDが`materialIds`配列から消失する事故が起きた（詳細は`.claude/bugs-history.md`のBug#34参照）。現在はR2の条件付きPUT（`onlyIf: { etagMatches: obj.etag }`）による楽観的並行性制御+有界リトライ（`maxRetries=5`）で、複数の書き込みが競合しても全て失われずマージされることを保証している。
+
+**`updateMetaInR2()`最終失敗時のSUZURIマテリアル削除ロールバック（`_updateMetaOrRollback()`・2026-09追加）:** 上記のCAS+リトライを`maxRetries`回試しても最終的に`updateMetaInR2()`が失敗した場合（etag競合が解消しない・R2側の障害等）、`createSuzuriProducts()`はすでに成功済み（課金対象の商品ページがSUZURI上に存在）だがR2メタには一切記録されない「孤立マテリアル」が残ってしまう。この孤立は`scripts/audit-suzuri-materials.mjs`では検出できない（同スクリプトは販売期間が過ぎた期限切れマテリアルのみを対象とし、今日登録されたばかりの孤立は対象外）ため、次に共有ページが訪問されるたびにR2側が「未登録」と誤認して再登録が走り、孤立が際限なく増え続けるリスクがある（実際に2026-09に1日で8件の孤立マテリアルが発生する事故が起きた。詳細は`.claude/bugs-history.md`のBug#34参照）。
+
+- `worker/index.js` `_updateMetaOrRollback(env, r2Id, updates, materialId, logPrefix, deps = {})`としてexport。`updateMetaInR2()`を試み、失敗したら**直前に作成した`materialId`を`deleteSuzuriMaterial()`で削除する補償トランザクション（ロールバック）**を行う
+- ロールバック（削除）が成功した場合は孤立が実際には残らないため、Discord通知は行わない（`console.error`のログのみ）。**ロールバック自体も失敗した場合のみ**Discord通知する（書き込み失敗・削除失敗の両エラーメッセージを含む）。この場合のみ実際に孤立マテリアルが残るため、手動対応が必要というシグナルになる
+- center・right・`/resume-hires`の3箇所すべてこのヘルパー経由に統一。`deps`引数（`updateMetaInR2Fn`・`deleteSuzuriMaterialFn`・`notifyDiscordFn`）はテスト用（`_pollFalAndGetTexture()`と同じ「依存関数を引数で受け取る」パターン）
+- **削除ロールバックが本質的に完全な保証ではない点**: `deleteSuzuriMaterial()`自体もネットワーク障害等で失敗しうる（その場合は従来通りDiscord通知で人間に委ねる）。ただしR2書き込みとSUZURI削除という独立した2つの操作が両方失敗する確率は、R2書き込みの単独失敗より大幅に低いと見込まれるため、孤立の発生頻度を実用上大きく下げられる
 
 **レスポンス:**
 

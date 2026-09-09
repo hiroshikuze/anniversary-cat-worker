@@ -1294,6 +1294,47 @@ export async function _pollFalAndGetTexture(falRequestId, env, r2Id, workerOrigi
   return null;
 }
 
+/**
+ * updateMetaInR2()を試み、リトライ枯渇後も最終的に失敗したら、直前に作成した
+ * SUZURIマテリアルを削除する補償トランザクション（ロールバック）を行う。
+ *
+ * createSuzuriProducts()はすでに成功済み（課金対象の商品ページがSUZURI上に存在）だが
+ * R2メタへの記録に失敗すると孤立マテリアルが残り、次の訪問で「未登録」と誤認されて
+ * 再登録が繰り返される（実際に1日で8件発生する事故が起きた。詳細は
+ * .claude/bugs-history.md のBug#34参照）。放置してDiscord通知するだけでは実害
+ * （孤立の累積）は防げないため、削除まで自動化する。
+ *
+ * ロールバック（削除）が成功すれば孤立は実際には残らないためDiscord通知しない
+ * （console.errorのログのみ）。削除自体も失敗した場合のみ、実際に孤立マテリアルが
+ * 残るためDiscord通知する。この関数自体は例外を投げない（呼び出し元でtry/catch不要）。
+ *
+ * @param {object} env
+ * @param {string} r2Id
+ * @param {object} updates - updateMetaInR2()に渡すフィールド（materialIds/products等）
+ * @param {number} materialId - 失敗時に削除するSUZURIマテリアルID
+ * @param {string} logPrefix - ログ・Discord通知に使うプレフィックス（例: "[suzuri-create] rightグループ"）
+ * @param {object} deps - テスト用の依存注入（updateMetaInR2Fn・deleteSuzuriMaterialFn・notifyDiscordFn）
+ */
+export async function _updateMetaOrRollback(env, r2Id, updates, materialId, logPrefix, deps = {}) {
+  const {
+    updateMetaInR2Fn      = updateMetaInR2,
+    deleteSuzuriMaterialFn = deleteSuzuriMaterial,
+    notifyDiscordFn        = notifyDiscord,
+  } = deps;
+  try {
+    await updateMetaInR2Fn(env.IMAGE_BUCKET, r2Id, updates);
+  } catch (e) {
+    console.error(`${logPrefix}: R2メタ書き込み失敗、SUZURIマテリアルをロールバック materialId=${materialId} ${e.message}`);
+    try {
+      await deleteSuzuriMaterialFn(materialId, env);
+      console.log(`${logPrefix}: ロールバック完了 materialId=${materialId}`);
+    } catch (delErr) {
+      await notifyDiscordFn(env.DISCORD_WEBHOOK_URL,
+        `${logPrefix}: SUZURIマテリアル作成済み(materialId=${materialId})だがR2メタ書き込み・削除ロールバックの両方が失敗\nr2Id=${r2Id}\n書き込みエラー: ${e.message}\n削除エラー: ${delErr.message}`);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // メインハンドラ
 // ---------------------------------------------------------------------------
@@ -1597,19 +1638,13 @@ ${itemsXml}
       let sr;
       try {
         sr = await createSuzuriProducts(suzuriTexture, meta.theme ?? "", env, RIGHT_SLUGS, null, meta.description ?? "", id, meta.guestSuzuriTag ?? null);
-        await updateMetaInR2(env.IMAGE_BUCKET, id, { materialIds: [sr.materialId], products: sr.products });
-        console.log(`[resume-hires] SUZURI登録完了`);
-        return Response.json({ products: sr.products }, { headers: corsH });
       } catch (e) {
         console.error(`[resume-hires] SUZURI登録失敗: ${e.message}`);
-        if (sr) {
-          // createSuzuriProducts()は成功済み（課金対象の商品ページが既に存在）だが
-          // updateMetaInR2()が失敗＝R2メタに未記録の孤立マテリアルの恐れ（Bug#34）
-          await notifyDiscord(env.DISCORD_WEBHOOK_URL,
-            `[resume-hires] SUZURIマテリアル作成済み(materialId=${sr.materialId})だがR2メタ書き込みに失敗\nid=${id}\n${e.message}`);
-        }
         return Response.json({ error: e.message }, { status: 500, headers: corsH });
       }
+      await _updateMetaOrRollback(env, id, { materialIds: [sr.materialId], products: sr.products }, sr.materialId, "[resume-hires]");
+      console.log(`[resume-hires] SUZURI登録完了`);
+      return Response.json({ products: sr.products }, { headers: corsH });
     }
 
     if (request.method !== "POST") {
@@ -1813,19 +1848,14 @@ ${itemsXml}
             let sr;
             try {
               sr = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, resolvedBackTexture, description ?? "", r2Id ?? null, guestSuzuriTag);
-              if (r2Id && env.IMAGE_BUCKET) {
-                await updateMetaInR2(env.IMAGE_BUCKET, r2Id, { materialIds: [sr.materialId], products: sr.products });
-              }
-              console.log(`[suzuri-create] right グループ完了 slugs=${slugs?.join(",")}`);
             } catch (e) {
               console.error(`[suzuri-create] right グループ失敗: ${e.message}`);
-              if (sr) {
-                // createSuzuriProducts()は成功済み（課金対象の商品ページが既に存在）だが
-                // updateMetaInR2()が失敗＝R2メタに未記録の孤立マテリアルの恐れ（Bug#34）
-                await notifyDiscord(env.DISCORD_WEBHOOK_URL,
-                  `[suzuri-create] rightグループ: SUZURIマテリアル作成済み(materialId=${sr.materialId})だがR2メタ書き込みに失敗\nr2Id=${r2Id}\n${e.message}`);
-              }
+              return;
             }
+            if (r2Id && env.IMAGE_BUCKET) {
+              await _updateMetaOrRollback(env, r2Id, { materialIds: [sr.materialId], products: sr.products }, sr.materialId, "[suzuri-create] rightグループ");
+            }
+            console.log(`[suzuri-create] right グループ完了 slugs=${slugs?.join(",")}`);
           })());
           result = { queued: true, slugs };
         } else {
@@ -1833,18 +1863,10 @@ ${itemsXml}
           const suzuriTexture = `data:${mimeType};base64,${imageData}`;
           const suzuriResult = await createSuzuriProducts(suzuriTexture, theme, env, slugs ?? null, null, description ?? "", r2Id ?? null, guestSuzuriTag);
           if (r2Id && env.IMAGE_BUCKET) {
-            try {
-              await updateMetaInR2(env.IMAGE_BUCKET, r2Id, {
-                materialIds: [suzuriResult.materialId],
-                products:    suzuriResult.products,
-              });
-            } catch (e) {
-              console.warn(`[suzuri-create] R2メタ更新失敗: ${e.message}`);
-              // createSuzuriProducts()は成功済み（課金対象の商品ページが既に存在）だが
-              // updateMetaInR2()が失敗＝R2メタに未記録の孤立マテリアルの恐れ（Bug#34）
-              await notifyDiscord(env.DISCORD_WEBHOOK_URL,
-                `[suzuri-create] centerグループ: SUZURIマテリアル作成済み(materialId=${suzuriResult.materialId})だがR2メタ書き込みに失敗\nr2Id=${r2Id}\n${e.message}`);
-            }
+            await _updateMetaOrRollback(env, r2Id, {
+              materialIds: [suzuriResult.materialId],
+              products:    suzuriResult.products,
+            }, suzuriResult.materialId, "[suzuri-create] centerグループ");
           }
           result = { products: suzuriResult.products, materialId: suzuriResult.materialId };
         }

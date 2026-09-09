@@ -152,7 +152,8 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | fal.ai Queue APIのrequest_idは`ctx.waitUntil()`より前にR2へ保存 | ctx.waitUntil()がwall-clock超過で強制終了しても、IDだけは確実に残す保証が必要 |
 | fal.aiポーリング予算（3回×5秒）を安易に増やさない | 2026-08実測で成功ケース（3回目でCOMPLETED）は`bg開始`から`right グループ完了`まで約25.6秒かかっており、28秒予算に対し残り margin は約2.4秒しかない。ポーリングを1〜2秒伸ばすだけでも、CDN取得＋R2保存＋SUZURI登録という重い後処理ごと強制終了され、成功に近いケースほど「何も保存されない」方向に倒れるリスクがある。詳細は`.claude/revision_log.md`の2026-08エントリ参照 |
 | 外部APIレスポンスをMapにする際は整数IDをキーにする | 文字列名はAPIバージョン・ロケールで表記が変わる（過去バグ: SUZURI item.name 表記ゆれ） |
-| `updateMetaInR2()`は単純な`get→merge→put`に戻さない（R2条件付きPUT`onlyIf:{etagMatches}`によるCAS+リトライを維持する） | 複数の呼び出し元（右グループ・中央グループ・`/resume-hires`）が同一r2Idへ非同期タイミングで書き込むため、非アトミックな実装だとロストアップデートでmaterialIdがR2メタから消失し、SUZURI商品の多重登録・孤立マテリアルを招く（実際に発生・詳細は`.claude/bugs-history.md`のBug#34参照） |
+| `updateMetaInR2()`は単純な`get→merge→put`に戻さない（R2条件付きPUT`onlyIf:{etagMatches:obj.etag}`によるCAS+リトライを維持する） | 複数の呼び出し元（右グループ・中央グループ・`/resume-hires`）が同一r2Idへ非同期タイミングで書き込むため、非アトミックな実装だとロストアップデートでmaterialIdがR2メタから消失し、SUZURI商品の多重登録・孤立マテリアルを招く（実際に発生・詳細は`.claude/bugs-history.md`のBug#34参照）。`etagMatches`は必ずクォートなしの`etag`を渡す（`httpEtag`はクォート付きでworkerdが例外を投げる。実際に本番で発生済み） |
+| `updateMetaInR2()`がリトライ枯渇後も最終的に失敗したら、直前に作成したSUZURIマテリアルを`_updateMetaOrRollback()`経由で削除する（放置しない） | 削除せず放置すると、R2に記録されない孤立マテリアルが訪問のたびに増殖する（実際に1日で8件発生する事故が起きた）。詳細は`.claude/rules/architecture.md`の「`updateMetaInR2()`最終失敗時のSUZURIマテリアル削除ロールバック」参照 |
 | SUZURIセール期間・金額の一次情報源は`worker/sale.js`の`_currentSale`のみ | frontendが独自にセール日付・文言をハードコードして更新漏れが起きる事故を防ぐため。frontendは`GET /sale-info`をfetchして表示する |
 | Pollinationsプロンプトの先頭は`kawaii watercolor cat`固定 | Fluxモデルは前半トークン重視。先頭に猫・スタイルを宣言することで一貫した品質を保つ |
 | GeminiプロンプトのStyle行は年間固定文言に戻さず`getSeasonalStyleTone()`で季節依存にする | 固定文言`light pink and beige tones`が季節・テーマと無関係に桜の花びらを連想させた（Bug#26）。詳細は`.claude/rules/architecture.md`の「Style行の季節カラー」参照 |
