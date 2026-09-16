@@ -136,6 +136,12 @@ export async function deleteFromR2(bucket, id) {
  * 必ず作成済みのため、この分岐は実質的に「真に存在しないid」のみを意味する
  * （＝新規作成との競合は想定しなくてよい）。
  *
+ * **呼び出し元の注意**: `materialIds`/`products`を書き込む＝直前にSUZURIマテリアルを
+ * 作成済みの呼び出しでは、このリトライがすべて尽きて最終的に失敗すると孤立マテリアルが
+ * 残る（実際に1日で8件発生した事故がある）。そのような呼び出しは`updateMetaInR2()`を
+ * 直接使わず、`worker/index.js`の`_updateMetaOrRollback()`経由で呼び、失敗時に
+ * `deleteSuzuriMaterial()`で削除する補償処理を必ず行うこと。
+ *
  * @param {R2Bucket} bucket
  * @param {string} id
  * @param {object} updates - 既存メタに上書きするフィールド
