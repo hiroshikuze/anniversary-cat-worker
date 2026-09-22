@@ -602,6 +602,10 @@ console.log("\n[runBot: Mastodon投稿]");
     assert("themeEnあり: 2通目にMastodonテキストが含まれる", discordBodies[1]?.includes("Mastodon投稿テキスト"));
     assert("themeEnあり: 2通目にMastodon英語ヘッダーが含まれる", discordBodies[1]?.includes("Today is"));
     assert("themeEnあり: 2通目にBluesky投稿テキストが含まれる", discordBodies[1]?.includes("Bluesky投稿テキスト"));
+    // 2026-09追加: Discord通知にBluesky/Mastodonの実投稿URLが記載される（makeBskyMastoFetch()の
+    // createRecord→uri:"at://mock"・statuses→url:`${MASTO_INSTANCE}/@user/456`を使って検証）
+    assert("1通目にBluesky投稿URLが含まれる", discordBodies[0]?.includes("https://bsky.app/profile/id/post/mock"));
+    assert("1通目にMastodon投稿URLが含まれる", discordBodies[0]?.includes(`${MASTO_INSTANCE}/@user/456`));
   }
 
   // ── Discord 2通目: themeEn未取得 → 常に送信・注記が入る ──
@@ -5537,6 +5541,45 @@ console.log("\n[runMonthlyWallpaperPost: 正常フロー（モック合成・R2�
   assert("R2にno-calendar.pngが保存される", savedKeys.some(k => k.endsWith("/no-calendar.png")));
   assert("R2にmeta.jsonが保存される", savedKeys.some(k => k.endsWith("/meta.json")));
   assert("保存キーがmonthly-wallpaper/プレフィックス", savedKeys.every(k => k.startsWith("monthly-wallpaper/")));
+}
+
+console.log("\n[runMonthlyWallpaperPost: Discord通知にBluesky/Mastodon投稿URLが記載される（2026-09追加）]");
+{
+  const bucket = { async put() {}, async get() { return null; } };
+  const MASTO_INSTANCE_WP = "https://masto.example";
+  const env = {
+    GEMINI_API_KEY: "test-key",
+    BLUESKY_IDENTIFIER: "nyanmusu.bsky.social", BLUESKY_APP_PASSWORD: "pass",
+    MASTODON_INSTANCE_URL: MASTO_INSTANCE_WP, MASTODON_ACCESS_TOKEN: "masto-token",
+    DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+    IMAGE_BUCKET: bucket,
+  };
+  const mockGenerate = async () => ({ imageData: btoa("fake-image"), mimeType: "image/png", source: "gemini", prompt: "test prompt" });
+  const mockComposite = async () => ({
+    calendarImageData: btoa("calendar"), noCalendarImageData: btoa("no-calendar"),
+    mimeType: "image/png", composited: true,
+  });
+
+  const discordBodies = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("discord")) {
+      discordBodies.push(JSON.parse(opts?.body ?? "{}").content ?? "");
+      return { ok: true, status: 204, text: async () => "" };
+    }
+    if (u.includes("createSession")) return { ok: true, status: 200, text: async () => JSON.stringify({ accessJwt: "jwt", did: "did:mock" }) };
+    if (u.includes("uploadBlob"))    return { ok: true, status: 200, text: async () => JSON.stringify({ blob: { $type: "blob", ref: { $link: "r" }, mimeType: "image/png", size: 1 } }) };
+    if (u.includes("createRecord"))  return { ok: true, status: 200, text: async () => JSON.stringify({ uri: "at://did:plc:x/app.bsky.feed.post/wallpaper1", cid: "cid" }) };
+    if (u.includes("/api/v2/media")) return { ok: true, status: 200, text: async () => JSON.stringify({ id: "media1" }) };
+    if (u.includes("/api/v1/statuses")) return { ok: true, status: 200, text: async () => JSON.stringify({ id: "status1", url: `${MASTO_INSTANCE_WP}/@nyanmusu/status1` }) };
+    return { ok: true, status: 200, text: async () => "{}" };
+  };
+  await runMonthlyWallpaperPost(env, mockGenerate, null, { compositeMonthlyWallpaperFn: mockComposite });
+  globalThis.fetch = origFetch;
+
+  assert("1通目にBluesky投稿URLが含まれる", discordBodies[0]?.includes("https://bsky.app/profile/nyanmusu.bsky.social/post/wallpaper1"));
+  assert("1通目にMastodon投稿URLが含まれる", discordBodies[0]?.includes(`${MASTO_INSTANCE_WP}/@nyanmusu/status1`));
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
