@@ -11,6 +11,8 @@
  * `/generate`（レート制限あり）のみに適用し、`runBot()`には組み込まない計測フェーズとしている。
  */
 
+import holidayJp from "@holiday-jp/holiday_jp";
+
 // Photonは動的importで遅延ロード（Node.jsテスト環境での.wasmロード失敗を回避。worker/bot.jsと同じパターン）
 let _photonReady = false;
 let _PhotonImage  = null;
@@ -22,7 +24,7 @@ export async function ensurePhoton() {
   const { default: photonWasm } = await import("@silvia-odwyer/photon/photon_rs_bg.wasm");
   mod.initSync({ module: photonWasm });
   _PhotonImage = mod.PhotonImage;
-  _photonFns   = { crop: mod.crop, resize: mod.resize, SamplingFilter: mod.SamplingFilter };
+  _photonFns   = { crop: mod.crop, resize: mod.resize, SamplingFilter: mod.SamplingFilter, watermark: mod.watermark };
   _photonReady = true;
 }
 
@@ -173,5 +175,261 @@ export async function autoCropImage(imageData, deps = {}) {
   } finally {
     if (small) small.free();
     img.free();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 月替わり壁紙: カレンダー・月名オーバーレイ（Satori要素ツリー・純粋関数）
+// architecture.mdの「カレンダー・月名の合成」参照。ランタイムの空白帯検出は行わず、
+// オーバーレイ自体に半透明パネルを常時描画することで可読性を保証する設計。
+// ---------------------------------------------------------------------------
+
+const MONTH_NAMES_EN = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+const WEEKDAY_LABELS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+const COLOR_SUNDAY_HOLIDAY = "#c0392b";
+const COLOR_SATURDAY = "#2e6da4";
+const COLOR_WEEKDAY = "#2b2b2b";
+const SIGNATURE_TEXT = "© nyanmusu";
+
+/** 指定年月の日数（純粋関数） */
+export function _daysInMonth(year, month) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** 指定年月1日の曜日（0=日曜）（純粋関数） */
+function _firstWeekday(year, month) {
+  return new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+}
+
+export function _dayColor(year, month, day, weekday) {
+  if (weekday === 0) return COLOR_SUNDAY_HOLIDAY;
+  if (weekday === 6) return COLOR_SATURDAY;
+  if (holidayJp.isHoliday(new Date(year, month - 1, day))) return COLOR_SUNDAY_HOLIDAY;
+  return COLOR_WEEKDAY;
+}
+
+/**
+ * 指定年月のカレンダー週配列を返す（純粋関数）。各要素は7要素（日曜始まり）で、
+ * 月に属さない日はnull。
+ */
+export function _buildCalendarWeeks(year, month) {
+  const totalDays = _daysInMonth(year, month);
+  const startWeekday = _firstWeekday(year, month);
+  const weeks = [];
+  let week = new Array(7).fill(null);
+  let col = startWeekday;
+  for (let day = 1; day <= totalDays; day++) {
+    week[col] = day;
+    col++;
+    if (col === 7) {
+      weeks.push(week);
+      week = new Array(7).fill(null);
+      col = 0;
+    }
+  }
+  if (week.some((d) => d !== null)) weeks.push(week);
+  return weeks;
+}
+
+/** 「© nyanmusu」署名のみのSatori要素ツリーを返す（カレンダーなし版用・純粋関数） */
+export function _buildSignatureOnlyElement(options = {}) {
+  const { width = 1080, height = 1920 } = options;
+  return {
+    type: "div",
+    props: {
+      style: {
+        display: "flex", width, height, position: "relative",
+      },
+      children: {
+        type: "div",
+        props: {
+          style: {
+            display: "flex", position: "absolute", left: 32, bottom: 32,
+            padding: "6px 14px", borderRadius: 8,
+            backgroundColor: "rgba(0,0,0,0.35)",
+            color: "#ffffff", fontFamily: "WorkSans", fontSize: 26,
+          },
+          children: SIGNATURE_TEXT,
+        },
+      },
+    },
+  };
+}
+
+/**
+ * カレンダー格子＋左上の月名・年バッジ＋左下の署名を含むSatori要素ツリーを返す（純粋関数）。
+ * @param {number} year
+ * @param {number} month - 1〜12
+ * @param {object} [options] - { width, height }
+ */
+export function _buildCalendarOverlayElement(year, month, options = {}) {
+  const { width = 1080, height = 1920 } = options;
+  const weeks = _buildCalendarWeeks(year, month);
+
+  const headerRow = {
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "row", width: "100%" },
+      children: WEEKDAY_LABELS.map((label, idx) => ({
+        type: "div",
+        props: {
+          style: {
+            display: "flex", flex: 1, justifyContent: "center",
+            fontFamily: "WorkSans", fontSize: 22, fontWeight: 700,
+            color: idx === 0 ? COLOR_SUNDAY_HOLIDAY : idx === 6 ? COLOR_SATURDAY : COLOR_WEEKDAY,
+          },
+          children: label,
+        },
+      })),
+    },
+  };
+
+  const weekRows = weeks.map((week) => ({
+    type: "div",
+    props: {
+      style: { display: "flex", flexDirection: "row", width: "100%", marginTop: 10 },
+      children: week.map((day, idx) => ({
+        type: "div",
+        props: {
+          style: {
+            display: "flex", flex: 1, justifyContent: "center",
+            fontFamily: "WorkSans", fontSize: 30,
+            color: day === null ? "transparent" : _dayColor(year, month, day, idx),
+          },
+          children: day === null ? "" : String(day),
+        },
+      })),
+    },
+  }));
+
+  const calendarPanel = {
+    type: "div",
+    props: {
+      style: {
+        display: "flex", flexDirection: "column", position: "absolute",
+        left: 40, right: 40, bottom: 64, padding: 28, borderRadius: 24,
+        backgroundColor: "rgba(255,255,255,0.82)",
+      },
+      children: [headerRow, ...weekRows],
+    },
+  };
+
+  const monthBadge = {
+    type: "div",
+    props: {
+      style: {
+        display: "flex", flexDirection: "column", position: "absolute",
+        left: 40, top: 56, padding: "18px 26px", borderRadius: 20,
+        backgroundColor: "rgba(255,255,255,0.82)",
+      },
+      children: [
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", fontFamily: "Gloock", fontSize: 40, color: COLOR_WEEKDAY },
+            children: MONTH_NAMES_EN[month - 1],
+          },
+        },
+        {
+          type: "div",
+          props: {
+            style: { display: "flex", fontFamily: "WorkSans", fontWeight: 700, fontSize: 26, color: COLOR_WEEKDAY },
+            children: String(year),
+          },
+        },
+      ],
+    },
+  };
+
+  const signature = _buildSignatureOnlyElement({ width, height }).props.children;
+
+  return {
+    type: "div",
+    props: {
+      style: { display: "flex", width, height, position: "relative" },
+      children: [monthBadge, calendarPanel, signature],
+    },
+  };
+}
+
+/**
+ * 生成画像に月替わり壁紙用のカレンダー/署名オーバーレイを合成する。
+ * カレンダーあり版・なし版の2枚を返す。失敗時は元画像にフォールバックする
+ * （`autoCropImage()`と同じ設計方針）。
+ *
+ * @param {string} imageData - base64エンコードされた生成画像
+ * @param {number} year
+ * @param {number} month - 1〜12
+ * @param {object} [deps] - テスト用の依存注入
+ * @returns {Promise<{calendarImageData: string, noCalendarImageData: string, mimeType: string, composited: boolean}>}
+ */
+export async function compositeMonthlyWallpaper(imageData, year, month, deps = {}) {
+  const {
+    ensurePhotonFn      = ensurePhoton,
+    getPhotonImageFn    = getPhotonImage,
+    getPhotonFnsFn      = getPhotonFns,
+    renderElementToPngFn,
+    ensureFontsFn,
+    getFontsFn,
+    bucket              = null,
+    width               = 1080,
+    height              = 1920,
+  } = deps;
+
+  try {
+    await ensurePhotonFn();
+    const PhotonImage = getPhotonImageFn();
+    const { crop, resize, SamplingFilter, watermark } = getPhotonFnsFn();
+
+    if (ensureFontsFn) await ensureFontsFn();
+    const fonts = getFontsFn ? getFontsFn() : [];
+
+    const bytes = base64ToBytes(imageData);
+    const srcImg = PhotonImage.new_from_byteslice(bytes);
+
+    const srcW = srcImg.get_width();
+    const srcH = srcImg.get_height();
+    const scale = Math.max(width / srcW, height / srcH);
+    const scaledW = Math.round(srcW * scale);
+    const scaledH = Math.round(srcH * scale);
+    const scaledImg = resize(srcImg, scaledW, scaledH, SamplingFilter.Lanczos3);
+    const x1 = Math.round((scaledW - width) / 2);
+    const y1 = Math.round((scaledH - height) / 2);
+    const baseImg = crop(scaledImg, x1, y1, x1 + width, y1 + height);
+
+    const baseBytes = baseImg.get_bytes();
+
+    async function applyOverlay(element) {
+      const overlayPng = await renderElementToPngFn(element, { width, height, fonts }, bucket);
+      const overlayImg = PhotonImage.new_from_byteslice(overlayPng);
+      const targetImg = PhotonImage.new_from_byteslice(baseBytes);
+      try {
+        watermark(targetImg, overlayImg, 0n, 0n);
+        return uint8ArrayToBase64(targetImg.get_bytes());
+      } finally {
+        overlayImg.free();
+        targetImg.free();
+      }
+    }
+
+    const calendarElement = _buildCalendarOverlayElement(year, month, { width, height });
+    const signatureElement = _buildSignatureOnlyElement({ width, height });
+
+    const [calendarImageData, noCalendarImageData] = await Promise.all([
+      applyOverlay(calendarElement),
+      applyOverlay(signatureElement),
+    ]);
+
+    srcImg.free();
+    scaledImg.free();
+    baseImg.free();
+
+    return { calendarImageData, noCalendarImageData, mimeType: "image/png", composited: true };
+  } catch (err) {
+    console.warn(`[monthly-wallpaper] compositeMonthlyWallpaper失敗、未加工画像にフォールバック: ${err.message}`);
+    return { calendarImageData: imageData, noCalendarImageData: imageData, mimeType: "image/png", composited: false };
   }
 }

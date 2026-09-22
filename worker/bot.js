@@ -15,9 +15,10 @@
 
 import { saveToR2 } from "./r2-storage.js";
 import { createSuzuriProducts } from "./suzuri.js";
-import { pickFromPool, recordCpuCheckpoint, _deferOrAwait, _recordAutoCropCpu } from "./index.js";
+import { pickFromPool, recordCpuCheckpoint, _deferOrAwait, _recordAutoCropCpu, getSeasonalFlower, getSeasonalFlowerEn, getSeasonalFlowerVisual } from "./index.js";
 import { getActiveSaleInfo } from "./sale.js";
-import { autoCropImage } from "./image-utils.js";
+import { autoCropImage, compositeMonthlyWallpaper } from "./image-utils.js";
+import { renderElementToPng, ensureFonts, getFonts } from "./svg-render.js";
 
 // Photonは動的importで遅延ロード（Node.jsテスト環境での.wasmロード失敗を回避）
 let _photonReady = false;
@@ -550,10 +551,14 @@ async function uploadMediaToMastodon(instanceUrl, accessToken, imageBytes, mimeT
   return data.id;
 }
 
-/** Mastodon にステータスを投稿する。inReplyToId指定時はセール告知リプライ等のスレッド返信になる。 */
+/**
+ * Mastodon にステータスを投稿する。inReplyToId指定時はセール告知リプライ等のスレッド返信になる。
+ * mediaIdは単一ID・ID配列（月替わり壁紙の複数画像投稿用）・nullのいずれも受け付ける。
+ */
 async function postStatusToMastodon(instanceUrl, accessToken, text, mediaId = null, inReplyToId = null) {
   const params = new URLSearchParams({ status: text });
-  if (mediaId) params.append("media_ids[]", mediaId);
+  const mediaIds = mediaId == null ? [] : Array.isArray(mediaId) ? mediaId : [mediaId];
+  for (const id of mediaIds) params.append("media_ids[]", id);
   if (inReplyToId) params.append("in_reply_to_id", inReplyToId);
 
   const res = await fetch(`${instanceUrl}/api/v1/statuses`, {
@@ -912,5 +917,244 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
     const msg = `${prefix} エラー: ${err.message}`;
     console.error(msg);
     await notifyDiscord(env.DISCORD_WEBHOOK_URL, msg);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 月替わり壁紙プレゼント（Bluesky/Mastodon限定・2026-09追加）
+// architecture.mdの「月替わり壁紙プレゼント機能」参照
+// ---------------------------------------------------------------------------
+
+const MONTH_NAMES_FULL_EN = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/** 投稿作成: カレンダーあり・なし2枚を同一投稿に添付する（Bluesky）。createPost()と似た構造だが
+ * 複数画像embedのため別関数として保持する（future-ideas.mdの3箇所ルールに達しないため共通化は見送り）。
+ */
+async function createMonthlyWallpaperPost(accessJwt, did, text, images) {
+  const urlFacets = buildUrlFacets(text, SITE_URL);
+  const record = {
+    $type:     "app.bsky.feed.post",
+    text,
+    facets:    [...buildHashtagFacets(text, []), ...urlFacets],
+    embed:     {
+      $type:  "app.bsky.embed.images",
+      images: images.map((img) => ({ image: img.blobRef, alt: img.altText })),
+    },
+    createdAt: new Date().toISOString(),
+  };
+
+  const res = await fetch(`${BLUESKY_API}/com.atproto.repo.createRecord`, {
+    method:  "POST",
+    headers: {
+      "Authorization": `Bearer ${accessJwt}`,
+      "Content-Type":  "application/json",
+    },
+    body:   JSON.stringify({ repo: did, collection: "app.bsky.feed.post", record }),
+    signal: AbortSignal.timeout(BLUESKY_POST_TIMEOUT_MS),
+  });
+  const resText = await res.text();
+  let data = {};
+  try {
+    data = JSON.parse(resText);
+  } catch (e) {
+    data = { error: `Bluesky月間壁紙投稿：レスポンスのJSON解析失敗: ${e.message}`, raw: resText };
+  }
+  if (!res.ok) {
+    throw new Error(`Bluesky月間壁紙投稿作成失敗: ${data.error ?? res.status} ${data.message ?? ""}`);
+  }
+  return data;
+}
+
+/**
+ * Bluesky投稿テキスト（日本語のみ）を組み立てる。
+ * @param {string} monthNameJa - 例: "10"（月数字）
+ * @param {string} themeName - 季節要素名（例: "金木犀"）
+ */
+export function buildMonthlyWallpaperPostText(month, themeName) {
+  return (
+    `🎁 ${month}月の壁紙プレゼント！🐱\n` +
+    `${themeName}の香る季節をイメージしました。スマホの待受にどうぞ。\n\n` +
+    `📥 画像を長押し保存してお使いください（カレンダー付き🗓️）\n\n` +
+    `にゃんバーサリー ${SITE_URL}\n\n` +
+    `#壁紙 #猫壁紙 #AIart #cat #にゃんバーサリー`
+  );
+}
+
+/**
+ * Mastodon投稿テキスト（英語優先の日英二言語）を組み立てる。
+ */
+export function buildMonthlyWallpaperMastodonText(month, themeName, themeNameEn) {
+  const monthNameEn = MONTH_NAMES_FULL_EN[month - 1];
+  return (
+    `🎁 ${monthNameEn} wallpaper gift! A cozy cat for the ${themeNameEn} season🐱\n` +
+    `Long-press to save as your phone wallpaper (calendar included🗓️)\n\n` +
+    `にゃんバーサリー ${SITE_URL}?lang=en\n\n` +
+    `🎁 ${month}月の壁紙プレゼント！🐱\n` +
+    `${themeName}の香る季節をイメージしました。長押し保存してお使いください（カレンダー付き）\n\n` +
+    `にゃんバーサリー ${SITE_URL}\n\n` +
+    `#wallpaper #cat #AIart #にゃんバーサリー`
+  );
+}
+
+/**
+ * 月替わり壁紙の対象年月（対象月＝次の暦月）をJST基準で決定する。
+ * 月末Cron（"0 3 * * *"が月末日にのみ発火）から呼ばれた場合、当日が属する月の
+ * 「翌月分」の壁紙を作る（例: 9/30発火 → 10月の壁紙）。手動再生成も同じロジックを使う。
+ */
+function resolveTargetYearMonth() {
+  const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  let year  = jst.getFullYear();
+  let month = jst.getMonth() + 2; // 翌月（getMonth()は0始まり、+1で今月、+2で翌月）
+  if (month > 12) { month -= 12; year += 1; }
+  return { year, month };
+}
+
+/**
+ * Cron（月末）・手動再生成エンドポイントの両方から呼び出されるエントリポイント。
+ * runBot()と同じ構造（研究データはSEASONAL_FLOWERSから直接組み立て、画像生成→カレンダー合成→
+ * R2保存→Bluesky/Mastodon投稿→Discord通知）を踏襲する。
+ *
+ * @param {object} env
+ * @param {Function} handleGenerate - index.js の handleGenerate 関数
+ * @param {import("@cloudflare/workers-types").ExecutionContext|null} [ctx]
+ * @param {object} [deps] - テスト用の依存注入（_pollFalAndGetTexture()等と同じパターン）。
+ *   compositeMonthlyWallpaperFn: 重いWASM処理（Satori/resvg）を伴うため必ずモック可能にする
+ */
+export async function runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {}) {
+  const { compositeMonthlyWallpaperFn = compositeMonthlyWallpaper } = deps;
+  const { year, month } = resolveTargetYearMonth();
+  const r2Prefix = `monthly-wallpaper/${year}-${String(month).padStart(2, "0")}`;
+  const prefix   = `[monthly-wallpaper] ${year}年${month}月`;
+
+  const apiKey = env.GEMINI_API_KEY;
+  if (!apiKey) {
+    const msg = `${prefix} エラー: GEMINI_API_KEY が設定されていません`;
+    console.error(msg);
+    await notifyDiscord(env.DISCORD_WEBHOOK_URL, msg);
+    return { error: msg };
+  }
+
+  try {
+    // ── 1. 月テーマ決定（対象月の末日をSEASONAL_FLOWERSに渡す・新規テーブルなし） ──────
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const lookupDateStr = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    const themeName   = getSeasonalFlower(lookupDateStr);
+    const themeNameEn = getSeasonalFlowerEn(lookupDateStr);
+    const visualHint  = getSeasonalFlowerVisual(lookupDateStr);
+    const theme       = `${themeName}の季節`;
+    const themeEn     = `${themeNameEn} Season`;
+    const description = `今の季節を彩る${themeName}`;
+    console.log(`${prefix} テーマ: ${theme}`);
+
+    // ── 2. 画像生成（既存handleGenerate()を拡張利用・reserveCalendarSpace=true） ──────
+    console.log(`${prefix} generate 開始`);
+    const generated = await handleGenerate(
+      { theme, description, visualHint, themeEn, descriptionEn: "", jstDateISO: lookupDateStr, reserveCalendarSpace: true },
+      apiKey, env, ctx
+    );
+    console.log(`${prefix} generate 完了 source=${generated.source}`);
+
+    // ── 3. カレンダー・署名オーバーレイ合成 ─────────────────────────────
+    const composite = await compositeMonthlyWallpaperFn(generated.imageData, year, month, {
+      renderElementToPngFn: renderElementToPng,
+      ensureFontsFn: ensureFonts,
+      getFontsFn: getFonts,
+      bucket: env.IMAGE_BUCKET ?? null,
+    });
+    if (!composite.composited) {
+      console.warn(`${prefix} カレンダー合成失敗、未加工画像で継続`);
+    }
+
+    // ── 4. R2保存（手動再生成は同一年月キーを上書き） ────────────────────
+    if (env.IMAGE_BUCKET) {
+      try {
+        const calendarBytes   = base64ToBytes(composite.calendarImageData);
+        const noCalendarBytes = base64ToBytes(composite.noCalendarImageData);
+        await Promise.all([
+          env.IMAGE_BUCKET.put(`${r2Prefix}/calendar.png`, calendarBytes, { httpMetadata: { contentType: "image/png" } }),
+          env.IMAGE_BUCKET.put(`${r2Prefix}/no-calendar.png`, noCalendarBytes, { httpMetadata: { contentType: "image/png" } }),
+          env.IMAGE_BUCKET.put(`${r2Prefix}/meta.json`, JSON.stringify({
+            year, month, theme, themeEn, description, composited: composite.composited, createdAt: new Date().toISOString(),
+          }), { httpMetadata: { contentType: "application/json" } }),
+        ]);
+        console.log(`${prefix} R2保存完了 prefix=${r2Prefix}`);
+      } catch (err) {
+        console.warn(`${prefix} R2保存失敗（投稿は継続）: ${err.message}`);
+      }
+    }
+
+    // ── 5. Bluesky + Mastodon 並列投稿（カレンダーあり・なし2枚添付） ────
+    const text      = buildMonthlyWallpaperPostText(month, themeName);
+    const mastoText = buildMonthlyWallpaperMastodonText(month, themeName, themeNameEn);
+    const altCalendar   = `にゃんバーサリー - ${month}月の壁紙（カレンダー付き）。AIが生成した水彩画風の猫イラスト`;
+    const altNoCalendar = `にゃんバーサリー - ${month}月の壁紙（カレンダーなし）。AIが生成した水彩画風の猫イラスト`;
+    const mimeType = "image/png";
+
+    const [bskyResult, mastoResult] = await Promise.allSettled([
+      (async () => {
+        const { accessJwt, did } = await createBlueskySession(env.BLUESKY_IDENTIFIER, env.BLUESKY_APP_PASSWORD);
+        const calendarBlob   = await uploadBlob(accessJwt, base64ToBytes(composite.calendarImageData), mimeType);
+        const noCalendarBlob = await uploadBlob(accessJwt, base64ToBytes(composite.noCalendarImageData), mimeType);
+        return createMonthlyWallpaperPost(accessJwt, did, text, [
+          { blobRef: calendarBlob, altText: altCalendar },
+          { blobRef: noCalendarBlob, altText: altNoCalendar },
+        ]);
+      })(),
+      (env.MASTODON_INSTANCE_URL && env.MASTODON_ACCESS_TOKEN)
+        ? (async () => {
+            if (!env.MASTODON_INSTANCE_URL.startsWith("https://")) {
+              throw new Error(`設定エラー: MASTODON_INSTANCE_URL が https:// で始まっていません`);
+            }
+            const calendarMediaId   = await uploadMediaToMastodon(env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, base64ToBytes(composite.calendarImageData), mimeType, altCalendar);
+            const noCalendarMediaId = await uploadMediaToMastodon(env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, base64ToBytes(composite.noCalendarImageData), mimeType, altNoCalendar);
+            return postStatusToMastodon(env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, mastoText, [calendarMediaId, noCalendarMediaId]);
+          })()
+        : Promise.resolve(null),
+    ]);
+
+    const bskyOk       = bskyResult.status === "fulfilled";
+    const mastoSkipped = mastoResult.status === "fulfilled" && mastoResult.value === null;
+    const mastoOk       = mastoResult.status === "fulfilled" && mastoResult.value !== null;
+
+    if (bskyOk) {
+      console.log(`${prefix} Bluesky 投稿 完了 uri=${bskyResult.value?.uri ?? "(不明)"}`);
+    } else {
+      console.error(`${prefix} Bluesky 投稿 失敗: ${bskyResult.reason?.message}`);
+    }
+    if (mastoOk) {
+      console.log(`${prefix} Mastodon 投稿 完了 id=${mastoResult.value?.id ?? "(不明)"}`);
+    } else if (mastoSkipped) {
+      console.log(`${prefix} Mastodon 未設定・スキップ`);
+    } else {
+      console.error(`${prefix} Mastodon 投稿 失敗: ${mastoResult.reason?.message}`);
+    }
+
+    // ── 6. Discord通知（2通構成・成否ステータスは1通目のみ） ─────────────
+    try {
+      const bskyLine  = bskyOk ? `✅ Bluesky投稿完了` : `❌ Bluesky投稿失敗: ${bskyResult.reason?.message}`;
+      const mastoLine = mastoSkipped ? "⏭️ Mastodon未設定・スキップ" : mastoOk ? "✅ Mastodon投稿完了" : `❌ Mastodon投稿失敗: ${mastoResult.reason?.message}`;
+      const lines1 = [
+        bskyLine, mastoLine,
+        `📅 テーマ: ${theme}（${year}年${month}月）`,
+        generated.prompt ? `\n📋 Geminiプロンプト:\n${generated.prompt}` : null,
+      ].filter(Boolean).join("\n");
+      await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines1, bskyOk ? "✅" : "❌");
+
+      const lines2 = [
+        `📣 Bluesky投稿テキスト（X・Instagram等に転載用）:\n${text}`,
+        `📣 Mastodon投稿テキスト（Facebook・mixi2等に転載用）:\n${mastoText}`,
+      ].join("\n\n");
+      await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines2, "📣");
+    } catch (_) { /* 通知失敗は無視 */ }
+
+    return { bskyOk, mastoOk, theme, year, month, composited: composite.composited };
+  } catch (err) {
+    const msg = `${prefix} エラー: ${err.message}`;
+    console.error(msg);
+    await notifyDiscord(env.DISCORD_WEBHOOK_URL, msg);
+    return { error: err.message };
   }
 }

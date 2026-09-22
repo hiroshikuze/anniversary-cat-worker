@@ -9,7 +9,7 @@
  *   ALLOWED_ORIGIN  ... GitHub Pages の URL（例: https://hiroshikuze.github.io）
  */
 
-import { runBot, notifyDiscord } from "./bot.js";
+import { runBot, notifyDiscord, runMonthlyWallpaperPost } from "./bot.js";
 import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2, collectMaterialIds } from "./r2-storage.js";
 import { createSuzuriProducts, deleteSuzuriMaterial } from "./suzuri.js";
 import { submitFalJob, getFalResult } from "./fal.js";
@@ -303,6 +303,13 @@ function escapeXml(str) {
 function toJSTDateStringWorker(date) {
   const jst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
   return jst.toISOString().slice(0, 10);
+}
+
+// dateStr（JST基準のYYYY-MM-DD）が月末日かどうかを判定する（純粋関数）
+export function isLastDayOfMonthJST(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const nextDay = new Date(Date.UTC(y, m - 1, d + 1));
+  return nextDay.getUTCMonth() !== m - 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -956,7 +963,7 @@ export function pickGuestAnimal(mainPersona, rand = Math.random) {
   }
 }
 
-export function _buildPollinationsPrompt(theme, description, persona, personality, visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "") {
+export function _buildPollinationsPrompt(theme, description, persona, personality, visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "", reserveCalendarSpace = false) {
   // Pollinations API のプロンプトは ASCII のみ使用
   // 日本語等の非ASCII文字はURLパス内でサーバー側エラー(500)の原因になるためフィルタリング
   const toAscii = (s) => (s ?? "").replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
@@ -972,12 +979,13 @@ export function _buildPollinationsPrompt(theme, description, persona, personalit
   // visualHintをsubjectより前に置くことでFluxモデルが前半トークンを重視する特性を活用
   // 「kawaii watercolor cat」にcatが含まれるため persona が null のときの "cat" フォールバックは不要
   const guestPart  = guest ? `with ${guest.appearance}` : null;
-  const parts = ["kawaii watercolor cat", vhForParts, subject, descAscii || null, persona, personality, emotion, eatingAction, guestPart, "pastel colors, white background", "full frame composition, minimal empty space", "only the cat has a face, no faces on other objects"];
+  const calendarParts = reserveCalendarSpace ? ["vertical 9:16 portrait", "wide empty margin at bottom third", "empty margin top left corner", "no text or numbers"] : [];
+  const parts = ["kawaii watercolor cat", vhForParts, subject, descAscii || null, persona, personality, emotion, eatingAction, guestPart, "pastel colors, white background", "full frame composition, minimal empty space", "only the cat has a face, no faces on other objects", ...calendarParts];
   return parts.filter(Boolean).join(", ");
 }
 
 // seasonalStyleTone省略時は旧固定文言にフォールバック（呼び出し元が季節カラーを渡さない場合の後方互換）
-export function _buildGeminiPrompt(theme, description, persona, personality, visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "", seasonalStyleTone = "light pink and beige tones") {
+export function _buildGeminiPrompt(theme, description, persona, personality, visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "", seasonalStyleTone = "light pink and beige tones", reserveCalendarSpace = false) {
   const promptTheme = themeEn || theme;
   const promptContext = descriptionEn || description;
   return (
@@ -990,6 +998,7 @@ export function _buildGeminiPrompt(theme, description, persona, personality, vis
     `Theme: ${promptTheme}. ` +
     (promptContext ? `Context: ${promptContext}. `              : "") +
     (visualHint   ? `Setting and surrounding atmosphere; the cat may naturally interact with theme-related items (approaching, touching, or holding them as fits the scene): ${visualHint}. ` : "") +
+    (reserveCalendarSpace ? `Aspect ratio: vertical 9:16 portrait, suitable for a phone wallpaper. Leave a flat, evenly lit, uncluttered margin across the bottom third of the image for a calendar grid to be overlaid later, and a flat uncluttered margin in the top-left corner for a small month label to be overlaid later. ` : "") +
     `Composition: fill the frame with the cat and scene elements, leaving only a small, even margin around the edges. Avoid large empty corners or a distant, isolated subject floating in excess white space — the illustration should feel full and immersive, not small or shrunken. ` +
     `Style: soft pastel colors, ${seasonalStyleTone}, gentle watercolor brushstrokes, ` +
     `white background, Japanese illustration style. ` +
@@ -1002,8 +1011,8 @@ export function _buildGeminiPrompt(theme, description, persona, personality, vis
   );
 }
 
-function buildPollinationsUrl(theme, description, persona, personality, model = "flux", visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "") {
-  const prompt = _buildPollinationsPrompt(theme, description, persona, personality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn);
+function buildPollinationsUrl(theme, description, persona, personality, model = "flux", visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "", reserveCalendarSpace = false) {
+  const prompt = _buildPollinationsPrompt(theme, description, persona, personality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, reserveCalendarSpace);
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
@@ -1020,6 +1029,7 @@ export async function handleGenerate(body, apiKey, env, ctx = null) {
 
   const themeEn       = body.themeEn ?? "";
   const descriptionEn = body.descriptionEn ?? "";
+  const reserveCalendarSpace = body.reserveCalendarSpace ?? false;
   const persona      = pickPersona();
   const personality  = pickPersonality();
   const emotion      = pickEmotion();
@@ -1033,7 +1043,7 @@ export async function handleGenerate(body, apiKey, env, ctx = null) {
   // Bug#26: 季節カラー（getSeasonalStyleTone）でStyle行の固定文言"light pink and beige tones"を置き換える
   // Bug#32: runBot()側で計算済みのJST日付があれば再利用し、new Date()の再計算を避ける
   const seasonalStyleTone = getSeasonalStyleTone(body.jstDateISO ?? toJSTDateStringWorker(new Date()));
-  const prompt = _buildGeminiPrompt(theme, description, persona, effectivePersonality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, seasonalStyleTone);
+  const prompt = _buildGeminiPrompt(theme, description, persona, effectivePersonality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, seasonalStyleTone, reserveCalendarSpace);
 
   async function callModel(model) {
     // 1モデルあたり最大 15 秒（実測最大 ~10s + 余裕5s）
@@ -1137,7 +1147,7 @@ export async function handleGenerate(body, apiKey, env, ctx = null) {
     const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
     return Promise.any(
       MODELS.map(async (model) => {
-        const url = buildPollinationsUrl(theme, description, persona, effectivePersonality, model, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn);
+        const url = buildPollinationsUrl(theme, description, persona, effectivePersonality, model, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, reserveCalendarSpace);
         console.log(`[pollinations] trying model=${model}`);
         const imgRes = await fetch(url, { signal: AbortSignal.timeout(POLLINATIONS_TIMEOUT_MS) });
         if (!imgRes.ok) throw new Error(`status=${imgRes.status}`);
@@ -1150,7 +1160,7 @@ export async function handleGenerate(body, apiKey, env, ctx = null) {
     );
   }
 
-  const pollinationsPrompt = _buildPollinationsPrompt(theme, description, persona, effectivePersonality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn);
+  const pollinationsPrompt = _buildPollinationsPrompt(theme, description, persona, effectivePersonality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, reserveCalendarSpace);
 
   // 2フェーズ方式の実行（ロジックは _twoPhaseRace に切り出し済み）
   const result = await _twoPhaseRace(tryGemini, tryPollinations);
@@ -1342,6 +1352,7 @@ export default {
   // ── Cron Trigger ──────────────────────────────────────────────────────────
   // "0 15 * * *"   → 毎日 0:00 JST  リサーチプール生成
   // "0 16 * * *"   → 毎日 1:00 JST  SUZURIセール自動検知（sale-check.js）
+  // "0 3 * * *"    → 毎日 12:00 JST 月替わり壁紙（月末のみ発火・bot.js runMonthlyWallpaperPost()）
   // "0 22 * * 1-5" → 月〜金 7:00 JST  Bluesky/Mastodon 営業 Bot
   async scheduled(event, env, ctx) {
     if (event.cron === "0 15 * * *") {
@@ -1351,6 +1362,13 @@ export default {
 
     if (event.cron === "0 16 * * *") {
       ctx.waitUntil(checkForNewSale(env, ctx, notifyDiscord));
+      return;
+    }
+
+    if (event.cron === "0 3 * * *") {
+      const jstDateISO = toJSTDateStringWorker(new Date());
+      if (!isLastDayOfMonthJST(jstDateISO)) return;
+      ctx.waitUntil(runMonthlyWallpaperPost(env, handleGenerate, ctx));
       return;
     }
 
@@ -1645,6 +1663,20 @@ ${itemsXml}
       await _updateMetaOrRollback(env, id, { materialIds: [sr.materialId], products: sr.products }, sr.materialId, "[resume-hires]");
       console.log(`[resume-hires] SUZURI登録完了`);
       return Response.json({ products: sr.products }, { headers: corsH });
+    }
+
+    // POST: 月替わり壁紙の手動再生成（月末Cronと同じrunMonthlyWallpaperPost()を呼ぶ）
+    if (request.method === "POST" && url.pathname === "/monthly-wallpaper/regenerate") {
+      if (!isBypassed(request, env)) {
+        return Response.json({ error: "X-Bypass-Tokenが必要です" }, { status: 403, headers: corsH });
+      }
+      try {
+        const wpResult = await runMonthlyWallpaperPost(env, handleGenerate, ctx);
+        return Response.json(wpResult, { headers: corsH });
+      } catch (e) {
+        console.error(`[monthly-wallpaper] 手動再生成失敗: ${e.message}`);
+        return Response.json({ error: e.message }, { status: 500, headers: corsH });
+      }
     }
 
     if (request.method !== "POST") {

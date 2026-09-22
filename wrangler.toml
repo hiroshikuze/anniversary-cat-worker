@@ -6,11 +6,12 @@ preview_urls = false
 [triggers]
 # "0 15 * * *"   → 毎日 0:00 JST  リサーチプール生成（翌日分の記念日候補をR2に保存）
 # "0 16 * * *"   → 毎日 1:00 JST  SUZURIセール自動検知（2026-08追加・sale-check.js）
+# "0 3 * * *"    → 毎日 12:00 JST 月替わり壁紙（2026-09追加・月末のみ発火・bot.js runMonthlyWallpaperPost()）
 # "0 22 * * 1-5" → 月〜金 7:00 JST  Bluesky 営業 Bot（2026-05-01より）
 # Cloudflare Workers の曜日指定は 1=日曜日 のため、1-5=日〜木UTC=月〜金JST
 # 2026-08-06: Aug 4 22:00 UTC以降Cronイベントが1件も記録されなくなったため、
 # Cron Trigger再登録を目的に本コメントのみの変更で再デプロイを実施
-crons = ["0 15 * * *", "0 16 * * *", "0 22 * * 1-5"]
+crons = ["0 15 * * *", "0 16 * * *", "0 3 * * *", "0 22 * * 1-5"]
 
 [vars]
 # GitHub Pages の URL を設定（デプロイ後に実際の URL に変更してください）
@@ -39,6 +40,13 @@ id = "531244f9f904493d93c3a418b9765df8"
 [[r2_buckets]]
 binding = "IMAGE_BUCKET"
 bucket_name = "anniversary-cat-images"
+
+# 月替わり壁紙のカレンダーオーバーレイ用カスタムフォント（worker/assets/fonts/*.ttf）を
+# ArrayBufferとしてimportできるようにする（worker/svg-render.js ensureFonts()）
+[[rules]]
+type = "Data"
+globs = ["**/*.ttf"]
+fallthrough = true
 
 [observability.logs]
 enabled = true

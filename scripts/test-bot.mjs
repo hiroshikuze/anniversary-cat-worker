@@ -12,18 +12,23 @@
 import { updateMetaInR2, collectMaterialIds } from "../worker/r2-storage.js";
 import { parseExpiryDate } from "./audit-suzuri-materials.mjs";
 import { parseSinceMs, buildQueryBody, parseArgs as parseQueryLogArgs } from "./query-worker-logs.mjs";
-import { _detectCropBox, autoCropImage, _setPhotonForTest as _setImageUtilsPhotonForTest } from "../worker/image-utils.js";
+import {
+  _detectCropBox, autoCropImage, _setPhotonForTest as _setImageUtilsPhotonForTest,
+  _daysInMonth, _buildCalendarWeeks, _buildCalendarOverlayElement, _buildSignatureOnlyElement,
+  _dayColor, compositeMonthlyWallpaper,
+} from "../worker/image-utils.js";
 import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptionForTest } from "../worker/suzuri.js";
 
 import {
   buildPostText, buildMastodonText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta,
   buildSaleReplyTextJa, buildSaleReplyTextBilingual,
+  buildMonthlyWallpaperPostText, buildMonthlyWallpaperMastodonText, runMonthlyWallpaperPost,
 } from "../worker/bot.js";
 import { _setSaleForTest } from "../worker/sale.js";
 import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale } from "../worker/sale-check.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 import { renderElementToPng, _setSatoriForTest, _setResvgForTest } from "../worker/svg-render.js";
@@ -5323,6 +5328,180 @@ console.log("\n[renderElementToPng: Satori+resvgのモック経由呼び出し]"
     assert("resvg.wasm未配置時はエラーを投げる", threw);
     _setSatoriForTest(null);
   }
+}
+
+console.log("\n[_daysInMonth: 正常系・境界値]");
+{
+  assert("2026年9月は30日", _daysInMonth(2026, 9) === 30);
+  assert("2026年10月は31日", _daysInMonth(2026, 10) === 31);
+  assert("2026年2月（平年）は28日", _daysInMonth(2026, 2) === 28);
+  assert("2028年2月（うるう年）は29日", _daysInMonth(2028, 2) === 29);
+  assert("2026年12月は31日", _daysInMonth(2026, 12) === 31);
+}
+
+console.log("\n[_buildCalendarWeeks: 正常系・境界値]");
+{
+  const octWeeks = _buildCalendarWeeks(2026, 10);
+  const octFlat = octWeeks.flat().filter((d) => d !== null);
+  assert("10月の日数合計が31件そろう", octFlat.length === 31);
+  assert("10月1日が正しい曜日列に入る（2026-10-01は木曜=col4）", octWeeks[0][4] === 1);
+  assert("最終週に31日が含まれる", octWeeks[octWeeks.length - 1].includes(31));
+
+  const febWeeks = _buildCalendarWeeks(2026, 2);
+  const febFlat = febWeeks.flat().filter((d) => d !== null);
+  assert("平年2月の日数合計が28件そろう", febFlat.length === 28);
+
+  const leapFebWeeks = _buildCalendarWeeks(2028, 2);
+  const leapFebFlat = leapFebWeeks.flat().filter((d) => d !== null);
+  assert("うるう年2月の日数合計が29件そろう", leapFebFlat.length === 29);
+}
+
+console.log("\n[_dayColor: 日曜/祝日/土曜/平日の色分け]");
+{
+  assert("日曜（weekday=0）は赤系", _dayColor(2026, 10, 4, 0) === "#c0392b");
+  assert("土曜（weekday=6）は青系", _dayColor(2026, 10, 3, 6) === "#2e6da4");
+  assert("元日（祝日）は平日曜日でも赤系", _dayColor(2026, 1, 1, 4) === "#c0392b");
+  assert("通常の平日は既定色", _dayColor(2026, 10, 5, 1) === "#2b2b2b");
+}
+
+console.log("\n[_buildCalendarOverlayElement / _buildSignatureOnlyElement: 構造]");
+{
+  const el = _buildCalendarOverlayElement(2026, 10, { width: 1080, height: 1920 });
+  assert("ルート要素はdiv", el.type === "div");
+  assert("badge・calendarPanel・signatureの3要素を持つ", el.props.children.length === 3);
+  const sigOnly = _buildSignatureOnlyElement({ width: 1080, height: 1920 });
+  assert("署名のみ要素もdivルート", sigOnly.type === "div");
+  assert("署名テキストを含む", JSON.stringify(sigOnly).includes("nyanmusu"));
+}
+
+console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
+{
+  const mockBytes = new Uint8Array([1, 2, 3]);
+  function makeMockPhotonImage(w = 2000, h = 1000) {
+    return {
+      get_width: () => w,
+      get_height: () => h,
+      get_bytes: () => mockBytes,
+      free: () => {},
+    };
+  }
+  const MockPhotonImage = {
+    new_from_byteslice: () => makeMockPhotonImage(),
+  };
+  const mockFns = {
+    resize: () => makeMockPhotonImage(1920, 960),
+    crop: () => makeMockPhotonImage(1080, 1920),
+    SamplingFilter: { Lanczos3: "Lanczos3" },
+    watermark: () => {},
+  };
+
+  const renderCalls = [];
+  const renderElementToPngFn = async (element, options) => {
+    renderCalls.push({ element, options });
+    return new Uint8Array([9, 9, 9]);
+  };
+
+  const result = await compositeMonthlyWallpaper("YmFzZTY0", 2026, 10, {
+    ensurePhotonFn: async () => {},
+    getPhotonImageFn: () => MockPhotonImage,
+    getPhotonFnsFn: () => mockFns,
+    renderElementToPngFn,
+    ensureFontsFn: async () => {},
+    getFontsFn: () => [],
+    bucket: { mockBucket: true },
+  });
+
+  assert("合成成功時はcomposited=true", result.composited === true);
+  assert("カレンダーあり版・なし版の両方を返す", typeof result.calendarImageData === "string" && typeof result.noCalendarImageData === "string");
+  assert("オーバーレイ描画が2回（カレンダー版・署名版）呼ばれる", renderCalls.length === 2);
+
+  // 失敗時フォールバック
+  const failResult = await compositeMonthlyWallpaper("YmFzZTY0", 2026, 10, {
+    ensurePhotonFn: async () => { throw new Error("photon load failed"); },
+  });
+  assert("失敗時はcomposited=false", failResult.composited === false);
+  assert("失敗時は元画像をそのまま返す", failResult.calendarImageData === "YmFzZTY0" && failResult.noCalendarImageData === "YmFzZTY0");
+}
+
+console.log("\n[isLastDayOfMonthJST: 正常系・境界値]");
+{
+  assert("月末日はtrue（2026-10-31）", isLastDayOfMonthJST("2026-10-31") === true);
+  assert("月末前日はfalse（2026-10-30）", isLastDayOfMonthJST("2026-10-30") === false);
+  assert("年末（12/31）もtrue", isLastDayOfMonthJST("2026-12-31") === true);
+  assert("うるう年2月末（2028-02-29）はtrue", isLastDayOfMonthJST("2028-02-29") === true);
+  assert("平年2月末（2026-02-28）はtrue", isLastDayOfMonthJST("2026-02-28") === true);
+}
+
+console.log("\n[_buildGeminiPrompt / _buildPollinationsPrompt: reserveCalendarSpace]");
+{
+  const withSpace = _buildGeminiPrompt("金木犀の季節", "説明", null, null, null, null, null, null, "", "", "light pink and beige tones", true);
+  const without    = _buildGeminiPrompt("金木犀の季節", "説明", null, null, null, null, null, null, "", "", "light pink and beige tones", false);
+  assert("trueのとき縦長9:16の指示を含む", withSpace.includes("9:16"));
+  assert("trueのときカレンダー用余白の指示を含む", withSpace.includes("bottom third"));
+  assert("falseのとき9:16指示を含まない（従来通り）", !without.includes("9:16"));
+
+  const pWithSpace = _buildPollinationsPrompt("金木犀の季節", "説明", null, null, "fragrant olive blossoms", null, null, null, "", "", true);
+  const pWithout    = _buildPollinationsPrompt("金木犀の季節", "説明", null, null, "fragrant olive blossoms", null, null, null, "", "", false);
+  assert("Pollinations: trueのとき9:16 keywordを含む", pWithSpace.includes("9:16"));
+  assert("Pollinations: falseのとき9:16 keywordを含まない", !pWithout.includes("9:16"));
+}
+
+console.log("\n[buildMonthlyWallpaperPostText / buildMonthlyWallpaperMastodonText]");
+{
+  const ja = buildMonthlyWallpaperPostText(10, "金木犀");
+  assert("月数字を含む", ja.includes("10月"));
+  assert("テーマ名を含む", ja.includes("金木犀"));
+  assert("ハッシュタグを含む", ja.includes("#壁紙"));
+
+  const masto = buildMonthlyWallpaperMastodonText(10, "金木犀", "Fragrant Olive");
+  assert("英語月名を含む", masto.includes("October"));
+  assert("英語テーマ名を含む", masto.includes("Fragrant Olive"));
+  assert("日本語セクションも含む（二言語）", masto.includes("金木犀"));
+}
+
+console.log("\n[runMonthlyWallpaperPost: GEMINI_API_KEY 未設定]");
+{
+  let generateCalled = false;
+  const mockGenerate = async () => { generateCalled = true; };
+  const result = await runMonthlyWallpaperPost({ GEMINI_API_KEY: "", DISCORD_WEBHOOK_URL: "" }, mockGenerate);
+  assert("GEMINI_API_KEY未設定時はhandleGenerateを呼ばない", !generateCalled);
+  assert("エラーを返す", typeof result.error === "string");
+}
+
+console.log("\n[runMonthlyWallpaperPost: 正常フロー（モック合成・R2保存確認）]");
+{
+  const store = {};
+  const bucket = {
+    async put(key, value) { store[key] = value; },
+    async get(key) { return key in store ? { arrayBuffer: async () => new ArrayBuffer(0) } : null; },
+  };
+  const env = {
+    GEMINI_API_KEY: "test-key",
+    BLUESKY_IDENTIFIER: "", BLUESKY_APP_PASSWORD: "",
+    DISCORD_WEBHOOK_URL: "",
+    IMAGE_BUCKET: bucket,
+  };
+
+  let generateBody;
+  const mockGenerate = async (body) => {
+    generateBody = body;
+    return { imageData: btoa("fake-image"), mimeType: "image/png", source: "gemini", prompt: "test prompt" };
+  };
+  const mockComposite = async (imageData, year, month) => ({
+    calendarImageData: btoa("calendar"), noCalendarImageData: btoa("no-calendar"),
+    mimeType: "image/png", composited: true,
+  });
+
+  const result = await runMonthlyWallpaperPost(env, mockGenerate, null, { compositeMonthlyWallpaperFn: mockComposite });
+
+  assert("handleGenerateにreserveCalendarSpace=trueが渡される", generateBody?.reserveCalendarSpace === true);
+  assert("handleGenerateにthemeが渡される（季節名+の季節）", /の季節$/.test(generateBody?.theme ?? ""));
+  assert("結果にyear/monthが含まれる", typeof result.year === "number" && typeof result.month === "number");
+  const savedKeys = Object.keys(store);
+  assert("R2にcalendar.pngが保存される", savedKeys.some(k => k.endsWith("/calendar.png")));
+  assert("R2にno-calendar.pngが保存される", savedKeys.some(k => k.endsWith("/no-calendar.png")));
+  assert("R2にmeta.jsonが保存される", savedKeys.some(k => k.endsWith("/meta.json")));
+  assert("保存キーがmonthly-wallpaper/プレフィックス", savedKeys.every(k => k.startsWith("monthly-wallpaper/")));
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);

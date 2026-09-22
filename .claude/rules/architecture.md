@@ -1029,18 +1029,25 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 - Satoriが描画するのはテキスト・図形のオーバーレイ（カレンダー格子・月名・年・署名）のみで透過PNGとして出力する。**AI生成した猫写真自体をSatoriの要素ツリーに埋め込まない**（SatoriのWorkers上での画像fetchは動作しないことが既知のため）。写真の切り抜き・リサイズ・最終合成（オーバーレイの`watermark()`貼り付け）は引き続きPhotonが担当する
 - カスタムフォント（Gloock・WorkSans、いずれもGoogle FontsのOFLライセンス）は`worker/assets/fonts/`にTTF形式でリポジトリ管理し、Satoriの`options.fonts`にArrayBufferとして渡す
 
+**設計簡略化（2026-09・ランタイム空白帯検出は行わない）**: 当初案は画像下部の空白帯を`_detectCropBox()`同系統のロジックでランタイム検出する想定だったが、Satoriのオーバーレイ自体に半透明の背景パネル（カレンダー帯・左上バッジそれぞれに）を常時描画することで、被写体がどこにあっても可読性を保証できると判断し、検出ロジックは実装しない（旧・月名バッジ案で採用した「バッジPNGにソフトグローを焼き込み、実行時判定を省く」という簡略化と同じ考え方をSatori版にも踏襲）。可動部を減らすことで壊れ方が減り、フォールバックの分岐も単純になる。
+
+**祝日ライブラリの選定**: `@holiday-jp/holiday_jp`（npm、依存パッケージなし・Node組み込みAPI不使用・`isHoliday(date)`が祝日名または`false`を返す純粋な日付テーブル方式）を採用。比較検討した`japanese-holidays`より依存が少なく、内蔵テーブルが2050年まで事前計算済みでランタイムの祝日計算ロジックを持たない点を評価した。
+
+**関数設計**:
+
+- `_buildCalendarOverlayElement(year, month, options)`（`worker/image-utils.js`・純粋関数）: 指定年月のカレンダー格子（曜日見出し・日付数字・日曜/祝日=赤・土曜=青・`@holiday-jp/holiday_jp`で祝日判定）＋左上の月名・年バッジ＋左下の「© nyanmusu」署名を含むSatori要素ツリー（JSX形状のプレーンオブジェクト）を返す。`options`にキャンバスサイズ・フォント名を渡す
+- `_buildSignatureOnlyElement(options)`（同ファイル・純粋関数）: 「© nyanmusu」署名のみのSatori要素ツリーを返す（「カレンダーなし」版用）
+- `compositeMonthlyWallpaper(imageData, year, month, deps = {})`（`worker/image-utils.js`）: `autoCropImage()`と同じ「依存関数を引数で受け取る」テストパターンを踏襲
+
 **合成処理の流れ**:
 
 1. 生成画像を1080×1920（スマホ壁紙・フルHD縦）へcover-cropでリサイズ（Photon）
-2. 画像下部の空白帯の境界を自動検出（`_detectCropBox()`と同系統の「背景色からの差分スキャン」ロジックを共通化して使う）
-3. カレンダー格子（曜日見出し・日付数字・日本の祝日/日曜=赤・土曜=青）＋左上の月名・年バッジ＋左下の「© nyanmusu」署名（`frontend/index.html`の`applyWatermark()`と同一の透かし文言）を、Satoriの要素ツリーとして1枚のオーバーレイSVG/PNGにまとめて組み立てる（`renderElementToPng()`）
-4. オーバーレイPNGをPhotonの`watermark()`で生成画像に貼り付ける
-5. 「カレンダーなし」版も同時に生成する: 同じcover-crop画像に「© nyanmusu」署名のみのオーバーレイを貼ったもの（full-bleed、カレンダー帯・月名バッジなし）
-6. 失敗時（Photon/Satori/resvg読み込み失敗等）は既存`autoCropImage()`と同様、未加工画像にフォールバックし処理全体は失敗させない
+2. `_buildCalendarOverlayElement()`でカレンダー版の要素ツリーを組み立て、`renderElementToPng()`（`worker/svg-render.js`）でオーバーレイPNGを生成
+3. オーバーレイPNGをPhotonの`watermark()`で生成画像に貼り付ける（カレンダー版）
+4. 「カレンダーなし」版も同時に生成する: 同じcover-crop画像に`_buildSignatureOnlyElement()`のオーバーレイ（署名のみ）を貼ったもの（full-bleed、カレンダー帯・月名バッジなし）
+5. 失敗時（Photon/Satori/resvg読み込み失敗等）は既存`autoCropImage()`と同様、未加工画像にフォールバックし処理全体は失敗させない
 
-**日本の祝日反映**: Workers互換（npmパッケージのみ・Node組み込みAPI不可）な祝日計算ライブラリを使用（具体的な採用ライブラリは実装時の比較検討に基づき記録する）。日曜と同じ赤色で表示する。
-
-**実装状況（2026-09時点）**: `worker/svg-render.js`（Satori/resvgローダー・`renderElementToPng()`）とそのユニットテスト（`scripts/test-bot.mjs`、モック経由）のみ実装済み。カレンダー格子の要素ツリー組み立て（`_buildCalendarGrid()`相当）・`compositeMonthlyWallpaper()`本体・`worker/index.js`/`worker/bot.js`側の統合・祝日ライブラリ選定・Cron追加は未実装（下記「投稿本体」「Cron」の記載は設計であり未着手）。
+**実装状況（2026-09時点）**: `worker/svg-render.js`（Satori/resvgローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。**未検証**: 実際のCloudflare Workers環境でのSatori/resvg WASM動作（resvg.wasmのR2初回配置含む）・Bluesky/Mastodon実投稿・カレンダー表示の目視確認はデプロイ後にユーザーが行う必要がある（下記「検証方法」参照）。
 
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null)`）
 

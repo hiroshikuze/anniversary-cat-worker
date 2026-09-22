@@ -71,6 +71,37 @@ export function _setResvgForTest(mockResvgClass) {
   _resvgReady = mockResvgClass !== null;
 }
 
+let _fontsReady = false;
+let _fonts      = null; // [{name, data, weight, style}]
+
+/**
+ * カレンダーオーバーレイ用のカスタムフォント（Gloock・WorkSans、いずれもOFLライセンス）を
+ * worker/assets/fonts/からArrayBufferとして遅延ロードする。wrangler.tomlの[[rules]]で
+ * .ttfをDataモジュール（ArrayBuffer）としてimportできるよう設定済み。
+ */
+export async function ensureFonts() {
+  if (_fontsReady) return;
+  const [{ default: gloock }, { default: workSansRegular }, { default: workSansBold }] = await Promise.all([
+    import("./assets/fonts/Gloock-Regular.ttf"),
+    import("./assets/fonts/WorkSans-Regular.ttf"),
+    import("./assets/fonts/WorkSans-Bold.ttf"),
+  ]);
+  _fonts = [
+    { name: "Gloock", data: gloock, weight: 400, style: "normal" },
+    { name: "WorkSans", data: workSansRegular, weight: 400, style: "normal" },
+    { name: "WorkSans", data: workSansBold, weight: 700, style: "normal" },
+  ];
+  _fontsReady = true;
+}
+
+export function getFonts() { return _fonts; }
+
+/** テスト用: フォントのモックを注入する */
+export function _setFontsForTest(mockFonts) {
+  _fonts = mockFonts;
+  _fontsReady = mockFonts !== null;
+}
+
 /**
  * Satori要素ツリー（JSX形状のプレーンオブジェクト。ReactNode不要）をPNG（Uint8Array）に変換する。
  *
