@@ -7,10 +7,19 @@
  * テキスト描画にはSatori（CSS風スタイルでSVGを組み立てる）+ resvg（SVG→PNGラスタライズ、
  * テキストは既にSVGパス化済みのためフォント探索不要）を使う。
  *
- * サイズの都合上、Satori本体とYoga（レイアウトエンジン、71KB）はPhotonと同じ
- * 直接importでバンドルするが、resvgのWASM（約2.4MB）はバンドルするとWorkers Free
- * プランのスクリプトサイズ上限（gzip圧縮後3MB）をPhoton分と合わせて圧迫するため、
- * R2バケット（既存のIMAGE_BUCKET）に静的アセットとして配置し、実行時にfetchする
+ * **生のsatoriパッケージではなく@cf-wasm/satori/workerdを使う（2026-09・重要）**:
+ * 素の`satori`（v0.30以降）は内部でharfbuzzjs（Emscripten生成のJS）に依存しており、
+ * これがNode専用の`require("fs")`分岐を静的に含むため、`wrangler deploy --dry-run`で
+ * ビルド自体が失敗する（`Could not resolve "fs"`）。実機での動作以前にデプロイ自体が
+ * 不可能だった。Cloudflare Workers向けにこの問題を解決済みの`@cf-wasm/satori`
+ * （fineshopdesignのcf-wasmモノレポ、`/workerd`エントリポイントでharfbuzz WASMを
+ * インスタンス経由で渡す実装）に切り替えることで解消した。実際に`wrangler deploy
+ * --dry-run`でビルド成功・gzip後約1.16MBを確認済み（Workers Free 3MB上限に十分な余裕）。
+ *
+ * Yoga（レイアウトエンジン、71KB）は`@cf-wasm/satori`が内部でバンドル・自動初期化する
+ * （importした時点で`initSatori(yogaWasmModule)`が実行される）ため、こちら側での
+ * 明示initは不要。resvgのWASM（約2.4MB）は引き続きバンドルせず、R2バケット
+ * （既存のIMAGE_BUCKET）に静的アセットとして配置し、実行時にfetchする
  * （worker/index.jsの/back/:id・/hires/:idと同じ「R2をアセットストアとして使う」パターン）。
  *
  * resvg.wasmのR2配置は初回のみ手動で行う（デプロイ手順書参照）:
@@ -29,10 +38,9 @@ const RESVG_WASM_R2_KEY = "assets/resvg.wasm";
 /** Satori本体 + Yoga（レイアウトエンジンWASM）を遅延ロードする */
 export async function ensureSatori() {
   if (_satoriReady) return;
-  const mod = await import("satori/standalone");
-  const { default: yogaWasm } = await import("satori/yoga.wasm");
-  await mod.init(yogaWasm);
-  _satoriFn = mod.default;
+  const mod = await import("@cf-wasm/satori/workerd");
+  await mod.initSatori.ensure();
+  _satoriFn = mod.satori;
   _satoriReady = true;
 }
 
