@@ -1003,6 +1003,8 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 ### 月テーマの決定（新規データテーブルなし）
 
+**「対象月」＝JST基準で「今日」が属する月の翌月**（`worker/bot.js` `resolveTargetYearMonth()`）。月末Cron（`"0 3 * * *"`が月末日にのみ発火）は「今月末に来月分の壁紙を配る」設計のため、例えば9/30発火時は10月の壁紙を生成する。手動再生成エンドポイントも同じ関数を使うため、月初〜月末のどのタイミングで手動実行しても常に「次に来る月」の壁紙になる（当月分を作りたい場合は月初に手動実行する）。
+
 対象月の**末日**の日付文字列（`YYYY-MM-DD`）を既存の`getSeasonalFlower()`/`getSeasonalFlowerVisual()`/`getSeasonalStyleTone()`/`getSeasonalFlowerEn()`（`worker/index.js`）にそのまま渡し、`SEASONAL_FLOWERS`（24エントリ・半月区切り）の該当後半エントリを月テーマとして流用する。全月の末日は必ず後半エントリ（`16日〜末日`区切り）に一致する設計のため、常に安定して選ばれる（例: 10月末日→「金木犀」）。新規の月別テーブルは作らない。
 
 ### 画像生成: 既存`handleGenerate()`の拡張利用
@@ -1018,7 +1020,7 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
   - 画像下部30%程度を、カレンダー格子を重ねるための平坦で明るい余白帯として残す指示
   - 画像左上の一角を、月名ラベルを重ねるための平坦な余白として残す指示
   - 禁止事項に「文字・数字を含めない」を強化（カレンダー数字・月名バッジとの視覚的衝突回避）
-  - AIの構図指示遵守は完全ではない（実測で指示した30%に対し実際は46%の余白ができた例あり）ため、後述の自動検出＋フォールバックで吸収する
+  - AIの構図指示遵守は完全ではない（実測で指示した30%に対し実際は46%の余白ができた例あり）ため、余白の実際の量には依存しない設計にしている。Satoriのオーバーレイパネル自体が半透明背景で可読性を担保するため、ランタイムでの空白帯検出は行わない（下記「設計簡略化」参照）
 
 ### カレンダー・月名の合成（`worker/image-utils.js` `compositeMonthlyWallpaper()` + `worker/svg-render.js`）
 
@@ -1051,11 +1053,11 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 **実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。**未検証**: 実際のCloudflare Workers環境でのSatori/resvg WASM**実行時動作**（ビルドが通ることと実行時にクラッシュしないことは別。resvg.wasmのR2初回配置含む）・Bluesky/Mastodon実投稿・カレンダー表示の目視確認はデプロイ後にユーザーが行う必要がある（下記「検証方法」参照）。
 
-### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null)`）
+### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
 
-`runBot()`と同じ構造を踏襲する。
+`runBot()`と同じ構造を踏襲する。`deps.compositeMonthlyWallpaperFn`（省略時`compositeMonthlyWallpaper`）はSatori/resvgという重いWASM処理を伴うためテスト時に必ずモック可能にしている（`_pollFalAndGetTexture()`と同じ「依存関数を引数で受け取る」パターン）。
 
-1. JST基準で対象年月を決定 → 月テーマ取得 → `handleGenerate()` → `compositeMonthlyWallpaper()`でカレンダーあり・なし2版を生成
+1. `resolveTargetYearMonth()`で対象年月（翌月）を決定 → 月テーマ取得 → `handleGenerate()` → `compositeMonthlyWallpaperFn()`でカレンダーあり・なし2版を生成
 2. R2保存: `monthly-wallpaper/YYYY-MM/calendar.png` + `no-calendar.png` + `meta.json`。**手動再生成は同一年月のキーを上書きする**（Bot投稿の`bot/YYYY-MM-DD-n`スロット方式とは異なり、意図的な再実行が主目的のため上書きでよい）
 3. Bluesky投稿: **カレンダーあり・なし2枚を同一投稿に添付**する。既存`createPost()`は単一画像専用のため、新規関数`createMonthlyWallpaperPost()`（`worker/bot.js`内・同一モジュールスコープの既存プライベート関数`createBlueskySession()`/`uploadBlob()`を再利用）で`app.bsky.embed.images`の画像配列（2件・altテキストをそれぞれ設定）を組み立てる
 4. Mastodon投稿: 既存`uploadMediaToMastodon()`を2回呼び、`postStatusToMastodon()`の`media_ids[]`に2件渡す

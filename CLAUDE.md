@@ -165,6 +165,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | Satoriは生の`satori`パッケージではなく`@cf-wasm/satori`（`/workerd`エントリポイント）を使う | 生の`satori`（v0.30以降）はharfbuzzjs依存がNode専用`require("fs")`を静的に含み、`wrangler deploy --dry-run`の時点でビルドが失敗する（実機検証以前にデプロイ不可能）。Cloudflare Workers向けにこの問題を解決済みの`@cf-wasm/satori`に切り替えて解消した。詳細は`.claude/rules/architecture.md`の「カレンダー・月名の合成」参照 |
 | resvgのWASM（約2.4MB）はWorkerコードに直接importせず、既存R2バケット（`IMAGE_BUCKET`）に配置して実行時に`fetch`する | Photon（約1.9MB）と合わせて直接バンドルするとWorkers Freeプランのスクリプトサイズ上限（gzip圧縮後3MB）を圧迫するリスクが高いため。Satori本体・Yoga（71KB）はサイズが小さくPhotonと同じ直接import方式でバンドルする |
 | 月替わり壁紙の手動再生成エンドポイントは既存`BYPASS_TOKEN`を流用する（新規シークレットを作らない） | 用途が増えることの留意点はあるが、月次1機能のために管理対象シークレットを増やすコストの方が大きいと判断（ユーザー承認済み） |
+| 月替わり壁紙の「対象月」はJST基準で「今日」が属する月の**翌月**（`resolveTargetYearMonth()`） | 月末Cronで「今月末に来月分を配る」設計のため。翌月にせず当月のままにすると、月末に生成した壁紙がその月の残り1日分しか使えなくなる |
 
 ---
 
