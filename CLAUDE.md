@@ -161,6 +161,11 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | フロントの日付表示は`timeZone: "Asia/Tokyo"`を明示する | ブラウザのロケール設定に依存すると海外ユーザーでJST日付がずれる（共有URLで記念日と日付が矛盾して見える問題） |
 | 共有URLで表示する日付は`data.createdAt`を使う（`new Date()`は使わない） | `new Date()`は閲覧日になるため、過去に生成した画像を共有された際に記念日の内容と日付が矛盾する |
 | 共有URLの日付バッジはスピナー（`g-loading`）表示前に更新する | ローディング中に「今日の日付」が見えるとユーザーが不安になる。bot IDはIDから直接・user IDは`/meta/:id`を先行fetchして更新する |
+| 月替わり壁紙のカレンダー・月名テキストはPhotonの`draw_text()`（Roboto固定・色指定不可）でも事前生成ビットマップPNGでもなく、Satori（要素ツリー→SVG）+`@resvg/resvg-wasm`（SVG→PNG）で動的にベクター描画する（`worker/svg-render.js`） | ユーザーが「ビットマップテキストは解像度変更等の柔軟性を下げるので避けたい」と明確に差し戻したため。Photon単体では色・カスタムフォントを扱えず、事前生成PNGは年次更新性・柔軟性に欠ける。写真の切り抜き・最終合成は引き続きPhotonが担当し、Satoriはテキスト/図形オーバーレイの生成のみを担う |
+| Satoriは生の`satori`パッケージではなく`@cf-wasm/satori`（`/workerd`エントリポイント）を使う | 生の`satori`（v0.30以降）はharfbuzzjs依存がNode専用`require("fs")`を静的に含み、`wrangler deploy --dry-run`の時点でビルドが失敗する（実機検証以前にデプロイ不可能）。Cloudflare Workers向けにこの問題を解決済みの`@cf-wasm/satori`に切り替えて解消した。詳細は`.claude/rules/architecture.md`の「カレンダー・月名の合成」参照 |
+| resvgのWASM（約2.4MB）はWorkerコードに直接importせず、既存R2バケット（`IMAGE_BUCKET`）に配置して実行時に`fetch`する | Photon（約1.9MB）と合わせて直接バンドルするとWorkers Freeプランのスクリプトサイズ上限（gzip圧縮後3MB）を圧迫するリスクが高いため。Satori本体・Yoga（71KB）はサイズが小さくPhotonと同じ直接import方式でバンドルする |
+| 月替わり壁紙の手動再生成エンドポイントは既存`BYPASS_TOKEN`を流用する（新規シークレットを作らない） | 用途が増えることの留意点はあるが、月次1機能のために管理対象シークレットを増やすコストの方が大きいと判断（ユーザー承認済み） |
+| 月替わり壁紙の「対象月」はJST基準で「今日」が属する月の**翌月**（`resolveTargetYearMonth()`） | 月末Cronで「今月末に来月分を配る」設計のため。翌月にせず当月のままにすると、月末に生成した壁紙がその月の残り1日分しか使えなくなる |
 
 ---
 
@@ -208,6 +213,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | 外部通信の共通リトライ（5xx・ネットワーク例外を指数バックオフでリトライ。SUZURI登録・fal.aiポーリング・共有URL画像取得等に適用） | `worker/http-utils.js` `fetchWithRetry()` `worker/index.js` `_pollFalAndGetTexture()` | 稼働中 |
 | Workers Traces有効化・CPU時間計測チェックポイント（Cron・HTTPエンドポイント問わず重い処理に`recordCpuCheckpoint()`で計測を恒久設置。Workers Free上限10ms対策のBug#32の一環） | `wrangler.toml` `[observability.traces]` `worker/index.js` `recordCpuCheckpoint()` `worker/bot.js` | 稼働中 |
 | CPU時間のステップ別KV集計・API化（`/usage`と同パターン。`/cpu-usage`でCIログから確認可能） | `worker/index.js` `incrementCpuTimeKv()` `recordCpuCheckpoint()` `/cpu-usage` `scripts/health-check.js` | 稼働中 |
+| 月替わり壁紙プレゼント（Bluesky/Mastodon限定・カレンダー付き/なし2版・月末Cron＋手動再生成エンドポイント） | `worker/bot.js` `runMonthlyWallpaperPost()` `worker/image-utils.js` `compositeMonthlyWallpaper()` `worker/svg-render.js` `POST /monthly-wallpaper/regenerate` | 実装済み・未デプロイ検証（`npm test`は全件成功。実際のCloudflare Workers環境でのSatori/resvg動作・resvg.wasmのR2初回配置・実投稿はデプロイ後にユーザーが確認する。詳細は`.claude/rules/architecture.md`の「月替わり壁紙プレゼント機能」の「実装状況」参照） |
 
 ### 主要な定数値・APIエンドポイント一覧
 
@@ -225,6 +231,8 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 > `scripts/health-check.js`は直接実行不可。テスト結果はユーザーにGitHub ActionsタブのURLで確認を依頼する。
 
 `npm test`（= `scripts/test-bot.mjs`）は外部API不要でローカル実行可能。
+
+**`npx wrangler deploy --dry-run --outdir=<tmp>`でビルド検証・バンドルサイズ計測が可能（2026-09発見）**: 実際にはデプロイせず、Cloudflare Workers向けのビルド（esbuild）だけをローカルで実行できる。外部APIキー不要。新しいnpm依存（WASM・ネイティブバインディング等）を追加した際は、`npm test`だけでは検出できないビルド時エラー（Node専用API依存の混入等）とgzip後バンドルサイズ（Workers Freeプランは3MB上限）をこのコマンドで確認すること。実例: `satori`パッケージ導入時にharfbuzzjs依存の`require("fs")`がビルドを壊すことをこのコマンドで検出し、`@cf-wasm/satori`への切替で解消した（`.claude/rules/architecture.md`の「カレンダー・月名の合成」参照）。**ただし実行時のWASM初期化・動作まではローカルで検証できない**（Cloudflare Workers実機でのみ確認可能な点は変わらない）。
 
 `frontend/index.html`に新機能を追加した際は、`.claude/rules/testing.md`の「選定基準」に照らし、該当する場合は`.github/workflows/health-check.yml`のフロントエンド機能チェックリストに追加する。
 

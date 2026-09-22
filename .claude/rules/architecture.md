@@ -74,6 +74,7 @@ anniversary-cat-worker/
 | GET | `/cpu-usage` | ステップ別CPU時間集計（直近30日・認証なし・`{days:[{date,{step}:{calls,totalMs,maxMs}}]}`） |
 | GET | `/sale-info` | 現在有効なSUZURIセール情報（認証なし・`{active:true,endUtcMs,discountYen,endDisplay}`または`{active:false}`・`Cache-Control: public, max-age=300`） |
 | POST | `/suzuri-create` | ウォーターマーク済み画像を受け取りSUZURI登録・R2メタ更新 |
+| POST | `/monthly-wallpaper/regenerate` | 月替わり壁紙の手動再生成（`X-Bypass-Token`ヘッダー必須。月末Cronと同じ`runMonthlyWallpaperPost()`を呼ぶ） |
 
 ### /proxy-imageのセキュリティ制約
 
@@ -991,6 +992,101 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 必要スコープ: `write:statuses` + `write:media`
 
 **未設定時の動作**: `MASTODON_INSTANCE_URL` または `MASTODON_ACCESS_TOKEN` が未設定の場合、Mastodon投稿をスキップして`Promise.resolve(null)`を返す。Bluesky単体で動作継続。
+
+---
+
+## 月替わり壁紙プレゼント機能（`worker/bot.js` `runMonthlyWallpaperPost()`・2026-09追加）
+
+### 背景
+
+集客診断（Umami/Bluesky/Mastodon実データ）で、ボトルネックはSUZURI導線や価格ではなく「SNS上での露出（リーチ）」だと判明した（詳細は`.claude/future-ideas.md`の「集客・マーケティング診断」参照）。サイト機能・SUZURI化には投資せず、まず「毎月の壁紙プレゼント」という新しいコンテンツ形態がフォロワー増・エンゲージメント増に効くかをSNS単体（Bluesky/Mastodon自動投稿）で安く検証する。X/Instagram/Facebook/mixi2への展開は、Discord通知に含まれる転載用テキストを使った手動コピペ運用とする。
+
+### 月テーマの決定（新規データテーブルなし）
+
+**「対象月」＝JST基準で「今日」が属する月の翌月**（`worker/bot.js` `resolveTargetYearMonth()`）。月末Cron（`"0 3 * * *"`が月末日にのみ発火）は「今月末に来月分の壁紙を配る」設計のため、例えば9/30発火時は10月の壁紙を生成する。手動再生成エンドポイントも同じ関数を使うため、月初〜月末のどのタイミングで手動実行しても常に「次に来る月」の壁紙になる（当月分を作りたい場合は月初に手動実行する）。
+
+対象月の**末日**の日付文字列（`YYYY-MM-DD`）を既存の`getSeasonalFlower()`/`getSeasonalFlowerVisual()`/`getSeasonalStyleTone()`/`getSeasonalFlowerEn()`（`worker/index.js`）にそのまま渡し、`SEASONAL_FLOWERS`（24エントリ・半月区切り）の該当後半エントリを月テーマとして流用する。全月の末日は必ず後半エントリ（`16日〜末日`区切り）に一致する設計のため、常に安定して選ばれる（例: 10月末日→「金木犀」）。新規の月別テーブルは作らない。
+
+### 画像生成: 既存`handleGenerate()`の拡張利用
+
+新しい生成パイプラインは作らず、既存の2フェーズレース（Gemini→Pollinationsフォールバック）・モデル自動切替・CPU計測をそのまま利用する。
+
+- `handleGenerate()`呼び出し時の`body`: `{ theme, description, visualHint, themeEn, descriptionEn, jstDateISO: <対象月の末日>, reserveCalendarSpace: true }`
+- `jstDateISO`を対象月の末日で明示的に渡すことで、手動再生成が別の日に実行されても季節カラー・花テーマが対象月とズレない（内部の`getSeasonalStyleTone()`は「今日の日付」がデフォルトのため）
+- **ゲストキャラクター（`pickGuestAnimal()`・10%出現）は除外しない**（意図的な仕様判断。「たまに違う動物が混ざる意外性も味」とユーザーが判断）
+- `body.foodItem`を渡さないため`eatingAction`は発生しない（対応不要）
+- `_buildGeminiPrompt()`/`_buildPollinationsPrompt()`に新しい引数`reserveCalendarSpace = false`を追加。`true`のとき以下を構図指示に追加する:
+  - 縦長9:16のアスペクト比指定（日次プロンプトには元々なし。SUZURI用の正方形寄り想定だったため）
+  - 画像下部30%程度を、カレンダー格子を重ねるための平坦で明るい余白帯として残す指示
+  - 画像左上の一角を、月名ラベルを重ねるための平坦な余白として残す指示
+  - 禁止事項に「文字・数字を含めない」を強化（カレンダー数字・月名バッジとの視覚的衝突回避）
+  - AIの構図指示遵守は完全ではない（実測で指示した30%に対し実際は46%の余白ができた例あり）ため、余白の実際の量には依存しない設計にしている。Satoriのオーバーレイパネル自体が半透明背景で可読性を担保するため、ランタイムでの空白帯検出は行わない（下記「設計簡略化」参照）
+
+### カレンダー・月名の合成（`worker/image-utils.js` `compositeMonthlyWallpaper()` + `worker/svg-render.js`）
+
+**設計変更（2026-09）**: 当初はPhotonの`draw_text()`（Roboto固定・色指定不可）＋事前生成バッジPNGのハイブリッド方式で実装しかけたが、ユーザーから「ビットマップテキストは解像度変更等の柔軟性を下げるので避けたい」と明確な差し戻しを受けた。調査の結果、色付き・カスタムフォントのベクターテキストをCloudflare Workersで動的生成する標準パターンとして**Satori（要素ツリー→SVG）+ `@resvg/resvg-wasm`（SVG→PNGラスタライズ）**を採用した（OGP画像生成等で広く使われる組み合わせ）。事前生成の月名バッジPNG（`worker/assets/month-badges/`）は廃止・削除済み。
+
+- `worker/svg-render.js`が共有ローダー（`worker/image-utils.js`のPhotonローダーと同じ「遅延ロード＋`_setXForTest()`」パターン）: `ensureSatori()`（Satori本体＋レイアウトエンジンYoga）、`ensureResvg(bucket)`（resvgのWASM本体、約2.4MB）、`renderElementToPng(element, options, bucket, deps)`
+- **生の`satori`パッケージではなく`@cf-wasm/satori`（`/workerd`エントリポイント）を使う（2026-09・重要な設計判断）**: 素の`satori`（v0.30以降）はharfbuzzjs（Emscripten生成JS）に依存し、Node専用の`require("fs")`分岐を静的に含むため、`wrangler deploy --dry-run`の時点でビルドが失敗する（`Could not resolve "fs"`）。実機動作の検証以前にデプロイ自体が不可能な状態だった。Cloudflare Workers向けにこの問題を解決済みの`@cf-wasm/satori`（fineshopdesignのcf-wasmモノレポ）に切り替えて解消した。Yoga（レイアウトエンジン、71KB）はこのパッケージが内部でバンドル・import時に自動初期化するため、明示initは不要
+- **resvgのWASM（約2.4MB）はコードに直接importせずR2（既存`IMAGE_BUCKET`）から実行時に`fetch`する**。理由: Photon（約1.9MB）と合わせて直接バンドルするとWorkers Freeプランのスクリプトサイズ上限（gzip圧縮後3MB）を圧迫するリスクが高いため。初回セットアップで`wrangler r2 object put anniversary-cat-images/assets/resvg.wasm --file node_modules/@resvg/resvg-wasm/index_bg.wasm`を一度だけ実行する必要がある（`.claude/rules/git-workflow.md`の初回セットアップ手順に追記済み）
+- **実測**: `wrangler deploy --dry-run --outdir=...`でビルド成功・Total Upload 3655.73 KiB / gzip 1159.56 KiB（約1.16MB）を確認済み（2026-09）。Workers Freeプランのgzip 3MB上限に対し十分な余裕がある
+- Satoriが描画するのはテキスト・図形のオーバーレイ（カレンダー格子・月名・年・署名）のみで透過PNGとして出力する。**AI生成した猫写真自体をSatoriの要素ツリーに埋め込まない**（SatoriのWorkers上での画像fetchは動作しないことが既知のため）。写真の切り抜き・リサイズ・最終合成（オーバーレイの`watermark()`貼り付け）は引き続きPhotonが担当する
+- カスタムフォント（Gloock・WorkSans、いずれもGoogle FontsのOFLライセンス）は`worker/assets/fonts/`にTTF形式でリポジトリ管理し、Satoriの`options.fonts`にArrayBufferとして渡す
+
+**設計簡略化（2026-09・ランタイム空白帯検出は行わない）**: 当初案は画像下部の空白帯を`_detectCropBox()`同系統のロジックでランタイム検出する想定だったが、Satoriのオーバーレイ自体に半透明の背景パネル（カレンダー帯・左上バッジそれぞれに）を常時描画することで、被写体がどこにあっても可読性を保証できると判断し、検出ロジックは実装しない（旧・月名バッジ案で採用した「バッジPNGにソフトグローを焼き込み、実行時判定を省く」という簡略化と同じ考え方をSatori版にも踏襲）。可動部を減らすことで壊れ方が減り、フォールバックの分岐も単純になる。
+
+**祝日ライブラリの選定**: `@holiday-jp/holiday_jp`（npm、依存パッケージなし・Node組み込みAPI不使用・`isHoliday(date)`が祝日名または`false`を返す純粋な日付テーブル方式）を採用。比較検討した`japanese-holidays`より依存が少なく、内蔵テーブルが2050年まで事前計算済みでランタイムの祝日計算ロジックを持たない点を評価した。
+
+**関数設計**:
+
+- `_buildCalendarOverlayElement(year, month, options)`（`worker/image-utils.js`・純粋関数）: 指定年月のカレンダー格子（曜日見出し・日付数字・日曜/祝日=赤・土曜=青・`@holiday-jp/holiday_jp`で祝日判定）＋左上の月名・年バッジ＋左下の「© nyanmusu」署名を含むSatori要素ツリー（JSX形状のプレーンオブジェクト）を返す。`options`にキャンバスサイズ・フォント名を渡す
+- `_buildSignatureOnlyElement(options)`（同ファイル・純粋関数）: 「© nyanmusu」署名のみのSatori要素ツリーを返す（「カレンダーなし」版用）
+- `compositeMonthlyWallpaper(imageData, year, month, deps = {})`（`worker/image-utils.js`）: `autoCropImage()`と同じ「依存関数を引数で受け取る」テストパターンを踏襲
+
+**合成処理の流れ**:
+
+1. 生成画像を1080×1920（スマホ壁紙・フルHD縦）へcover-cropでリサイズ（Photon）
+2. `_buildCalendarOverlayElement()`でカレンダー版の要素ツリーを組み立て、`renderElementToPng()`（`worker/svg-render.js`）でオーバーレイPNGを生成
+3. オーバーレイPNGをPhotonの`watermark()`で生成画像に貼り付ける（カレンダー版）
+4. 「カレンダーなし」版も同時に生成する: 同じcover-crop画像に`_buildSignatureOnlyElement()`のオーバーレイ（署名のみ）を貼ったもの（full-bleed、カレンダー帯・月名バッジなし）
+5. 失敗時（Photon/Satori/resvg読み込み失敗等）は既存`autoCropImage()`と同様、未加工画像にフォールバックし処理全体は失敗させない
+
+**実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。**未検証**: 実際のCloudflare Workers環境でのSatori/resvg WASM**実行時動作**（ビルドが通ることと実行時にクラッシュしないことは別。resvg.wasmのR2初回配置含む）・Bluesky/Mastodon実投稿・カレンダー表示の目視確認はデプロイ後にユーザーが行う必要がある（下記「検証方法」参照）。
+
+### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
+
+`runBot()`と同じ構造を踏襲する。`deps.compositeMonthlyWallpaperFn`（省略時`compositeMonthlyWallpaper`）はSatori/resvgという重いWASM処理を伴うためテスト時に必ずモック可能にしている（`_pollFalAndGetTexture()`と同じ「依存関数を引数で受け取る」パターン）。
+
+1. `resolveTargetYearMonth()`で対象年月（翌月）を決定 → 月テーマ取得 → `handleGenerate()` → `compositeMonthlyWallpaperFn()`でカレンダーあり・なし2版を生成
+2. R2保存: `monthly-wallpaper/YYYY-MM/calendar.png` + `no-calendar.png` + `meta.json`。**手動再生成は同一年月のキーを上書きする**（Bot投稿の`bot/YYYY-MM-DD-n`スロット方式とは異なり、意図的な再実行が主目的のため上書きでよい）
+3. Bluesky投稿: **カレンダーあり・なし2枚を同一投稿に添付**する。既存`createPost()`は単一画像専用のため、新規関数`createMonthlyWallpaperPost()`（`worker/bot.js`内・同一モジュールスコープの既存プライベート関数`createBlueskySession()`/`uploadBlob()`を再利用）で`app.bsky.embed.images`の画像配列（2件・altテキストをそれぞれ設定）を組み立てる
+4. Mastodon投稿: 既存`uploadMediaToMastodon()`を2回呼び、`postStatusToMastodon()`の`media_ids[]`に2件渡す
+5. 投稿文言: `buildMonthlyWallpaperPostText()`（Bluesky・日本語のみ、既存`buildPostText()`と同じ方針）・`buildMonthlyWallpaperMastodonText()`（Mastodon・英語優先の日英二言語、既存`buildMastodonText()`と同じ方針）。ハッシュタグ例: `#壁紙 #猫壁紙 #AIart #cat #にゃんバーサリー`（Bluesky）・`#wallpaper #cat #AIart #にゃんバーサリー`（Mastodon）
+6. Discord通知（`notifyDiscord()`流用・2通構成）: **成否ステータスは1通目のみに記載し、2通目では再掲しない**（日次Botと異なる点）。月次は頻度が低く「1通目が届かない」こと自体が異常のシグナルになるため、再掲の必要性が薄いと判断した
+   - 1通目: 成否ステータス＋テーマ＋Geminiプロンプト全文
+   - 2通目: Bluesky投稿テキスト＋Mastodon投稿テキスト（いずれもX/Instagram/Facebook/mixi2等への手動転載用）
+
+### 手動再生成エンドポイント
+
+`POST /monthly-wallpaper/regenerate`。`X-Bypass-Token`ヘッダーを既存`BYPASS_TOKEN`シークレットと照合（不一致は403）。一致したら`runMonthlyWallpaperPost(env, handleGenerate, ctx)`を呼び出し結果をJSONで返す。Cron発火時と全く同じ関数を呼ぶため実装・テストは1箇所に集約される。自動のバックアップCronチェックは今回実装しない（ユーザー判断・手動再生成のみで信頼性を担保する）。
+
+### Cron（月末自動生成）
+
+`wrangler.toml`の`crons`に`"0 3 * * *"`（03:00 UTC = 12:00 JST、毎日発火する軽量チェック）を追加。`scheduled()`に新分岐:
+
+```js
+if (event.cron === "0 3 * * *") {
+  const jstDateISO = toJSTDateStringWorker(new Date());
+  if (!isLastDayOfMonthJST(jstDateISO)) return; // 月末以外は即return
+  await runMonthlyWallpaperPost(env, handleGenerate, ctx);
+}
+```
+
+`isLastDayOfMonthJST(dateStr)`は新規の小さな純粋関数（翌日の日付を計算し、月が変わっていれば月末と判定）。大半の日はここで即returnするため、既存Cronへの負荷影響はごく僅か。
+
+### 公開後フォローアップ（運用ルール）
+
+初回投稿から5日後を目安に、Bluesky/Mastodonの公開API（`public.api.bsky.app`・対象Mastodonインスタンスの`/api/v1/accounts/.../statuses`、いずれも認証不要）で反響（いいね・リポスト・返信）を確認し、簡単な総括と次月に向けた改善案をまとめる。手順は集客診断セッションで実施した手法と同じ（`.claude/future-ideas.md`の「集客・マーケティング診断」参照）。
 
 ---
 

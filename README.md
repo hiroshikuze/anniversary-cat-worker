@@ -24,6 +24,7 @@ AI-powered daily cat illustration generator inspired by today's anniversary.
 - 共有URLで生成したイラストを友達と共有可能（生成後14日間）
 - 過去14日間のボット作品をギャラリーで閲覧可能
 - 毎平日7:00 JSTにBotがBluesky・Mastodonへ自動投稿
+- 月末には翌月分の壁紙（スマホ用・カレンダー付き/なし2種）をBluesky・Mastodonでプレゼント
 - 日本語・英語の表示切り替えに対応
 
 ## 使用方法
@@ -43,7 +44,8 @@ AI-powered daily cat illustration generator inspired by today's anniversary.
 - **AI（画像生成）**: Google Gemini API / Pollinations.ai（フォールバック）
 - **AI（画像アップスケール）**: fal.ai ESRGAN（SUZURI印刷用高解像度化）
 - **グッズ販売**: SUZURI API
-- **SNS投稿**: Bluesky AT Protocol
+- **SNS投稿**: Bluesky AT Protocol / Mastodon
+- **カレンダー合成**: Satori（要素ツリー→SVG）+ resvg-wasm（SVG→PNG）
 
 ## ライセンス
 
