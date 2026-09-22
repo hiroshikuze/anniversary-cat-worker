@@ -134,7 +134,9 @@ export async function renderElementToPng(element, options, bucket, deps = {}) {
   const Resvg  = getResvgClassFn();
 
   const svg = await satori(element, options);
-  const resvg = new Resvg(svg, { fitTo: { mode: "width", value: options.width } });
+  // font.loadSystemFonts: Satoriの出力はテキストが既にSVGパス化済みでresvg側のフォント探索が
+  // 発生しないため無効化する（デフォルトtrueのままだと不要なシステムフォント走査が走りうる）
+  const resvg = new Resvg(svg, { fitTo: { mode: "width", value: options.width }, font: { loadSystemFonts: false } });
   const rendered = resvg.render();
   return rendered.asPng();
 }
