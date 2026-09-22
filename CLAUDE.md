@@ -213,7 +213,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | 外部通信の共通リトライ（5xx・ネットワーク例外を指数バックオフでリトライ。SUZURI登録・fal.aiポーリング・共有URL画像取得等に適用） | `worker/http-utils.js` `fetchWithRetry()` `worker/index.js` `_pollFalAndGetTexture()` | 稼働中 |
 | Workers Traces有効化・CPU時間計測チェックポイント（Cron・HTTPエンドポイント問わず重い処理に`recordCpuCheckpoint()`で計測を恒久設置。Workers Free上限10ms対策のBug#32の一環） | `wrangler.toml` `[observability.traces]` `worker/index.js` `recordCpuCheckpoint()` `worker/bot.js` | 稼働中 |
 | CPU時間のステップ別KV集計・API化（`/usage`と同パターン。`/cpu-usage`でCIログから確認可能） | `worker/index.js` `incrementCpuTimeKv()` `recordCpuCheckpoint()` `/cpu-usage` `scripts/health-check.js` | 稼働中 |
-| 月替わり壁紙プレゼント（Bluesky/Mastodon限定・カレンダー付き/なし2版・月末Cron＋手動再生成エンドポイント） | `worker/bot.js` `runMonthlyWallpaperPost()` `worker/image-utils.js` `compositeMonthlyWallpaper()` `worker/svg-render.js` `POST /monthly-wallpaper/regenerate` | 実装済み・実機再検証待ち（`npm test`は全件成功。初回の実機検証でresvg.wasmの実行時WASMコンパイル禁止エラーが判明・Bug#36で修正済み。修正後の実機再検証はデプロイ後にユーザーが確認する。詳細は`.claude/rules/architecture.md`の「月替わり壁紙プレゼント機能」の「実装状況」参照） |
+| 月替わり壁紙プレゼント（Bluesky/Mastodon限定・カレンダー付き/なし2版・月末Cron＋手動再生成エンドポイント） | `worker/bot.js` `runMonthlyWallpaperPost()` `worker/image-utils.js` `compositeMonthlyWallpaper()` `worker/svg-render.js` `POST /monthly-wallpaper/regenerate` | 実装済み・実機再検証待ち（`npm test`は全件成功。実機検証でresvg.wasm関連の障害を2件連続で検知（Bug#36本体: 実行時WASMコンパイル禁止／Bug#36追記: `ensureResvg()`並行呼び出しの二重初期化）、いずれも修正済み。2件目の修正はPR #182として未マージ・未デプロイ（本ドキュメント執筆時点）。マージ・デプロイ後の実機再検証（`composited: true`になること・カレンダー格子/月名バッジ/祝日色分けの目視確認）はユーザーが実施する。詳細は`.claude/rules/architecture.md`の「月替わり壁紙プレゼント機能」の「実装状況」参照） |
 
 ### 主要な定数値・APIエンドポイント一覧
 

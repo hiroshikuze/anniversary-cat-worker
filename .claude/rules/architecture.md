@@ -1060,7 +1060,12 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 **実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。
 
-**実機検証の結果（2026-09・実施済み）**: デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を`X-Bypass-Token`ヘッダー付きで手動実行。Bluesky/Mastodonへの投稿自体は成功したが、`compositeMonthlyWallpaper()`が失敗し未加工画像にフォールバックしていた（`composited: false`）。`query-worker-logs.mjs`で実ログを確認し、上記「resvgのWASM」項に記載の`Wasm code generation disallowed by embedder`エラーを特定・修正済み（Bug#36）。修正後は再度同じ手順（`/monthly-wallpaper/regenerate`実行→Bluesky/Mastodon投稿の目視確認）で実機再検証が必要。
+**実機検証の結果（2026-09・2ラウンド実施済み・3ラウンド目待ち）**: デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を`X-Bypass-Token`ヘッダー付きで手動実行。
+
+- **1ラウンド目**: Bluesky/Mastodonへの投稿自体は成功したが、`compositeMonthlyWallpaper()`が失敗し未加工画像にフォールバックしていた（`composited: false`）。`query-worker-logs.mjs`で実ログを確認し、上記「resvgのWASM」項に記載の`Wasm code generation disallowed by embedder`エラーを特定・修正しデプロイ（Bug#36本体）
+- **2ラウンド目**: 修正後に再実行しても依然`composited: false`。再度`query-worker-logs.mjs`で確認したところ、今度は別のエラー`Already initialized. The initWasm() function can be used only once.`に変わっていた。上記「`ensureResvg()`はシングルフライトパターン」項に記載の並行呼び出し競合を特定・修正（Bug#36追記）。**この修正はPR #182として作成済みだが、本ドキュメント執筆時点で未マージ・未デプロイ**
+- **3ラウンド目（未実施）**: PR #182マージ・デプロイ後、再度`/monthly-wallpaper/regenerate`を実行し、`composited: true`になること・Bluesky/Mastodonの投稿画像でカレンダー格子・月名バッジ・祝日色分けが正しく表示されることの目視確認が必要
+- **投稿URLのDiscord通知記載（2026-09追加・PR #182に含む）**: 上記の実機検証を繰り返す過程で、投稿の成否確認・テスト投稿の手動削除のたびにログからURLを手動組み立てる手間が発生したため、`buildBlueskyPostUrl()`とMastodon Status APIの`url`フィールドを使い、Discord通知の成否行に投稿URLを直接記載するようにした（日次Bot・月替わり壁紙の両方に適用。詳細は「Discord通知」節の「投稿URLの記載」参照）
 
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
 
