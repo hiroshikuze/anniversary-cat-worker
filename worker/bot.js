@@ -1001,8 +1001,9 @@ export function buildMonthlyWallpaperMastodonText(month, themeName, themeNameEn)
 
 /**
  * 月替わり壁紙の対象年月（対象月＝次の暦月）をJST基準で決定する。
- * 月末Cron（"0 3 * * *"が月末日にのみ発火）から呼ばれた場合、当日が属する月の
- * 「翌月分」の壁紙を作る（例: 9/30発火 → 10月の壁紙）。手動再生成も同じロジックを使う。
+ * 月末チェック（"0 15 * * *"の分岐内でisLastDayOfMonthJST()が月末日のみ発火させる）
+ * から呼ばれた場合、当日が属する月の「翌月分」の壁紙を作る（例: 9/30発火 → 10月の壁紙）。
+ * 手動再生成も同じロジックを使う。
  */
 function resolveTargetYearMonth() {
   const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);

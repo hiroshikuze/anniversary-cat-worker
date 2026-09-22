@@ -49,7 +49,9 @@ wrangler r2 object put anniversary-cat-images/assets/resvg.wasm \
 
 KV namespaceのIDは`wrangler.toml`の`[[kv_namespaces]]`に記載済み（`id = "531244f9f904493d93c3a418b9765df8"`）。
 
-Cron Trigger（`0 15 * * *`・`0 16 * * *`・`0 22 * * 1-5`・`0 3 * * *`）は`wrangler.toml`に設定済み。デプロイ後はCloudflareダッシュボードのTriggersタブで確認できる。**ダッシュボードで手動変更してもデプロイのたびに`wrangler.toml`の値で上書きされる。**スケジュール変更は必ず`wrangler.toml`を修正してからPRを出すこと。
+Cron Trigger（`0 15 * * *`・`0 16 * * *`・`0 22 * * 1-5`）は`wrangler.toml`に設定済み。デプロイ後はCloudflareダッシュボードのTriggersタブで確認できる。**ダッシュボードで手動変更してもデプロイのたびに`wrangler.toml`の値で上書きされる。**スケジュール変更は必ず`wrangler.toml`を修正してからPRを出すこと。
+
+**Cron Triggerの上限はWorker単位ではなくCloudflareアカウント単位**（Workers Freeは5本/アカウント、Paidは250本。2026-09に実際のデプロイで`10072`エラーとして踏んだ）。新しいCronを追加する前に、同一アカウント内の他プロジェクト（`yobiko`・`yobiko-staging`等）が使用中の本数を考慮すること。可能な限り新規Cronを追加せず、既存Cronの分岐内に相乗りさせる設計を優先する（`.claude/rules/architecture.md`の「Cron（月末自動生成）」の月替わり壁紙の事例参照）。
 
 フロントエンドはGitHub Pagesで自動デプロイ（`frontend/`ディレクトリ）。
 
