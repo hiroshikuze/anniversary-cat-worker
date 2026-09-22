@@ -517,6 +517,12 @@
 - **ミス**: Cron Triggerの上限が**Worker単位ではなくCloudflareアカウント単位**であることを見落としていた。同一アカウントに他プロジェクト（`yobiko`・`yobiko-staging`）もデプロイされておりそれぞれ1本ずつCronを使用していたため、アカウント全体では本Worker3本+他2本=すでに5本（上限ちょうど）の状態だった。マージ後の`Deploy Worker to Cloudflare`がCloudflare APIエラー`10072`（Cron Trigger上限超過）で実際に失敗し、ユーザーに「マージしたので監視して下さい」と言われて初めてこの失敗に気づいた
 - **教訓**: 新規Cron Triggerの追加は、対象Worker単体の`wrangler.toml`だけを見て判断してはならない。**Cloudflareアカウント全体で他にいくつWorkerがあり、それぞれ何本Cronを使っているか**を実装前にユーザーへ確認するか、少なくとも「新規Cronの追加はアカウント全体の上限に影響しうる」旨を計画時点でユーザーに伝えておくべきだった。この情報はコードベース内には存在せず、`wrangler deploy --dry-run`でも検知できない（ビルドは通り、実際のCronスケジュール同期APIコールでのみ失敗するため）。可能な限り新規Cronを増やさず、既存Cronの分岐内に処理を相乗りさせる設計を優先する。詳細は`.claude/bugs-history.md`のBug#35参照
 
+### 2026-09 | resvg.wasmを「バンドルサイズ節約のためR2に置いて実行時fetch」する設計を、Workers実行時制約を検証せずに採用した
+
+- **状況**: Satori/resvgでの月替わり壁紙カレンダー合成を実装する際、Photon（約1.9MB）と合わせて直接バンドルするとWorkers Freeのgzip 3MB上限を圧迫すると懸念し、resvgのWASM（約2.4MB）だけをR2に配置して実行時に`fetch()`＋`WebAssembly.instantiate(bytes)`でコンパイルする設計を選んだ。`wrangler deploy --dry-run`でのビルド成功も確認し、CLAUDE.mdの「変えてはいけない設計判断」表にまで記録した
+- **ミス**: Cloudflare Workersが実行時の動的WASMコード生成（生バイト列からの`compile`/`instantiate`）をセキュリティ上禁止しているという制約を、設計時点で一度も検証していなかった。`wrangler deploy --dry-run`はビルド時の失敗（Satoriのharfbuzzjs/fs問題と同種）しか検知できず、この種の「ビルドは通るが実行時にのみ失敗する」制約は原理的に検知できない。結果として、実際に本番デプロイしユーザーに手動実行してもらって初めて`WebAssembly.instantiate(): Wasm code generation disallowed by embedder`という失敗が判明した（Bug#36）。同じプロジェクト内にPhotonという「WASMを静的importでビルド時プリコンパイルする」正しいパターンの実例が既にあったにもかかわらず、resvgだけ別の（誤った）パターンを新規に採用してしまった点も見落としの一因
+- **教訓**: Cloudflare Workersで新しいWASMライブラリを追加する際、「バンドルサイズが心配だから実行時に外部ストレージから取得する」という設計は**選択肢に入れない**。WASMは常にビルド時のESM静的import一択であり、サイズが本当に上限を超える場合は機能自体の是非を再検討する（実行時fetchで回避しようとしても原理的に動作しない）。既存コードベースに同種の依存関係（今回ならPhoton）が正しいパターンで実装済みの場合は、新規追加分もそのパターンを機械的に踏襲し、「今回は事情が違うから」と別方式を検討する前に、まず踏襲できない理由が本当にあるかを疑う。また、`wrangler deploy --dry-run`で検知できるのはビルド時の失敗のみであり、実行時専用の制約（動的コード生成禁止等）は実機での動作確認まで確定しないことを常に念頭に置く。詳細は`.claude/bugs-history.md`のBug#36参照
+
 ```text
 ### YYYY-MM | タイトル
 - **状況**: 何をしようとしていたか

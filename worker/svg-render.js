@@ -18,13 +18,20 @@
  *
  * Yoga（レイアウトエンジン、71KB）は`@cf-wasm/satori`が内部でバンドル・自動初期化する
  * （importした時点で`initSatori(yogaWasmModule)`が実行される）ため、こちら側での
- * 明示initは不要。resvgのWASM（約2.4MB）は引き続きバンドルせず、R2バケット
- * （既存のIMAGE_BUCKET）に静的アセットとして配置し、実行時にfetchする
- * （worker/index.jsの/back/:id・/hires/:idと同じ「R2をアセットストアとして使う」パターン）。
+ * 明示initは不要。
  *
- * resvg.wasmのR2配置は初回のみ手動で行う（デプロイ手順書参照）:
- *   wrangler r2 object put anniversary-cat-images/assets/resvg.wasm \
- *     --file node_modules/@resvg/resvg-wasm/index_bg.wasm
+ * **resvgのWASM（約2.4MB）はPhotonと同じビルド時ESM静的importでバンドルする（2026-09・重要）**:
+ * 当初はバンドルサイズ節約のためR2バケットに配置し実行時にfetchする設計だったが、
+ * Cloudflare Workersは実行時の動的WASMコード生成（生バイト列からのcompile/instantiate）を
+ * セキュリティ上禁止しており、実際に本番で`WebAssembly.instantiate(): Wasm code generation
+ * disallowed by embedder`エラーが発生した（.claude/bugs-history.mdのBug#36参照）。
+ * Photon（worker/image-utils.jsのensurePhoton()）が実際に本番稼働している
+ * 「WASMをESM静的importしビルド時にWebAssembly.Moduleとしてプリコンパイルする」パターンに
+ * 統一して解消した。`@resvg/resvg-wasm`のinitWasm()は引数がResponseでない場合
+ * WebAssembly.instantiate(module, imports)（コンパイル済みモジュールのインスタンス化のみ）を
+ * 呼ぶため、この経路は動的コード生成の禁止に抵触しない。
+ * 実測: wrangler deploy --dry-runでビルド成功・gzip後約2.05MB
+ * （Workers Free 3MB上限内、当初懸念したサイズ超過は実測では発生しなかった）。
  */
 
 let _satoriReady = false;
@@ -32,8 +39,6 @@ let _satoriFn    = null; // satori(element, options) => Promise<string(svg)>
 
 let _resvgReady = false;
 let _Resvg      = null;
-
-const RESVG_WASM_R2_KEY = "assets/resvg.wasm";
 
 /** Satori本体 + Yoga（レイアウトエンジンWASM）を遅延ロードする */
 export async function ensureSatori() {
@@ -52,21 +57,12 @@ export function _setSatoriForTest(mockSatoriFn) {
   _satoriReady = mockSatoriFn !== null;
 }
 
-/**
- * resvg（SVG→PNGラスタライザー）を遅延ロードする。
- * WASMバイナリはR2（IMAGE_BUCKET）から取得する。バケット未配置の場合はエラーを投げる。
- *
- * @param {R2Bucket} bucket - env.IMAGE_BUCKET
- */
-export async function ensureResvg(bucket) {
+/** resvg（SVG→PNGラスタライザー）を遅延ロードする。WASMはビルド時に静的importでプリコンパイルする。 */
+export async function ensureResvg() {
   if (_resvgReady) return;
   const mod = await import("@resvg/resvg-wasm");
-  const obj = await bucket.get(RESVG_WASM_R2_KEY);
-  if (!obj) {
-    throw new Error(`[svg-render] resvg.wasmがR2に見つかりません（キー: ${RESVG_WASM_R2_KEY}）。デプロイ手順書の初回セットアップ手順を確認してください。`);
-  }
-  const wasmBytes = await obj.arrayBuffer();
-  await mod.initWasm(wasmBytes);
+  const { default: resvgWasm } = await import("@resvg/resvg-wasm/index_bg.wasm");
+  await mod.initWasm(resvgWasm);
   _Resvg = mod.Resvg;
   _resvgReady = true;
 }
@@ -115,11 +111,10 @@ export function _setFontsForTest(mockFonts) {
  *
  * @param {object} element - { type, props: { style, children, ... } } 形式
  * @param {object} options - { width, height, fonts: [{name, data, weight, style}] }
- * @param {R2Bucket} bucket - resvg.wasm取得用（env.IMAGE_BUCKET）
  * @param {object} [deps] - テスト用の依存注入
  * @returns {Promise<Uint8Array>}
  */
-export async function renderElementToPng(element, options, bucket, deps = {}) {
+export async function renderElementToPng(element, options, deps = {}) {
   const {
     ensureSatoriFn = ensureSatori,
     ensureResvgFn  = ensureResvg,
@@ -128,7 +123,7 @@ export async function renderElementToPng(element, options, bucket, deps = {}) {
   } = deps;
 
   await ensureSatoriFn();
-  await ensureResvgFn(bucket);
+  await ensureResvgFn();
 
   const satori = getSatoriFnFn();
   const Resvg  = getResvgClassFn();
