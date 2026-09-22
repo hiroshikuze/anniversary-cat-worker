@@ -5298,9 +5298,8 @@ console.log("\n[renderElementToPng: Satori+resvgのモック経由呼び出し]"
     _setSatoriForTest(mockSatori);
     _setResvgForTest(MockResvg);
 
-    const mockBucket = { get: async () => ({ arrayBuffer: async () => new ArrayBuffer(0) }) };
     const element = { type: "div", props: { children: "test" } };
-    const png = await renderElementToPng(element, { width: 100, height: 50, fonts: [] }, mockBucket);
+    const png = await renderElementToPng(element, { width: 100, height: 50, fonts: [] });
 
     assert("Satoriが呼ばれてSVGを生成する", receivedSvg?.includes("width=\"100\""));
     assert("resvgのレンダリング結果（PNGバイト列）が返る", png === mockPngBytes);
@@ -5310,22 +5309,18 @@ console.log("\n[renderElementToPng: Satori+resvgのモック経由呼び出し]"
   }
 
   {
-    // resvg.wasmがR2に存在しない場合はエラーを投げる（デプロイ未完了の検知）
+    // ensureResvg()自体が失敗した場合（WASM初期化失敗等）はrenderElementToPngもエラーを伝播する
     _setSatoriForTest(async () => "<svg></svg>");
     _setResvgForTest(null);
-    const missingBucket = { get: async () => null };
     let threw = false;
     try {
-      await renderElementToPng({ type: "div", props: {} }, { width: 10, height: 10, fonts: [] }, missingBucket, {
-        ensureResvgFn: async (bucket) => {
-          const obj = await bucket.get("assets/resvg.wasm");
-          if (!obj) throw new Error("resvg.wasm not found in R2");
-        },
+      await renderElementToPng({ type: "div", props: {} }, { width: 10, height: 10, fonts: [] }, {
+        ensureResvgFn: async () => { throw new Error("resvg wasm init failed"); },
       });
     } catch {
       threw = true;
     }
-    assert("resvg.wasm未配置時はエラーを投げる", threw);
+    assert("resvg初期化失敗時はエラーを投げる", threw);
     _setSatoriForTest(null);
   }
 }
@@ -5408,7 +5403,6 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
     renderElementToPngFn,
     ensureFontsFn: async () => {},
     getFontsFn: () => [],
-    bucket: { mockBucket: true },
   });
 
   assert("合成成功時はcomposited=true", result.composited === true);

@@ -1026,10 +1026,10 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 **設計変更（2026-09）**: 当初はPhotonの`draw_text()`（Roboto固定・色指定不可）＋事前生成バッジPNGのハイブリッド方式で実装しかけたが、ユーザーから「ビットマップテキストは解像度変更等の柔軟性を下げるので避けたい」と明確な差し戻しを受けた。調査の結果、色付き・カスタムフォントのベクターテキストをCloudflare Workersで動的生成する標準パターンとして**Satori（要素ツリー→SVG）+ `@resvg/resvg-wasm`（SVG→PNGラスタライズ）**を採用した（OGP画像生成等で広く使われる組み合わせ）。事前生成の月名バッジPNG（`worker/assets/month-badges/`）は廃止・削除済み。
 
-- `worker/svg-render.js`が共有ローダー（`worker/image-utils.js`のPhotonローダーと同じ「遅延ロード＋`_setXForTest()`」パターン）: `ensureSatori()`（Satori本体＋レイアウトエンジンYoga）、`ensureResvg(bucket)`（resvgのWASM本体、約2.4MB）、`renderElementToPng(element, options, bucket, deps)`
+- `worker/svg-render.js`が共有ローダー（`worker/image-utils.js`のPhotonローダーと同じ「遅延ロード＋`_setXForTest()`」パターン）: `ensureSatori()`（Satori本体＋レイアウトエンジンYoga）、`ensureResvg()`（resvgのWASM本体、約2.4MB）、`renderElementToPng(element, options, deps)`
 - **生の`satori`パッケージではなく`@cf-wasm/satori`（`/workerd`エントリポイント）を使う（2026-09・重要な設計判断）**: 素の`satori`（v0.30以降）はharfbuzzjs（Emscripten生成JS）に依存し、Node専用の`require("fs")`分岐を静的に含むため、`wrangler deploy --dry-run`の時点でビルドが失敗する（`Could not resolve "fs"`）。実機動作の検証以前にデプロイ自体が不可能な状態だった。Cloudflare Workers向けにこの問題を解決済みの`@cf-wasm/satori`（fineshopdesignのcf-wasmモノレポ）に切り替えて解消した。Yoga（レイアウトエンジン、71KB）はこのパッケージが内部でバンドル・import時に自動初期化するため、明示initは不要
-- **resvgのWASM（約2.4MB）はコードに直接importせずR2（既存`IMAGE_BUCKET`）から実行時に`fetch`する**。理由: Photon（約1.9MB）と合わせて直接バンドルするとWorkers Freeプランのスクリプトサイズ上限（gzip圧縮後3MB）を圧迫するリスクが高いため。初回セットアップで`wrangler r2 object put anniversary-cat-images/assets/resvg.wasm --file node_modules/@resvg/resvg-wasm/index_bg.wasm`を一度だけ実行する必要がある（`.claude/rules/git-workflow.md`の初回セットアップ手順に追記済み）
-- **実測**: `wrangler deploy --dry-run --outdir=...`でビルド成功・Total Upload 3655.73 KiB / gzip 1159.56 KiB（約1.16MB）を確認済み（2026-09）。Workers Freeプランのgzip 3MB上限に対し十分な余裕がある
+- **resvgのWASM（約2.4MB）はPhotonと同じ「ビルド時ESM静的import」でバンドルする（2026-09・R2実行時fetchから変更・Bug#36）**: 当初はスクリプトサイズ上限（gzip後3MB）を懸念しR2（既存`IMAGE_BUCKET`）に配置して実行時に`fetch()`し`WebAssembly.instantiate(bytes)`でコンパイルする設計だったが、実際に本番デプロイ後の`POST /monthly-wallpaper/regenerate`実行で`WebAssembly.instantiate(): Wasm code generation disallowed by embedder`エラーが発生した。Cloudflare Workersは実行時の動的WASMコンパイル（生バイト列からのコンパイル）をセキュリティ上禁止しており、この設計は原理的に動作しないと判明した（投稿自体は`compositeMonthlyWallpaper()`のフォールバック設計により未加工画像で継続していたため実害は「カレンダー合成なし」にとどまった）。修正はPhoton（`worker/image-utils.js`）が実際に本番稼働している`import wasm from "パッケージ名/xxx.wasm"`（ビルド時に`WebAssembly.Module`としてプリコンパイルされる）と同じ静的import方式に統一した。`@resvg/resvg-wasm`の`initWasm()`は引数が`Response`でない場合`WebAssembly.instantiate(module, imports)`を呼ぶ実装（`node_modules/@resvg/resvg-wasm/index.mjs`で確認）で、これはコンパイル済みモジュールのインスタンス化のみのため動的コード生成の禁止に抵触しない
+- **実測**: `wrangler deploy --dry-run --outdir=...`でビルド成功・Total Upload 6076.36 KiB / gzip 2096.70 KiB（約2.05MB）を確認済み（2026-09・resvg静的バンドル後）。Workers Freeプランのgzip 3MB上限に対し引き続き余裕がある（当初懸念していたサイズ超過は実測では発生しなかった）
 - Satoriが描画するのはテキスト・図形のオーバーレイ（カレンダー格子・月名・年・署名）のみで透過PNGとして出力する。**AI生成した猫写真自体をSatoriの要素ツリーに埋め込まない**（SatoriのWorkers上での画像fetchは動作しないことが既知のため）。写真の切り抜き・リサイズ・最終合成（オーバーレイの`watermark()`貼り付け）は引き続きPhotonが担当する
 - カスタムフォント（Gloock・WorkSans、いずれもGoogle FontsのOFLライセンス）は`worker/assets/fonts/`にTTF形式でリポジトリ管理し、Satoriの`options.fonts`にArrayBufferとして渡す
 
@@ -1051,11 +1051,9 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 4. 「カレンダーなし」版も同時に生成する: 同じcover-crop画像に`_buildSignatureOnlyElement()`のオーバーレイ（署名のみ）を貼ったもの（full-bleed、カレンダー帯・月名バッジなし）
 5. 失敗時（Photon/Satori/resvg読み込み失敗等）は既存`autoCropImage()`と同様、未加工画像にフォールバックし処理全体は失敗させない
 
-**実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。**未検証**: 実際のCloudflare Workers環境でのSatori/resvg WASM**実行時動作**（ビルドが通ることと実行時にクラッシュしないことは別）はデプロイ後にユーザーが確認する必要がある。手順:
+**実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。
 
-1. （初回のみ）`wrangler r2 object put anniversary-cat-images/assets/resvg.wasm --file node_modules/@resvg/resvg-wasm/index_bg.wasm`でresvg.wasmをR2へ配置（`.claude/rules/git-workflow.md`の初回セットアップ手順参照）
-2. `POST /monthly-wallpaper/regenerate`を`X-Bypass-Token`ヘッダー付きで手動実行
-3. 実際にBluesky/Mastodonへカレンダーあり・なし2枚が投稿されること、カレンダー格子・月名バッジ・祝日の色分けが正しく表示されることを目視確認
+**実機検証の結果（2026-09・実施済み）**: デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を`X-Bypass-Token`ヘッダー付きで手動実行。Bluesky/Mastodonへの投稿自体は成功したが、`compositeMonthlyWallpaper()`が失敗し未加工画像にフォールバックしていた（`composited: false`）。`query-worker-logs.mjs`で実ログを確認し、上記「resvgのWASM」項に記載の`Wasm code generation disallowed by embedder`エラーを特定・修正済み（Bug#36）。修正後は再度同じ手順（`/monthly-wallpaper/regenerate`実行→Bluesky/Mastodon投稿の目視確認）で実機再検証が必要。
 
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
 

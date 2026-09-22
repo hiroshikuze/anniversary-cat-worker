@@ -1063,7 +1063,6 @@ export async function runMonthlyWallpaperPost(env, handleGenerate, ctx = null, d
       renderElementToPngFn: renderElementToPng,
       ensureFontsFn: ensureFonts,
       getFontsFn: getFonts,
-      bucket: env.IMAGE_BUCKET ?? null,
     });
     if (!composite.composited) {
       console.warn(`${prefix} カレンダー合成失敗、未加工画像で継続`);

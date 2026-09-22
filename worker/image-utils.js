@@ -374,7 +374,6 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     renderElementToPngFn,
     ensureFontsFn,
     getFontsFn,
-    bucket              = null,
     width               = 1080,
     height              = 1920,
   } = deps;
@@ -403,7 +402,7 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     const baseBytes = baseImg.get_bytes();
 
     async function applyOverlay(element) {
-      const overlayPng = await renderElementToPngFn(element, { width, height, fonts }, bucket);
+      const overlayPng = await renderElementToPngFn(element, { width, height, fonts });
       const overlayImg = PhotonImage.new_from_byteslice(overlayPng);
       const targetImg = PhotonImage.new_from_byteslice(baseBytes);
       try {
