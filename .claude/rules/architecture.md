@@ -1051,7 +1051,11 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 4. 「カレンダーなし」版も同時に生成する: 同じcover-crop画像に`_buildSignatureOnlyElement()`のオーバーレイ（署名のみ）を貼ったもの（full-bleed、カレンダー帯・月名バッジなし）
 5. 失敗時（Photon/Satori/resvg読み込み失敗等）は既存`autoCropImage()`と同様、未加工画像にフォールバックし処理全体は失敗させない
 
-**実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。**未検証**: 実際のCloudflare Workers環境でのSatori/resvg WASM**実行時動作**（ビルドが通ることと実行時にクラッシュしないことは別。resvg.wasmのR2初回配置含む）・Bluesky/Mastodon実投稿・カレンダー表示の目視確認はデプロイ後にユーザーが行う必要がある（下記「検証方法」参照）。
+**実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。**未検証**: 実際のCloudflare Workers環境でのSatori/resvg WASM**実行時動作**（ビルドが通ることと実行時にクラッシュしないことは別）はデプロイ後にユーザーが確認する必要がある。手順:
+
+1. （初回のみ）`wrangler r2 object put anniversary-cat-images/assets/resvg.wasm --file node_modules/@resvg/resvg-wasm/index_bg.wasm`でresvg.wasmをR2へ配置（`.claude/rules/git-workflow.md`の初回セットアップ手順参照）
+2. `POST /monthly-wallpaper/regenerate`を`X-Bypass-Token`ヘッダー付きで手動実行
+3. 実際にBluesky/Mastodonへカレンダーあり・なし2枚が投稿されること、カレンダー格子・月名バッジ・祝日の色分けが正しく表示されることを目視確認
 
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
 
