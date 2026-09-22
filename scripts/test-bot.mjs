@@ -26,6 +26,7 @@ import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale
 import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
+import { renderElementToPng, _setSatoriForTest, _setResvgForTest } from "../worker/svg-render.js";
 
 let passed = 0;
 let failed = 0;
@@ -5273,6 +5274,54 @@ console.log("\n[checkForNewSale: 統合テスト]");
     globalThis.fetch = origFetch;
 
     assert("ニュース一覧取得失敗時は手動確認要の通知を送る", discordMsg?.includes("ニュース一覧取得エラー"));
+  }
+}
+
+console.log("\n[renderElementToPng: Satori+resvgのモック経由呼び出し]");
+{
+  {
+    let receivedSvg = null;
+    const mockSatori = async (element, options) => {
+      receivedSvg = `<svg width="${options.width}" height="${options.height}"></svg>`;
+      return receivedSvg;
+    };
+    const mockPngBytes = new Uint8Array([1, 2, 3]);
+    class MockResvg {
+      constructor(svg, opts) { this.svg = svg; this.opts = opts; }
+      render() { return { asPng: () => mockPngBytes }; }
+    }
+    _setSatoriForTest(mockSatori);
+    _setResvgForTest(MockResvg);
+
+    const mockBucket = { get: async () => ({ arrayBuffer: async () => new ArrayBuffer(0) }) };
+    const element = { type: "div", props: { children: "test" } };
+    const png = await renderElementToPng(element, { width: 100, height: 50, fonts: [] }, mockBucket);
+
+    assert("Satoriが呼ばれてSVGを生成する", receivedSvg?.includes("width=\"100\""));
+    assert("resvgのレンダリング結果（PNGバイト列）が返る", png === mockPngBytes);
+
+    _setSatoriForTest(null);
+    _setResvgForTest(null);
+  }
+
+  {
+    // resvg.wasmがR2に存在しない場合はエラーを投げる（デプロイ未完了の検知）
+    _setSatoriForTest(async () => "<svg></svg>");
+    _setResvgForTest(null);
+    const missingBucket = { get: async () => null };
+    let threw = false;
+    try {
+      await renderElementToPng({ type: "div", props: {} }, { width: 10, height: 10, fonts: [] }, missingBucket, {
+        ensureResvgFn: async (bucket) => {
+          const obj = await bucket.get("assets/resvg.wasm");
+          if (!obj) throw new Error("resvg.wasm not found in R2");
+        },
+      });
+    } catch {
+      threw = true;
+    }
+    assert("resvg.wasm未配置時はエラーを投げる", threw);
+    _setSatoriForTest(null);
   }
 }
 

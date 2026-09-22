@@ -41,6 +41,10 @@ wrangler secret put MASTODON_ACCESS_TOKEN    # Mastodon投稿（任意）アプ�
 
 # Workerをデプロイ
 wrangler deploy
+
+# 月替わり壁紙機能: resvgのWASM本体をR2へ配置（初回のみ・バンドルサイズ節約のため）
+wrangler r2 object put anniversary-cat-images/assets/resvg.wasm \
+  --file node_modules/@resvg/resvg-wasm/index_bg.wasm
 ```
 
 KV namespaceのIDは`wrangler.toml`の`[[kv_namespaces]]`に記載済み（`id = "531244f9f904493d93c3a418b9765df8"`）。

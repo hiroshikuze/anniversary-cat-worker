@@ -14,8 +14,10 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@resvg/resvg-wasm": "^2.6.2",
     "@silvia-odwyer/photon": "^0.3.3",
     "kuroshiro": "^1.2.0",
-    "kuroshiro-analyzer-kuromoji": "^1.1.0"
+    "kuroshiro-analyzer-kuromoji": "^1.1.0",
+    "satori": "^0.33.5"
   }
 }

@@ -1020,23 +1020,27 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
   - 禁止事項に「文字・数字を含めない」を強化（カレンダー数字・月名バッジとの視覚的衝突回避）
   - AIの構図指示遵守は完全ではない（実測で指示した30%に対し実際は46%の余白ができた例あり）ため、後述の自動検出＋フォールバックで吸収する
 
-### カレンダー・月名の合成（`worker/image-utils.js` `compositeMonthlyWallpaper()`）
+### カレンダー・月名の合成（`worker/image-utils.js` `compositeMonthlyWallpaper()` + `worker/svg-render.js`）
 
-Photon（`@silvia-odwyer/photon`・追加依存なし）の`draw_text(img, text, x, y, font_size)`と`watermark(img, watermark_img, x, y)`を組み合わせたハイブリッド方式。**Photonの`draw_text()`はフォントがRoboto固定でカスタムフォントを指定できない**ため、装飾性の高い部分（大きな月数字・英語月名）は事前生成した透過PNGに逃がし、毎月変わる動的な数字（年・日付・曜日）だけを`draw_text()`で描画する役割分担にした。
+**設計変更（2026-09）**: 当初はPhotonの`draw_text()`（Roboto固定・色指定不可）＋事前生成バッジPNGのハイブリッド方式で実装しかけたが、ユーザーから「ビットマップテキストは解像度変更等の柔軟性を下げるので避けたい」と明確な差し戻しを受けた。調査の結果、色付き・カスタムフォントのベクターテキストをCloudflare Workersで動的生成する標準パターンとして**Satori（要素ツリー→SVG）+ `@resvg/resvg-wasm`（SVG→PNGラスタライズ）**を採用した（OGP画像生成等で広く使われる組み合わせ）。事前生成の月名バッジPNG（`worker/assets/month-badges/`）は廃止・削除済み。
 
-**事前生成アセット**: 月名バッジ（例: 「October」＋大きな「10」、透過背景、薄いソフトグローを焼き込み済み）を月ごとに1枚ずつ用意。年数字は含まないため年ごとの更新は不要。Python/PIL（Gloock/CrimsonPro-Italicフォント）でデザイン検討・生成したものを`worker/assets/month-badges/01.png`〜`12.png`としてリポジトリに保持する（`frontend/images/`と同じ「ソースはリポジトリ管理」パターン）。Workerのバンドルサイズを増やさないよう、コードには直接importせず、`wrangler r2 object put`で一度だけR2（`assets/month-badges/{MM}.png`）へアップロードし、実行時は`env.IMAGE_BUCKET.get()`で取得する。取得できない場合は月名バッジなしで処理を継続する（フォールバック）。
+- `worker/svg-render.js`が共有ローダー（`worker/image-utils.js`のPhotonローダーと同じ「遅延ロード＋`_setXForTest()`」パターン）: `ensureSatori()`（Satori本体＋レイアウトエンジンYoga、直接importでバンドル。Yogaは71KBと小さくバンドル影響が軽微）、`ensureResvg(bucket)`（resvgのWASM本体、約2.4MB）、`renderElementToPng(element, options, bucket, deps)`
+- **resvgのWASM（約2.4MB）はコードに直接importせずR2（既存`IMAGE_BUCKET`）から実行時に`fetch`する**。理由: Photon（約1.9MB）と合わせて直接バンドルするとWorkers Freeプランのスクリプトサイズ上限（gzip圧縮後3MB）を圧迫するリスクが高いため（Satori本体・Yoga・アプリコード分も同じバンドルに含まれる）。初回セットアップで`wrangler r2 object put anniversary-cat-images/assets/resvg.wasm --file node_modules/@resvg/resvg-wasm/index_bg.wasm`を一度だけ実行する必要がある（`.claude/rules/git-workflow.md`の初回セットアップ手順に追記予定）
+- Satoriが描画するのはテキスト・図形のオーバーレイ（カレンダー格子・月名・年・署名）のみで透過PNGとして出力する。**AI生成した猫写真自体をSatoriの要素ツリーに埋め込まない**（SatoriのWorkers上での画像fetchは動作しないことが既知のため）。写真の切り抜き・リサイズ・最終合成（オーバーレイの`watermark()`貼り付け）は引き続きPhotonが担当する
+- カスタムフォント（Gloock・WorkSans、いずれもGoogle FontsのOFLライセンス）は`worker/assets/fonts/`にTTF形式でリポジトリ管理し、Satoriの`options.fonts`にArrayBufferとして渡す
 
 **合成処理の流れ**:
 
-1. 生成画像を1080×1920（スマホ壁紙・フルHD縦）へcover-cropでリサイズ
+1. 生成画像を1080×1920（スマホ壁紙・フルHD縦）へcover-cropでリサイズ（Photon）
 2. 画像下部の空白帯の境界を自動検出（`_detectCropBox()`と同系統の「背景色からの差分スキャン」ロジックを共通化して使う）
-3. 左上の固定座標に該当月の事前生成バッジPNGを`watermark()`で貼り付け＋年数字（`draw_text()`・Roboto）。**バッジPNG自体に薄いソフトグロー（白）をあらかじめ焼き込んでいる**ため、実行時に左上領域が本当に空白かを検出する処理は行わない（検出＋フォールバックパネルの実行時分岐は複雑さに見合わないと判断し、デザイン側で解決した）。下部カレンダー帯は月ごとに内容量が変わるため引き続き自動検出が必須
-4. カレンダー帯: 曜日見出し（`sun`/`mon`/`tue`.../`sat`・`draw_text()`）＋日付数字（`draw_text()`）。日曜・日本の祝日は赤、土曜は青
-5. 左下に「© nyanmusu」（`frontend/index.html`の`applyWatermark()`と同一の透かし文言）を`draw_text()`で描画
-6. 「カレンダーなし」版も同時に生成する: 同じcover-crop画像に「© nyanmusu」の署名のみを付けたもの（full-bleed、カレンダー帯・月名バッジなし）
-7. 失敗時（Photon読み込み失敗等）は既存`autoCropImage()`と同様、未加工画像にフォールバックし処理全体は失敗させない
+3. カレンダー格子（曜日見出し・日付数字・日本の祝日/日曜=赤・土曜=青）＋左上の月名・年バッジ＋左下の「© nyanmusu」署名（`frontend/index.html`の`applyWatermark()`と同一の透かし文言）を、Satoriの要素ツリーとして1枚のオーバーレイSVG/PNGにまとめて組み立てる（`renderElementToPng()`）
+4. オーバーレイPNGをPhotonの`watermark()`で生成画像に貼り付ける
+5. 「カレンダーなし」版も同時に生成する: 同じcover-crop画像に「© nyanmusu」署名のみのオーバーレイを貼ったもの（full-bleed、カレンダー帯・月名バッジなし）
+6. 失敗時（Photon/Satori/resvg読み込み失敗等）は既存`autoCropImage()`と同様、未加工画像にフォールバックし処理全体は失敗させない
 
 **日本の祝日反映**: Workers互換（npmパッケージのみ・Node組み込みAPI不可）な祝日計算ライブラリを使用（具体的な採用ライブラリは実装時の比較検討に基づき記録する）。日曜と同じ赤色で表示する。
+
+**実装状況（2026-09時点）**: `worker/svg-render.js`（Satori/resvgローダー・`renderElementToPng()`）とそのユニットテスト（`scripts/test-bot.mjs`、モック経由）のみ実装済み。カレンダー格子の要素ツリー組み立て（`_buildCalendarGrid()`相当）・`compositeMonthlyWallpaper()`本体・`worker/index.js`/`worker/bot.js`側の統合・祝日ライブラリ選定・Cron追加は未実装（下記「投稿本体」「Cron」の記載は設計であり未着手）。
 
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null)`）
 
