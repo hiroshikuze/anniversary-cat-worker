@@ -1003,7 +1003,7 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 ### 月テーマの決定（新規データテーブルなし）
 
-**「対象月」＝JST基準で「今日」が属する月の翌月**（`worker/bot.js` `resolveTargetYearMonth()`）。月末Cron（`"0 3 * * *"`が月末日にのみ発火）は「今月末に来月分の壁紙を配る」設計のため、例えば9/30発火時は10月の壁紙を生成する。手動再生成エンドポイントも同じ関数を使うため、月初〜月末のどのタイミングで手動実行しても常に「次に来る月」の壁紙になる（当月分を作りたい場合は月初に手動実行する）。
+**「対象月」＝JST基準で「今日」が属する月の翌月**（`worker/bot.js` `resolveTargetYearMonth()`）。月末チェック（`"0 15 * * *"`の分岐内で`isLastDayOfMonthJST()`が月末日のみ発火させる。下記「Cron（月末自動生成）」参照）は「今月末に来月分の壁紙を配る」設計のため、例えば9/30発火時は10月の壁紙を生成する。手動再生成エンドポイントも同じ関数を使うため、月初〜月末のどのタイミングで手動実行しても常に「次に来る月」の壁紙になる（当月分を作りたい場合は月初に手動実行する）。
 
 対象月の**末日**の日付文字列（`YYYY-MM-DD`）を既存の`getSeasonalFlower()`/`getSeasonalFlowerVisual()`/`getSeasonalStyleTone()`/`getSeasonalFlowerEn()`（`worker/index.js`）にそのまま渡し、`SEASONAL_FLOWERS`（24エントリ・半月区切り）の該当後半エントリを月テーマとして流用する。全月の末日は必ず後半エントリ（`16日〜末日`区切り）に一致する設計のため、常に安定して選ばれる（例: 10月末日→「金木犀」）。新規の月別テーブルは作らない。
 
@@ -1072,15 +1072,23 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 ### Cron（月末自動生成）
 
-`wrangler.toml`の`crons`に`"0 3 * * *"`（03:00 UTC = 12:00 JST、毎日発火する軽量チェック）を追加。`scheduled()`に新分岐:
+**設計変更（2026-09・デプロイ後に判明）**: 当初は独立Cron`"0 3 * * *"`（03:00 UTC = 12:00 JST）を新設する設計だったが、実際にデプロイしたところCloudflare APIが`10072`エラー（Cron Trigger上限超過）で拒否した。原因はCron Triggerの上限が**Worker単位ではなくCloudflareアカウント単位**（Workers Freeは5本/アカウント）であり、同一アカウント内の別プロジェクト（`yobiko`・`yobiko-staging`、各1本使用）と本Workerの既存3本を合わせてすでに5本に達していたため。ステージング環境も本番と同一のCron挙動を維持する必要があるとの理由で`yobiko-staging`側の削減は見送り、代わりに独立Cronを新設せず**既存の`"0 15 * * *"`に相乗り**させる設計に変更した。
+
+これにより実行時刻はユーザー当初希望の12:00 JST頃から**0:00 JSTへ変更**になっている（`"0 15 * * *"`は元々リサーチプール生成用の毎日Cron）。`scheduled()`の`"0 15 * * *"`分岐:
 
 ```js
-if (event.cron === "0 3 * * *") {
-  const jstDateISO = toJSTDateStringWorker(new Date());
-  if (!isLastDayOfMonthJST(jstDateISO)) return; // 月末以外は即return
-  await runMonthlyWallpaperPost(env, handleGenerate, ctx);
+if (event.cron === "0 15 * * *") {
+  ctx.waitUntil(generateResearchPool(env, ctx));
+  ctx.waitUntil((async () => {
+    const jstDateISO = toJSTDateStringWorker(new Date());
+    if (!isLastDayOfMonthJST(jstDateISO)) return; // 月末以外は即return
+    await runMonthlyWallpaperPost(env, handleGenerate, ctx);
+  })());
+  return;
 }
 ```
+
+`generateResearchPool()`・月末チェックはどちらも`ctx.waitUntil()`に個別登録され、互いに待ち合わせない（片方が遅延・失敗してももう片方に影響しない）。
 
 `isLastDayOfMonthJST(dateStr)`は新規の小さな純粋関数（翌日の日付を計算し、月が変わっていれば月末と判定）。大半の日はここで即returnするため、既存Cronへの負荷影響はごく僅か。
 

@@ -1350,25 +1350,26 @@ export async function _updateMetaOrRollback(env, r2Id, updates, materialId, logP
 // ---------------------------------------------------------------------------
 export default {
   // ── Cron Trigger ──────────────────────────────────────────────────────────
-  // "0 15 * * *"   → 毎日 0:00 JST  リサーチプール生成
+  // "0 15 * * *"   → 毎日 0:00 JST  リサーチプール生成 + 月替わり壁紙（月末のみ発火・bot.js runMonthlyWallpaperPost()）
   // "0 16 * * *"   → 毎日 1:00 JST  SUZURIセール自動検知（sale-check.js）
-  // "0 3 * * *"    → 毎日 12:00 JST 月替わり壁紙（月末のみ発火・bot.js runMonthlyWallpaperPost()）
   // "0 22 * * 1-5" → 月〜金 7:00 JST  Bluesky/Mastodon 営業 Bot
+  // 2026-09: 月替わり壁紙は当初独立Cron"0 3 * * *"（12:00 JST）を予定していたが、Cloudflareアカウント
+  // 全体のCron Trigger上限（Workers Freeは5本/アカウント。他プロジェクトyobiko/yobiko-stagingが
+  // 各1本使用済みで、このWorkerの4本目デプロイが上限超過で失敗）のため、既存の"0 15 * * *"に
+  // 相乗りさせる設計に変更した。実行時刻はユーザー希望の正午JST頃から深夜0:00 JSTに変わる
   async scheduled(event, env, ctx) {
     if (event.cron === "0 15 * * *") {
       ctx.waitUntil(generateResearchPool(env, ctx));
+      ctx.waitUntil((async () => {
+        const jstDateISO = toJSTDateStringWorker(new Date());
+        if (!isLastDayOfMonthJST(jstDateISO)) return;
+        await runMonthlyWallpaperPost(env, handleGenerate, ctx);
+      })());
       return;
     }
 
     if (event.cron === "0 16 * * *") {
       ctx.waitUntil(checkForNewSale(env, ctx, notifyDiscord));
-      return;
-    }
-
-    if (event.cron === "0 3 * * *") {
-      const jstDateISO = toJSTDateStringWorker(new Date());
-      if (!isLastDayOfMonthJST(jstDateISO)) return;
-      ctx.waitUntil(runMonthlyWallpaperPost(env, handleGenerate, ctx));
       return;
     }
 

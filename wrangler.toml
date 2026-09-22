@@ -4,14 +4,17 @@ compatibility_date = "2024-01-01"
 preview_urls = false
 
 [triggers]
-# "0 15 * * *"   → 毎日 0:00 JST  リサーチプール生成（翌日分の記念日候補をR2に保存）
+# "0 15 * * *"   → 毎日 0:00 JST  リサーチプール生成（翌日分の記念日候補をR2に保存）+
+#                                月替わり壁紙（2026-09追加・月末のみ発火・bot.js runMonthlyWallpaperPost()）
 # "0 16 * * *"   → 毎日 1:00 JST  SUZURIセール自動検知（2026-08追加・sale-check.js）
-# "0 3 * * *"    → 毎日 12:00 JST 月替わり壁紙（2026-09追加・月末のみ発火・bot.js runMonthlyWallpaperPost()）
 # "0 22 * * 1-5" → 月〜金 7:00 JST  Bluesky 営業 Bot（2026-05-01より）
 # Cloudflare Workers の曜日指定は 1=日曜日 のため、1-5=日〜木UTC=月〜金JST
 # 2026-08-06: Aug 4 22:00 UTC以降Cronイベントが1件も記録されなくなったため、
 # Cron Trigger再登録を目的に本コメントのみの変更で再デプロイを実施
-crons = ["0 15 * * *", "0 16 * * *", "0 3 * * *", "0 22 * * 1-5"]
+# 2026-09: 月替わり壁紙は当初独立Cron"0 3 * * *"を追加予定だったが、Cloudflareアカウント全体の
+# Cron Trigger上限（Workers Free: 5本/アカウント。他プロジェクトyobiko/yobiko-stagingで既に2本
+# 使用中のため4本目のデプロイが上限超過エラーで失敗）に抵触したため、既存"0 15 * * *"に統合した
+crons = ["0 15 * * *", "0 16 * * *", "0 22 * * 1-5"]
 
 [vars]
 # GitHub Pages の URL を設定（デプロイ後に実際の URL に変更してください）
