@@ -20,7 +20,7 @@ import {
 import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptionForTest } from "../worker/suzuri.js";
 
 import {
-  buildPostText, buildMastodonText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
+  buildPostText, buildMastodonText, buildHashtagFacets, buildUrlFacets, buildThemeTag, buildBlueskyPostUrl, notifyDiscord, runBot,
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta,
   buildSaleReplyTextJa, buildSaleReplyTextBilingual,
   buildMonthlyWallpaperPostText, buildMonthlyWallpaperMastodonText, runMonthlyWallpaperPost,
@@ -108,6 +108,26 @@ console.log("\n[buildThemeTag]");
   const longTheme = "あ".repeat(35);
   const tag = buildThemeTag(longTheme);
   assert("31文字以上は#込みで31文字にトリム（30文字＋#）", tag !== null && tag.length === 31);
+}
+
+// ---------------------------------------------------------------------------
+// buildBlueskyPostUrl
+// ---------------------------------------------------------------------------
+console.log("\n[buildBlueskyPostUrl]");
+{
+  // 正常系: AT URIからrkeyを抽出しbsky.app URLを組み立てる
+  const uri = "at://did:plc:l7dww2ntsmnqfslaftjfl3i7/app.bsky.feed.post/3mw5crumulb2l";
+  assert(
+    "ハンドルとrkeyからbsky.app URLを組み立てる",
+    buildBlueskyPostUrl(uri, "nyanmusu.bsky.social") === "https://bsky.app/profile/nyanmusu.bsky.social/post/3mw5crumulb2l"
+  );
+
+  // 境界値: uriがnull/undefined/空文字
+  assert("uriがnullの場合はnullを返す", buildBlueskyPostUrl(null, "nyanmusu.bsky.social") === null);
+  assert("uriが空文字の場合はnullを返す", buildBlueskyPostUrl("", "nyanmusu.bsky.social") === null);
+
+  // エラー系: 形式が不正なURI（rkeyが取れない）
+  assert("スラッシュを含まない不正なURIはnullを返す", buildBlueskyPostUrl("not-a-uri", "nyanmusu.bsky.social") === null);
 }
 
 // ---------------------------------------------------------------------------

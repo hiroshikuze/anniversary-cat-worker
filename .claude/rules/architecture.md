@@ -898,14 +898,20 @@ CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言で
 - 2通目に成否を再掲することで、1通目が文字数で省略されても結果を確認できる
 - 2通目が失敗しても1通目は送信済みのため情報損失はBluesky部分に限られない
 
+**投稿URLの記載（2026-09追加）**: 投稿成功時、Discord通知の成否行に実際の投稿URLを付与する。目的は、テスト投稿・本番投稿を問わず、Discordを見るだけで実際に何が投稿されたか確認・削除できるようにするため（従来はCloudflare Workers Logsを検索してAT URI/ステータスIDから手動でURLを組み立てる必要があった）。
+
+- Bluesky: `buildBlueskyPostUrl(uri, identifier)`（`worker/bot.js`・純粋関数）が、`createPost()`の戻り値`uri`（AT URI形式`at://{did}/app.bsky.feed.post/{rkey}`）末尾のrkeyを抽出し、`https://bsky.app/profile/{identifier}/post/{rkey}`を組み立てる。`identifier`には`env.BLUESKY_IDENTIFIER`（ハンドル、例: `nyanmusu.bsky.social`）を渡す。didではなくハンドルを使うことでURLが人間にも読みやすくなる
+- Mastodon: `postStatusToMastodon()`の戻り値（Mastodon Status API）に含まれる`url`フィールドをそのまま使う（Mastodon API仕様上Status entityは常に投稿ページの正規URLを`url`として返すため、独自に組み立てる必要がない）
+- 失敗時・未設定時はURLを付与しない（そもそも投稿が存在しないため）
+
 ### Discord成功通知フォーマット
 
 投稿完了後に`notifyDiscord()`で送信される通知（2通構成）。
 
 ```text
 ✅ にゃんバーサリーBot
-✅ Bluesky投稿完了 {dateStr}      ← Bluesky失敗時は ❌ Bluesky投稿失敗: {エラー}
-✅ Mastodon投稿完了               ← 設定済みの場合。失敗時は ❌ Mastodon投稿失敗: {エラー}。未設定時は ⏭️ Mastodon未設定・スキップ
+✅ Bluesky投稿完了 {dateStr} {blueskyPostUrl}   ← Bluesky失敗時は ❌ Bluesky投稿失敗: {エラー}（URLなし）
+✅ Mastodon投稿完了 {mastodonPostUrl}           ← 設定済みの場合。失敗時は ❌ Mastodon投稿失敗: {エラー}（URLなし）。未設定時は ⏭️ Mastodon未設定・スキップ
 📅 テーマ: {theme}
 📝 説明: {description}           ← descriptionがある場合のみ
 🎨 視覚ヒント: {visualHint}      ← visualHintがある場合のみ
@@ -1066,7 +1072,7 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 4. Mastodon投稿: 既存`uploadMediaToMastodon()`を2回呼び、`postStatusToMastodon()`の`media_ids[]`に2件渡す
 5. 投稿文言: `buildMonthlyWallpaperPostText()`（Bluesky・日本語のみ、既存`buildPostText()`と同じ方針）・`buildMonthlyWallpaperMastodonText()`（Mastodon・英語優先の日英二言語、既存`buildMastodonText()`と同じ方針）。ハッシュタグ例: `#壁紙 #猫壁紙 #AIart #cat #にゃんバーサリー`（Bluesky）・`#wallpaper #cat #AIart #にゃんバーサリー`（Mastodon）
 6. Discord通知（`notifyDiscord()`流用・2通構成）: **成否ステータスは1通目のみに記載し、2通目では再掲しない**（日次Botと異なる点）。月次は頻度が低く「1通目が届かない」こと自体が異常のシグナルになるため、再掲の必要性が薄いと判断した
-   - 1通目: 成否ステータス＋テーマ＋Geminiプロンプト全文
+   - 1通目: 成否ステータス（投稿URL付き。日次Botと同じ`buildBlueskyPostUrl()`/Mastodon Status APIの`url`フィールドを使う）＋テーマ＋Geminiプロンプト全文
    - 2通目: Bluesky投稿テキスト＋Mastodon投稿テキスト（いずれもX/Instagram/Facebook/mixi2等への手動転載用）
 
 ### 手動再生成エンドポイント
