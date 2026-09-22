@@ -161,6 +161,8 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | フロントの日付表示は`timeZone: "Asia/Tokyo"`を明示する | ブラウザのロケール設定に依存すると海外ユーザーでJST日付がずれる（共有URLで記念日と日付が矛盾して見える問題） |
 | 共有URLで表示する日付は`data.createdAt`を使う（`new Date()`は使わない） | `new Date()`は閲覧日になるため、過去に生成した画像を共有された際に記念日の内容と日付が矛盾する |
 | 共有URLの日付バッジはスピナー（`g-loading`）表示前に更新する | ローディング中に「今日の日付」が見えるとユーザーが不安になる。bot IDはIDから直接・user IDは`/meta/:id`を先行fetchして更新する |
+| 月替わり壁紙の月名・大数字はPhotonの`draw_text()`（Roboto固定）で描かず、事前生成した透過PNG（`worker/assets/month-badges/`）を`watermark()`で貼る | Photonはカスタムフォント指定不可。毎月変わらない装飾部分をアセット化し、動的な数字（年・日付・曜日）だけを`draw_text()`で描く役割分担にすることで新規ライブラリ依存を増やさずに済ませている |
+| 月替わり壁紙の手動再生成エンドポイントは既存`BYPASS_TOKEN`を流用する（新規シークレットを作らない） | 用途が増えることの留意点はあるが、月次1機能のために管理対象シークレットを増やすコストの方が大きいと判断（ユーザー承認済み） |
 
 ---
 
@@ -208,6 +210,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | 外部通信の共通リトライ（5xx・ネットワーク例外を指数バックオフでリトライ。SUZURI登録・fal.aiポーリング・共有URL画像取得等に適用） | `worker/http-utils.js` `fetchWithRetry()` `worker/index.js` `_pollFalAndGetTexture()` | 稼働中 |
 | Workers Traces有効化・CPU時間計測チェックポイント（Cron・HTTPエンドポイント問わず重い処理に`recordCpuCheckpoint()`で計測を恒久設置。Workers Free上限10ms対策のBug#32の一環） | `wrangler.toml` `[observability.traces]` `worker/index.js` `recordCpuCheckpoint()` `worker/bot.js` | 稼働中 |
 | CPU時間のステップ別KV集計・API化（`/usage`と同パターン。`/cpu-usage`でCIログから確認可能） | `worker/index.js` `incrementCpuTimeKv()` `recordCpuCheckpoint()` `/cpu-usage` `scripts/health-check.js` | 稼働中 |
+| 月替わり壁紙プレゼント（Bluesky/Mastodon限定・カレンダー付き/なし2版・月末Cron＋手動再生成エンドポイント） | `worker/bot.js` `runMonthlyWallpaperPost()` `worker/image-utils.js` `compositeMonthlyWallpaper()` `POST /monthly-wallpaper/regenerate` | 稼働中 |
 
 ### 主要な定数値・APIエンドポイント一覧
 

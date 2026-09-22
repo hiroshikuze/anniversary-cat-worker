@@ -74,6 +74,7 @@ anniversary-cat-worker/
 | GET | `/cpu-usage` | ステップ別CPU時間集計（直近30日・認証なし・`{days:[{date,{step}:{calls,totalMs,maxMs}}]}`） |
 | GET | `/sale-info` | 現在有効なSUZURIセール情報（認証なし・`{active:true,endUtcMs,discountYen,endDisplay}`または`{active:false}`・`Cache-Control: public, max-age=300`） |
 | POST | `/suzuri-create` | ウォーターマーク済み画像を受け取りSUZURI登録・R2メタ更新 |
+| POST | `/monthly-wallpaper/regenerate` | 月替わり壁紙の手動再生成（`X-Bypass-Token`ヘッダー必須。月末Cronと同じ`runMonthlyWallpaperPost()`を呼ぶ） |
 
 ### /proxy-imageのセキュリティ制約
 
@@ -991,6 +992,86 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 必要スコープ: `write:statuses` + `write:media`
 
 **未設定時の動作**: `MASTODON_INSTANCE_URL` または `MASTODON_ACCESS_TOKEN` が未設定の場合、Mastodon投稿をスキップして`Promise.resolve(null)`を返す。Bluesky単体で動作継続。
+
+---
+
+## 月替わり壁紙プレゼント機能（`worker/bot.js` `runMonthlyWallpaperPost()`・2026-09追加）
+
+### 背景
+
+集客診断（Umami/Bluesky/Mastodon実データ）で、ボトルネックはSUZURI導線や価格ではなく「SNS上での露出（リーチ）」だと判明した（詳細は`.claude/future-ideas.md`の「集客・マーケティング診断」参照）。サイト機能・SUZURI化には投資せず、まず「毎月の壁紙プレゼント」という新しいコンテンツ形態がフォロワー増・エンゲージメント増に効くかをSNS単体（Bluesky/Mastodon自動投稿）で安く検証する。X/Instagram/Facebook/mixi2への展開は、Discord通知に含まれる転載用テキストを使った手動コピペ運用とする。
+
+### 月テーマの決定（新規データテーブルなし）
+
+対象月の**末日**の日付文字列（`YYYY-MM-DD`）を既存の`getSeasonalFlower()`/`getSeasonalFlowerVisual()`/`getSeasonalStyleTone()`/`getSeasonalFlowerEn()`（`worker/index.js`）にそのまま渡し、`SEASONAL_FLOWERS`（24エントリ・半月区切り）の該当後半エントリを月テーマとして流用する。全月の末日は必ず後半エントリ（`16日〜末日`区切り）に一致する設計のため、常に安定して選ばれる（例: 10月末日→「金木犀」）。新規の月別テーブルは作らない。
+
+### 画像生成: 既存`handleGenerate()`の拡張利用
+
+新しい生成パイプラインは作らず、既存の2フェーズレース（Gemini→Pollinationsフォールバック）・モデル自動切替・CPU計測をそのまま利用する。
+
+- `handleGenerate()`呼び出し時の`body`: `{ theme, description, visualHint, themeEn, descriptionEn, jstDateISO: <対象月の末日>, reserveCalendarSpace: true }`
+- `jstDateISO`を対象月の末日で明示的に渡すことで、手動再生成が別の日に実行されても季節カラー・花テーマが対象月とズレない（内部の`getSeasonalStyleTone()`は「今日の日付」がデフォルトのため）
+- **ゲストキャラクター（`pickGuestAnimal()`・10%出現）は除外しない**（意図的な仕様判断。「たまに違う動物が混ざる意外性も味」とユーザーが判断）
+- `body.foodItem`を渡さないため`eatingAction`は発生しない（対応不要）
+- `_buildGeminiPrompt()`/`_buildPollinationsPrompt()`に新しい引数`reserveCalendarSpace = false`を追加。`true`のとき以下を構図指示に追加する:
+  - 縦長9:16のアスペクト比指定（日次プロンプトには元々なし。SUZURI用の正方形寄り想定だったため）
+  - 画像下部30%程度を、カレンダー格子を重ねるための平坦で明るい余白帯として残す指示
+  - 画像左上の一角を、月名ラベルを重ねるための平坦な余白として残す指示
+  - 禁止事項に「文字・数字を含めない」を強化（カレンダー数字・月名バッジとの視覚的衝突回避）
+  - AIの構図指示遵守は完全ではない（実測で指示した30%に対し実際は46%の余白ができた例あり）ため、後述の自動検出＋フォールバックで吸収する
+
+### カレンダー・月名の合成（`worker/image-utils.js` `compositeMonthlyWallpaper()`）
+
+Photon（`@silvia-odwyer/photon`・追加依存なし）の`draw_text(img, text, x, y, font_size)`と`watermark(img, watermark_img, x, y)`を組み合わせたハイブリッド方式。**Photonの`draw_text()`はフォントがRoboto固定でカスタムフォントを指定できない**ため、装飾性の高い部分（大きな月数字・英語月名）は事前生成した透過PNGに逃がし、毎月変わる動的な数字（年・日付・曜日）だけを`draw_text()`で描画する役割分担にした。
+
+**事前生成アセット**: 月名バッジ（例: 「October」＋大きな「10」、透過背景、薄いソフトグローを焼き込み済み）を月ごとに1枚ずつ用意。年数字は含まないため年ごとの更新は不要。Python/PIL（Gloock/CrimsonPro-Italicフォント）でデザイン検討・生成したものを`worker/assets/month-badges/01.png`〜`12.png`としてリポジトリに保持する（`frontend/images/`と同じ「ソースはリポジトリ管理」パターン）。Workerのバンドルサイズを増やさないよう、コードには直接importせず、`wrangler r2 object put`で一度だけR2（`assets/month-badges/{MM}.png`）へアップロードし、実行時は`env.IMAGE_BUCKET.get()`で取得する。取得できない場合は月名バッジなしで処理を継続する（フォールバック）。
+
+**合成処理の流れ**:
+
+1. 生成画像を1080×1920（スマホ壁紙・フルHD縦）へcover-cropでリサイズ
+2. 画像下部の空白帯の境界を自動検出（`_detectCropBox()`と同系統の「背景色からの差分スキャン」ロジックを共通化して使う）
+3. 左上の固定座標に該当月の事前生成バッジPNGを`watermark()`で貼り付け＋年数字（`draw_text()`・Roboto）。**バッジPNG自体に薄いソフトグロー（白）をあらかじめ焼き込んでいる**ため、実行時に左上領域が本当に空白かを検出する処理は行わない（検出＋フォールバックパネルの実行時分岐は複雑さに見合わないと判断し、デザイン側で解決した）。下部カレンダー帯は月ごとに内容量が変わるため引き続き自動検出が必須
+4. カレンダー帯: 曜日見出し（`sun`/`mon`/`tue`.../`sat`・`draw_text()`）＋日付数字（`draw_text()`）。日曜・日本の祝日は赤、土曜は青
+5. 左下に「© nyanmusu」（`frontend/index.html`の`applyWatermark()`と同一の透かし文言）を`draw_text()`で描画
+6. 「カレンダーなし」版も同時に生成する: 同じcover-crop画像に「© nyanmusu」の署名のみを付けたもの（full-bleed、カレンダー帯・月名バッジなし）
+7. 失敗時（Photon読み込み失敗等）は既存`autoCropImage()`と同様、未加工画像にフォールバックし処理全体は失敗させない
+
+**日本の祝日反映**: Workers互換（npmパッケージのみ・Node組み込みAPI不可）な祝日計算ライブラリを使用（具体的な採用ライブラリは実装時の比較検討に基づき記録する）。日曜と同じ赤色で表示する。
+
+### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null)`）
+
+`runBot()`と同じ構造を踏襲する。
+
+1. JST基準で対象年月を決定 → 月テーマ取得 → `handleGenerate()` → `compositeMonthlyWallpaper()`でカレンダーあり・なし2版を生成
+2. R2保存: `monthly-wallpaper/YYYY-MM/calendar.png` + `no-calendar.png` + `meta.json`。**手動再生成は同一年月のキーを上書きする**（Bot投稿の`bot/YYYY-MM-DD-n`スロット方式とは異なり、意図的な再実行が主目的のため上書きでよい）
+3. Bluesky投稿: **カレンダーあり・なし2枚を同一投稿に添付**する。既存`createPost()`は単一画像専用のため、新規関数`createMonthlyWallpaperPost()`（`worker/bot.js`内・同一モジュールスコープの既存プライベート関数`createBlueskySession()`/`uploadBlob()`を再利用）で`app.bsky.embed.images`の画像配列（2件・altテキストをそれぞれ設定）を組み立てる
+4. Mastodon投稿: 既存`uploadMediaToMastodon()`を2回呼び、`postStatusToMastodon()`の`media_ids[]`に2件渡す
+5. 投稿文言: `buildMonthlyWallpaperPostText()`（Bluesky・日本語のみ、既存`buildPostText()`と同じ方針）・`buildMonthlyWallpaperMastodonText()`（Mastodon・英語優先の日英二言語、既存`buildMastodonText()`と同じ方針）。ハッシュタグ例: `#壁紙 #猫壁紙 #AIart #cat #にゃんバーサリー`（Bluesky）・`#wallpaper #cat #AIart #にゃんバーサリー`（Mastodon）
+6. Discord通知（`notifyDiscord()`流用・2通構成）: **成否ステータスは1通目のみに記載し、2通目では再掲しない**（日次Botと異なる点）。月次は頻度が低く「1通目が届かない」こと自体が異常のシグナルになるため、再掲の必要性が薄いと判断した
+   - 1通目: 成否ステータス＋テーマ＋Geminiプロンプト全文
+   - 2通目: Bluesky投稿テキスト＋Mastodon投稿テキスト（いずれもX/Instagram/Facebook/mixi2等への手動転載用）
+
+### 手動再生成エンドポイント
+
+`POST /monthly-wallpaper/regenerate`。`X-Bypass-Token`ヘッダーを既存`BYPASS_TOKEN`シークレットと照合（不一致は403）。一致したら`runMonthlyWallpaperPost(env, handleGenerate, ctx)`を呼び出し結果をJSONで返す。Cron発火時と全く同じ関数を呼ぶため実装・テストは1箇所に集約される。自動のバックアップCronチェックは今回実装しない（ユーザー判断・手動再生成のみで信頼性を担保する）。
+
+### Cron（月末自動生成）
+
+`wrangler.toml`の`crons`に`"0 3 * * *"`（03:00 UTC = 12:00 JST、毎日発火する軽量チェック）を追加。`scheduled()`に新分岐:
+
+```js
+if (event.cron === "0 3 * * *") {
+  const jstDateISO = toJSTDateStringWorker(new Date());
+  if (!isLastDayOfMonthJST(jstDateISO)) return; // 月末以外は即return
+  await runMonthlyWallpaperPost(env, handleGenerate, ctx);
+}
+```
+
+`isLastDayOfMonthJST(dateStr)`は新規の小さな純粋関数（翌日の日付を計算し、月が変わっていれば月末と判定）。大半の日はここで即returnするため、既存Cronへの負荷影響はごく僅か。
+
+### 公開後フォローアップ（運用ルール）
+
+初回投稿から5日後を目安に、Bluesky/Mastodonの公開API（`public.api.bsky.app`・対象Mastodonインスタンスの`/api/v1/accounts/.../statuses`、いずれも認証不要）で反響（いいね・リポスト・返信）を確認し、簡単な総括と次月に向けた改善案をまとめる。手順は集客診断セッションで実施した手法と同じ（`.claude/future-ideas.md`の「集客・マーケティング診断」参照）。
 
 ---
 
