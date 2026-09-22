@@ -39,6 +39,7 @@ let _satoriFn    = null; // satori(element, options) => Promise<string(svg)>
 
 let _resvgReady = false;
 let _Resvg      = null;
+let _resvgInitPromise = null; // 並行呼び出しでinitWasm()が二重実行されるのを防ぐシングルフライト
 
 /** Satori本体 + Yoga（レイアウトエンジンWASM）を遅延ロードする */
 export async function ensureSatori() {
@@ -57,14 +58,33 @@ export function _setSatoriForTest(mockSatoriFn) {
   _satoriReady = mockSatoriFn !== null;
 }
 
-/** resvg（SVG→PNGラスタライザー）を遅延ロードする。WASMはビルド時に静的importでプリコンパイルする。 */
-export async function ensureResvg() {
+/**
+ * resvg（SVG→PNGラスタライザー）を遅延ロードする。WASMはビルド時に静的importでプリコンパイルする。
+ *
+ * `compositeMonthlyWallpaper()`がカレンダー版・署名版のオーバーレイを`Promise.all()`で並行生成する
+ * ため、`ensureResvg()`も並行に呼ばれる。`@resvg/resvg-wasm`の`initWasm()`は2回目の呼び出しで
+ * `Already initialized`例外を投げる一度きりのAPIのため、`_resvgReady`の真偽値チェックだけでは
+ * 「両方の呼び出しがfalseを見てから初期化を開始する」競合を防げない（2026-09・実機で発生）。
+ * 進行中の初期化Promiseを共有するシングルフライトパターンで、実際のinitWasm()呼び出しを
+ * 1回に限定する。
+ */
+export async function ensureResvg(deps = {}) {
+  const { loadResvgFn = _loadResvg } = deps;
   if (_resvgReady) return;
+  if (!_resvgInitPromise) {
+    _resvgInitPromise = (async () => {
+      _Resvg = await loadResvgFn();
+      _resvgReady = true;
+    })();
+  }
+  await _resvgInitPromise;
+}
+
+async function _loadResvg() {
   const mod = await import("@resvg/resvg-wasm");
   const { default: resvgWasm } = await import("@resvg/resvg-wasm/index_bg.wasm");
   await mod.initWasm(resvgWasm);
-  _Resvg = mod.Resvg;
-  _resvgReady = true;
+  return mod.Resvg;
 }
 
 export function getResvgClass() { return _Resvg; }
@@ -73,6 +93,7 @@ export function getResvgClass() { return _Resvg; }
 export function _setResvgForTest(mockResvgClass) {
   _Resvg = mockResvgClass;
   _resvgReady = mockResvgClass !== null;
+  _resvgInitPromise = null;
 }
 
 let _fontsReady = false;

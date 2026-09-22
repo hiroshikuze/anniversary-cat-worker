@@ -20,7 +20,7 @@ import {
 import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptionForTest } from "../worker/suzuri.js";
 
 import {
-  buildPostText, buildMastodonText, buildHashtagFacets, buildUrlFacets, buildThemeTag, notifyDiscord, runBot,
+  buildPostText, buildMastodonText, buildHashtagFacets, buildUrlFacets, buildThemeTag, buildBlueskyPostUrl, notifyDiscord, runBot,
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta,
   buildSaleReplyTextJa, buildSaleReplyTextBilingual,
   buildMonthlyWallpaperPostText, buildMonthlyWallpaperMastodonText, runMonthlyWallpaperPost,
@@ -31,7 +31,7 @@ import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale
 import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
-import { renderElementToPng, _setSatoriForTest, _setResvgForTest } from "../worker/svg-render.js";
+import { renderElementToPng, ensureResvg, _setSatoriForTest, _setResvgForTest } from "../worker/svg-render.js";
 
 let passed = 0;
 let failed = 0;
@@ -108,6 +108,26 @@ console.log("\n[buildThemeTag]");
   const longTheme = "あ".repeat(35);
   const tag = buildThemeTag(longTheme);
   assert("31文字以上は#込みで31文字にトリム（30文字＋#）", tag !== null && tag.length === 31);
+}
+
+// ---------------------------------------------------------------------------
+// buildBlueskyPostUrl
+// ---------------------------------------------------------------------------
+console.log("\n[buildBlueskyPostUrl]");
+{
+  // 正常系: AT URIからrkeyを抽出しbsky.app URLを組み立てる
+  const uri = "at://did:plc:l7dww2ntsmnqfslaftjfl3i7/app.bsky.feed.post/3mw5crumulb2l";
+  assert(
+    "ハンドルとrkeyからbsky.app URLを組み立てる",
+    buildBlueskyPostUrl(uri, "nyanmusu.bsky.social") === "https://bsky.app/profile/nyanmusu.bsky.social/post/3mw5crumulb2l"
+  );
+
+  // 境界値: uriがnull/undefined/空文字
+  assert("uriがnullの場合はnullを返す", buildBlueskyPostUrl(null, "nyanmusu.bsky.social") === null);
+  assert("uriが空文字の場合はnullを返す", buildBlueskyPostUrl("", "nyanmusu.bsky.social") === null);
+
+  // エラー系: 形式が不正なURI（rkeyが取れない）
+  assert("スラッシュを含まない不正なURIはnullを返す", buildBlueskyPostUrl("not-a-uri", "nyanmusu.bsky.social") === null);
 }
 
 // ---------------------------------------------------------------------------
@@ -582,6 +602,10 @@ console.log("\n[runBot: Mastodon投稿]");
     assert("themeEnあり: 2通目にMastodonテキストが含まれる", discordBodies[1]?.includes("Mastodon投稿テキスト"));
     assert("themeEnあり: 2通目にMastodon英語ヘッダーが含まれる", discordBodies[1]?.includes("Today is"));
     assert("themeEnあり: 2通目にBluesky投稿テキストが含まれる", discordBodies[1]?.includes("Bluesky投稿テキスト"));
+    // 2026-09追加: Discord通知にBluesky/Mastodonの実投稿URLが記載される（makeBskyMastoFetch()の
+    // createRecord→uri:"at://mock"・statuses→url:`${MASTO_INSTANCE}/@user/456`を使って検証）
+    assert("1通目にBluesky投稿URLが含まれる", discordBodies[0]?.includes("https://bsky.app/profile/id/post/mock"));
+    assert("1通目にMastodon投稿URLが含まれる", discordBodies[0]?.includes(`${MASTO_INSTANCE}/@user/456`));
   }
 
   // ── Discord 2通目: themeEn未取得 → 常に送信・注記が入る ──
@@ -5323,6 +5347,27 @@ console.log("\n[renderElementToPng: Satori+resvgのモック経由呼び出し]"
     assert("resvg初期化失敗時はエラーを投げる", threw);
     _setSatoriForTest(null);
   }
+
+  {
+    // 2026-09実機バグ: compositeMonthlyWallpaper()がカレンダー版・署名版を
+    // Promise.all()で並行生成するため、ensureResvg()も並行に呼ばれる。
+    // 一度きりのロード関数（@resvg/resvg-wasmのinitWasm()を模擬）を2回呼んでしまうと
+    // 本番で"Already initialized"例外になっていた。シングルフライトで1回に限定されることを検証する
+    _setResvgForTest(null);
+    let loadCalls = 0;
+    const loadResvgFn = async () => {
+      loadCalls += 1;
+      if (loadCalls > 1) throw new Error("Already initialized. The `initWasm()` function can be used only once.");
+      await new Promise((resolve) => setTimeout(resolve, 10)); // 並行呼び出しが重なる時間を確保
+      return class MockResvg {};
+    };
+    await Promise.all([
+      ensureResvg({ loadResvgFn }),
+      ensureResvg({ loadResvgFn }),
+    ]);
+    assert("並行呼び出しでもロード関数は1回しか呼ばれない", loadCalls === 1);
+    _setResvgForTest(null);
+  }
 }
 
 console.log("\n[_daysInMonth: 正常系・境界値]");
@@ -5496,6 +5541,45 @@ console.log("\n[runMonthlyWallpaperPost: 正常フロー（モック合成・R2�
   assert("R2にno-calendar.pngが保存される", savedKeys.some(k => k.endsWith("/no-calendar.png")));
   assert("R2にmeta.jsonが保存される", savedKeys.some(k => k.endsWith("/meta.json")));
   assert("保存キーがmonthly-wallpaper/プレフィックス", savedKeys.every(k => k.startsWith("monthly-wallpaper/")));
+}
+
+console.log("\n[runMonthlyWallpaperPost: Discord通知にBluesky/Mastodon投稿URLが記載される（2026-09追加）]");
+{
+  const bucket = { async put() {}, async get() { return null; } };
+  const MASTO_INSTANCE_WP = "https://masto.example";
+  const env = {
+    GEMINI_API_KEY: "test-key",
+    BLUESKY_IDENTIFIER: "nyanmusu.bsky.social", BLUESKY_APP_PASSWORD: "pass",
+    MASTODON_INSTANCE_URL: MASTO_INSTANCE_WP, MASTODON_ACCESS_TOKEN: "masto-token",
+    DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+    IMAGE_BUCKET: bucket,
+  };
+  const mockGenerate = async () => ({ imageData: btoa("fake-image"), mimeType: "image/png", source: "gemini", prompt: "test prompt" });
+  const mockComposite = async () => ({
+    calendarImageData: btoa("calendar"), noCalendarImageData: btoa("no-calendar"),
+    mimeType: "image/png", composited: true,
+  });
+
+  const discordBodies = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("discord")) {
+      discordBodies.push(JSON.parse(opts?.body ?? "{}").content ?? "");
+      return { ok: true, status: 204, text: async () => "" };
+    }
+    if (u.includes("createSession")) return { ok: true, status: 200, text: async () => JSON.stringify({ accessJwt: "jwt", did: "did:mock" }) };
+    if (u.includes("uploadBlob"))    return { ok: true, status: 200, text: async () => JSON.stringify({ blob: { $type: "blob", ref: { $link: "r" }, mimeType: "image/png", size: 1 } }) };
+    if (u.includes("createRecord"))  return { ok: true, status: 200, text: async () => JSON.stringify({ uri: "at://did:plc:x/app.bsky.feed.post/wallpaper1", cid: "cid" }) };
+    if (u.includes("/api/v2/media")) return { ok: true, status: 200, text: async () => JSON.stringify({ id: "media1" }) };
+    if (u.includes("/api/v1/statuses")) return { ok: true, status: 200, text: async () => JSON.stringify({ id: "status1", url: `${MASTO_INSTANCE_WP}/@nyanmusu/status1` }) };
+    return { ok: true, status: 200, text: async () => "{}" };
+  };
+  await runMonthlyWallpaperPost(env, mockGenerate, null, { compositeMonthlyWallpaperFn: mockComposite });
+  globalThis.fetch = origFetch;
+
+  assert("1通目にBluesky投稿URLが含まれる", discordBodies[0]?.includes("https://bsky.app/profile/nyanmusu.bsky.social/post/wallpaper1"));
+  assert("1通目にMastodon投稿URLが含まれる", discordBodies[0]?.includes(`${MASTO_INSTANCE_WP}/@nyanmusu/status1`));
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);

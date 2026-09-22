@@ -188,7 +188,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | Bluesky Bot投稿（毎平日7:00 JST・2026-05-01より） | `worker/bot.js` `runBot()` | 稼働中 |
 | Mastodon Bot投稿（Blueskyと同時・Promise.allSettled・シークレット未設定時はスキップ・設定エラー検出） | `worker/bot.js` `runBot()` | 稼働中 |
 | ゲストキャラクター（10%確率・8種・ゲスト外見/性格をDiscord通知に含む） | `worker/index.js` `pickGuestAnimal()` | 稼働中 |
-| Bot投稿完了のDiscord通知（テーマ・プロンプト全文・画像ソース・毛柄・性格・感情・食べ物アクション・ゲスト含む・2通構成） | `worker/bot.js` `notifyDiscord()` | 稼働中 |
+| Bot投稿完了のDiscord通知（テーマ・プロンプト全文・画像ソース・毛柄・性格・感情・食べ物アクション・ゲスト・投稿URL含む・2通構成） | `worker/bot.js` `notifyDiscord()` `buildBlueskyPostUrl()` | 稼働中 |
 | SUZURIグッズ登録（4商品: Tシャツ・ステッカー・缶バッジ・アクキー） | `worker/suzuri.js` | 稼働中 |
 | ボット画像SUZURI登録を初回訪問者ブラウザに委譲（2048px高品質・重複防止） | `frontend/index.html` `createSuzuriFromImage()` `worker/index.js` | 稼働中 |
 | ウォーターマーク合成（Canvas、フロントエンド側） | `frontend/index.html` `applyWatermark()` | 稼働中 |
@@ -213,7 +213,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | 外部通信の共通リトライ（5xx・ネットワーク例外を指数バックオフでリトライ。SUZURI登録・fal.aiポーリング・共有URL画像取得等に適用） | `worker/http-utils.js` `fetchWithRetry()` `worker/index.js` `_pollFalAndGetTexture()` | 稼働中 |
 | Workers Traces有効化・CPU時間計測チェックポイント（Cron・HTTPエンドポイント問わず重い処理に`recordCpuCheckpoint()`で計測を恒久設置。Workers Free上限10ms対策のBug#32の一環） | `wrangler.toml` `[observability.traces]` `worker/index.js` `recordCpuCheckpoint()` `worker/bot.js` | 稼働中 |
 | CPU時間のステップ別KV集計・API化（`/usage`と同パターン。`/cpu-usage`でCIログから確認可能） | `worker/index.js` `incrementCpuTimeKv()` `recordCpuCheckpoint()` `/cpu-usage` `scripts/health-check.js` | 稼働中 |
-| 月替わり壁紙プレゼント（Bluesky/Mastodon限定・カレンダー付き/なし2版・月末Cron＋手動再生成エンドポイント） | `worker/bot.js` `runMonthlyWallpaperPost()` `worker/image-utils.js` `compositeMonthlyWallpaper()` `worker/svg-render.js` `POST /monthly-wallpaper/regenerate` | 実装済み・実機再検証待ち（`npm test`は全件成功。初回の実機検証でresvg.wasmの実行時WASMコンパイル禁止エラーが判明・Bug#36で修正済み。修正後の実機再検証はデプロイ後にユーザーが確認する。詳細は`.claude/rules/architecture.md`の「月替わり壁紙プレゼント機能」の「実装状況」参照） |
+| 月替わり壁紙プレゼント（Bluesky/Mastodon限定・カレンダー付き/なし2版・月末Cron＋手動再生成エンドポイント） | `worker/bot.js` `runMonthlyWallpaperPost()` `worker/image-utils.js` `compositeMonthlyWallpaper()` `worker/svg-render.js` `POST /monthly-wallpaper/regenerate` | 実装済み・実機再検証待ち（`npm test`は全件成功。実機検証でresvg.wasm関連の障害を2件連続で検知（Bug#36本体: 実行時WASMコンパイル禁止／Bug#36追記: `ensureResvg()`並行呼び出しの二重初期化）、いずれも修正済み。2件目の修正はPR #182として未マージ・未デプロイ（本ドキュメント執筆時点）。マージ・デプロイ後の実機再検証（`composited: true`になること・カレンダー格子/月名バッジ/祝日色分けの目視確認）はユーザーが実施する。詳細は`.claude/rules/architecture.md`の「月替わり壁紙プレゼント機能」の「実装状況」参照） |
 
 ### 主要な定数値・APIエンドポイント一覧
 

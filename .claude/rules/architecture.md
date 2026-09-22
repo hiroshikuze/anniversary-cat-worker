@@ -898,14 +898,20 @@ CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言で
 - 2通目に成否を再掲することで、1通目が文字数で省略されても結果を確認できる
 - 2通目が失敗しても1通目は送信済みのため情報損失はBluesky部分に限られない
 
+**投稿URLの記載（2026-09追加）**: 投稿成功時、Discord通知の成否行に実際の投稿URLを付与する。目的は、テスト投稿・本番投稿を問わず、Discordを見るだけで実際に何が投稿されたか確認・削除できるようにするため（従来はCloudflare Workers Logsを検索してAT URI/ステータスIDから手動でURLを組み立てる必要があった）。
+
+- Bluesky: `buildBlueskyPostUrl(uri, identifier)`（`worker/bot.js`・純粋関数）が、`createPost()`の戻り値`uri`（AT URI形式`at://{did}/app.bsky.feed.post/{rkey}`）末尾のrkeyを抽出し、`https://bsky.app/profile/{identifier}/post/{rkey}`を組み立てる。`identifier`には`env.BLUESKY_IDENTIFIER`（ハンドル、例: `nyanmusu.bsky.social`）を渡す。didではなくハンドルを使うことでURLが人間にも読みやすくなる
+- Mastodon: `postStatusToMastodon()`の戻り値（Mastodon Status API）に含まれる`url`フィールドをそのまま使う（Mastodon API仕様上Status entityは常に投稿ページの正規URLを`url`として返すため、独自に組み立てる必要がない）
+- 失敗時・未設定時はURLを付与しない（そもそも投稿が存在しないため）
+
 ### Discord成功通知フォーマット
 
 投稿完了後に`notifyDiscord()`で送信される通知（2通構成）。
 
 ```text
 ✅ にゃんバーサリーBot
-✅ Bluesky投稿完了 {dateStr}      ← Bluesky失敗時は ❌ Bluesky投稿失敗: {エラー}
-✅ Mastodon投稿完了               ← 設定済みの場合。失敗時は ❌ Mastodon投稿失敗: {エラー}。未設定時は ⏭️ Mastodon未設定・スキップ
+✅ Bluesky投稿完了 {dateStr} {blueskyPostUrl}   ← Bluesky失敗時は ❌ Bluesky投稿失敗: {エラー}（URLなし）
+✅ Mastodon投稿完了 {mastodonPostUrl}           ← 設定済みの場合。失敗時は ❌ Mastodon投稿失敗: {エラー}（URLなし）。未設定時は ⏭️ Mastodon未設定・スキップ
 📅 テーマ: {theme}
 📝 説明: {description}           ← descriptionがある場合のみ
 🎨 視覚ヒント: {visualHint}      ← visualHintがある場合のみ
@@ -1030,6 +1036,7 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 - **生の`satori`パッケージではなく`@cf-wasm/satori`（`/workerd`エントリポイント）を使う（2026-09・重要な設計判断）**: 素の`satori`（v0.30以降）はharfbuzzjs（Emscripten生成JS）に依存し、Node専用の`require("fs")`分岐を静的に含むため、`wrangler deploy --dry-run`の時点でビルドが失敗する（`Could not resolve "fs"`）。実機動作の検証以前にデプロイ自体が不可能な状態だった。Cloudflare Workers向けにこの問題を解決済みの`@cf-wasm/satori`（fineshopdesignのcf-wasmモノレポ）に切り替えて解消した。Yoga（レイアウトエンジン、71KB）はこのパッケージが内部でバンドル・import時に自動初期化するため、明示initは不要
 - **resvgのWASM（約2.4MB）はPhotonと同じ「ビルド時ESM静的import」でバンドルする（2026-09・R2実行時fetchから変更・Bug#36）**: 当初はスクリプトサイズ上限（gzip後3MB）を懸念しR2（既存`IMAGE_BUCKET`）に配置して実行時に`fetch()`し`WebAssembly.instantiate(bytes)`でコンパイルする設計だったが、実際に本番デプロイ後の`POST /monthly-wallpaper/regenerate`実行で`WebAssembly.instantiate(): Wasm code generation disallowed by embedder`エラーが発生した。Cloudflare Workersは実行時の動的WASMコンパイル（生バイト列からのコンパイル）をセキュリティ上禁止しており、この設計は原理的に動作しないと判明した（投稿自体は`compositeMonthlyWallpaper()`のフォールバック設計により未加工画像で継続していたため実害は「カレンダー合成なし」にとどまった）。修正はPhoton（`worker/image-utils.js`）が実際に本番稼働している`import wasm from "パッケージ名/xxx.wasm"`（ビルド時に`WebAssembly.Module`としてプリコンパイルされる）と同じ静的import方式に統一した。`@resvg/resvg-wasm`の`initWasm()`は引数が`Response`でない場合`WebAssembly.instantiate(module, imports)`を呼ぶ実装（`node_modules/@resvg/resvg-wasm/index.mjs`で確認）で、これはコンパイル済みモジュールのインスタンス化のみのため動的コード生成の禁止に抵触しない
 - **実測**: `wrangler deploy --dry-run --outdir=...`でビルド成功・Total Upload 6076.36 KiB / gzip 2096.70 KiB（約2.05MB）を確認済み（2026-09・resvg静的バンドル後）。Workers Freeプランのgzip 3MB上限に対し引き続き余裕がある（当初懸念していたサイズ超過は実測では発生しなかった）
+- **`ensureResvg()`はシングルフライトパターンで並行呼び出しに対応する（2026-09・Bug#36追記）**: `compositeMonthlyWallpaper()`がカレンダー版・署名版を`Promise.all()`で並行生成するため`ensureResvg()`も並行に呼ばれる。`@resvg/resvg-wasm`の`initWasm()`は2回目の呼び出しで`Already initialized`例外を投げる一度きりのAPIのため、`_resvgReady`真偽値フラグの早期returnだけでは競合を防げない（静的import化の1回目の修正デプロイ後に実機で発覚）。進行中の初期化`Promise`を共有し実際の`initWasm()`呼び出しを1回に限定する。WASMロード処理自体は`_loadResvg()`として切り出し、`ensureResvg(deps = {})`の`deps.loadResvgFn`で注入可能にすることで、このレースコンディション自体を`scripts/test-bot.mjs`でユニットテスト可能にしている
 - Satoriが描画するのはテキスト・図形のオーバーレイ（カレンダー格子・月名・年・署名）のみで透過PNGとして出力する。**AI生成した猫写真自体をSatoriの要素ツリーに埋め込まない**（SatoriのWorkers上での画像fetchは動作しないことが既知のため）。写真の切り抜き・リサイズ・最終合成（オーバーレイの`watermark()`貼り付け）は引き続きPhotonが担当する
 - カスタムフォント（Gloock・WorkSans、いずれもGoogle FontsのOFLライセンス）は`worker/assets/fonts/`にTTF形式でリポジトリ管理し、Satoriの`options.fonts`にArrayBufferとして渡す
 
@@ -1053,7 +1060,12 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 **実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。
 
-**実機検証の結果（2026-09・実施済み）**: デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を`X-Bypass-Token`ヘッダー付きで手動実行。Bluesky/Mastodonへの投稿自体は成功したが、`compositeMonthlyWallpaper()`が失敗し未加工画像にフォールバックしていた（`composited: false`）。`query-worker-logs.mjs`で実ログを確認し、上記「resvgのWASM」項に記載の`Wasm code generation disallowed by embedder`エラーを特定・修正済み（Bug#36）。修正後は再度同じ手順（`/monthly-wallpaper/regenerate`実行→Bluesky/Mastodon投稿の目視確認）で実機再検証が必要。
+**実機検証の結果（2026-09・2ラウンド実施済み・3ラウンド目待ち）**: デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を`X-Bypass-Token`ヘッダー付きで手動実行。
+
+- **1ラウンド目**: Bluesky/Mastodonへの投稿自体は成功したが、`compositeMonthlyWallpaper()`が失敗し未加工画像にフォールバックしていた（`composited: false`）。`query-worker-logs.mjs`で実ログを確認し、上記「resvgのWASM」項に記載の`Wasm code generation disallowed by embedder`エラーを特定・修正しデプロイ（Bug#36本体）
+- **2ラウンド目**: 修正後に再実行しても依然`composited: false`。再度`query-worker-logs.mjs`で確認したところ、今度は別のエラー`Already initialized. The initWasm() function can be used only once.`に変わっていた。上記「`ensureResvg()`はシングルフライトパターン」項に記載の並行呼び出し競合を特定・修正（Bug#36追記）。**この修正はPR #182として作成済みだが、本ドキュメント執筆時点で未マージ・未デプロイ**
+- **3ラウンド目（未実施）**: PR #182マージ・デプロイ後、再度`/monthly-wallpaper/regenerate`を実行し、`composited: true`になること・Bluesky/Mastodonの投稿画像でカレンダー格子・月名バッジ・祝日色分けが正しく表示されることの目視確認が必要
+- **投稿URLのDiscord通知記載（2026-09追加・PR #182に含む）**: 上記の実機検証を繰り返す過程で、投稿の成否確認・テスト投稿の手動削除のたびにログからURLを手動組み立てる手間が発生したため、`buildBlueskyPostUrl()`とMastodon Status APIの`url`フィールドを使い、Discord通知の成否行に投稿URLを直接記載するようにした（日次Bot・月替わり壁紙の両方に適用。詳細は「Discord通知」節の「投稿URLの記載」参照）
 
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
 
@@ -1065,7 +1077,7 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 4. Mastodon投稿: 既存`uploadMediaToMastodon()`を2回呼び、`postStatusToMastodon()`の`media_ids[]`に2件渡す
 5. 投稿文言: `buildMonthlyWallpaperPostText()`（Bluesky・日本語のみ、既存`buildPostText()`と同じ方針）・`buildMonthlyWallpaperMastodonText()`（Mastodon・英語優先の日英二言語、既存`buildMastodonText()`と同じ方針）。ハッシュタグ例: `#壁紙 #猫壁紙 #AIart #cat #にゃんバーサリー`（Bluesky）・`#wallpaper #cat #AIart #にゃんバーサリー`（Mastodon）
 6. Discord通知（`notifyDiscord()`流用・2通構成）: **成否ステータスは1通目のみに記載し、2通目では再掲しない**（日次Botと異なる点）。月次は頻度が低く「1通目が届かない」こと自体が異常のシグナルになるため、再掲の必要性が薄いと判断した
-   - 1通目: 成否ステータス＋テーマ＋Geminiプロンプト全文
+   - 1通目: 成否ステータス（投稿URL付き。日次Botと同じ`buildBlueskyPostUrl()`/Mastodon Status APIの`url`フィールドを使う）＋テーマ＋Geminiプロンプト全文
    - 2通目: Bluesky投稿テキスト＋Mastodon投稿テキスト（いずれもX/Instagram/Facebook/mixi2等への手動転載用）
 
 ### 手動再生成エンドポイント

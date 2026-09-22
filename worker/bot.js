@@ -91,6 +91,21 @@ export function buildThemeTag(theme) {
   return `#${normalized.slice(0, 30)}`;
 }
 
+/**
+ * BlueskyのAT URI（`at://{did}/app.bsky.feed.post/{rkey}`・`createPost()`戻り値の`uri`）から
+ * 投稿ページURL（`https://bsky.app/profile/{identifier}/post/{rkey}`）を組み立てる。
+ * didではなくハンドル（例: nyanmusu.bsky.social）を渡すことで人間に読みやすいURLになる。
+ * @param {string|null} uri - AT URI
+ * @param {string} identifier - env.BLUESKY_IDENTIFIER（ハンドル）
+ * @returns {string|null} 抽出できない場合はnull
+ */
+export function buildBlueskyPostUrl(uri, identifier) {
+  if (!uri) return null;
+  const rkey = uri.split("/").pop();
+  if (!rkey || rkey === uri) return null;
+  return `https://bsky.app/profile/${identifier}/post/${rkey}`;
+}
+
 // ---------------------------------------------------------------------------
 // CTA行（重み付き確率でランダム選択・「Bot感」低減のため2026-07追加）
 // ---------------------------------------------------------------------------
@@ -860,13 +875,14 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
 
     // ── 6. Discord通知（成否によらず常に送信） ──────────────────────────
     try {
+      const bskyPostUrl = bskyOk ? buildBlueskyPostUrl(bskyResult.value?.uri, env.BLUESKY_IDENTIFIER) : null;
       const bskyLine  = bskyOk
-        ? `✅ Bluesky投稿完了 ${dateStr}`
+        ? `✅ Bluesky投稿完了 ${dateStr}${bskyPostUrl ? ` ${bskyPostUrl}` : ""}`
         : `❌ Bluesky投稿失敗: ${bskyResult.reason?.message}`;
       const mastoLine = mastoSkipped
         ? "⏭️ Mastodon未設定・スキップ"
         : mastoOk
-          ? "✅ Mastodon投稿完了"
+          ? `✅ Mastodon投稿完了${mastoResult.value?.url ? ` ${mastoResult.value.url}` : ""}`
           : `❌ Mastodon投稿失敗: ${mastoResult.reason?.message}`;
 
       // Bug#32: research.kanjiCharはhandleResearch()経由ならnormalizeKanjiChar()で
@@ -1134,8 +1150,15 @@ export async function runMonthlyWallpaperPost(env, handleGenerate, ctx = null, d
 
     // ── 6. Discord通知（2通構成・成否ステータスは1通目のみ） ─────────────
     try {
-      const bskyLine  = bskyOk ? `✅ Bluesky投稿完了` : `❌ Bluesky投稿失敗: ${bskyResult.reason?.message}`;
-      const mastoLine = mastoSkipped ? "⏭️ Mastodon未設定・スキップ" : mastoOk ? "✅ Mastodon投稿完了" : `❌ Mastodon投稿失敗: ${mastoResult.reason?.message}`;
+      const bskyPostUrl = bskyOk ? buildBlueskyPostUrl(bskyResult.value?.uri, env.BLUESKY_IDENTIFIER) : null;
+      const bskyLine  = bskyOk
+        ? `✅ Bluesky投稿完了${bskyPostUrl ? ` ${bskyPostUrl}` : ""}`
+        : `❌ Bluesky投稿失敗: ${bskyResult.reason?.message}`;
+      const mastoLine = mastoSkipped
+        ? "⏭️ Mastodon未設定・スキップ"
+        : mastoOk
+          ? `✅ Mastodon投稿完了${mastoResult.value?.url ? ` ${mastoResult.value.url}` : ""}`
+          : `❌ Mastodon投稿失敗: ${mastoResult.reason?.message}`;
       const lines1 = [
         bskyLine, mastoLine,
         `📅 テーマ: ${theme}（${year}年${month}月）`,
