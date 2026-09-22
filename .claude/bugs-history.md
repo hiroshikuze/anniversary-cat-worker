@@ -386,4 +386,12 @@
 - **場所**: `worker/svg-render.js` `ensureResvg()`・`worker/image-utils.js` `compositeMonthlyWallpaper()`（`bucket`依存の除去）・`worker/bot.js` `runMonthlyWallpaperPost()`（`compositeMonthlyWallpaperFn`へ渡す`deps`から`bucket`除去）
 - **教訓**: 「WASMをバンドルせずランタイムで外部ストレージから取得してコンパイルする」という設計は、Cloudflare Workersでは**原理的に動作しない**（V8分離環境のセキュリティ制約）。WASMをWorkersで使う場合は常にビルド時のESM静的import（`import x from "*.wasm"`）でプリコンパイルする一択であり、バンドルサイズが懸念される場合でも「実行時fetch」は解決策にならない。この制約は`wrangler deploy --dry-run`では検知できない（ビルド自体は通り、実際のリクエスト処理時にのみ失敗するため）。新しい外部WASMライブラリを追加する際は、既存のPhoton実装パターン（静的import一択）を機械的に踏襲し、「サイズが気になるから実行時fetchにする」という設計を最初から選択肢から外す。CLAUDE.mdの「変えてはいけない設計判断」に一度記録した内容でも、実機検証前の設計判断は誤りうる（今回のように後で覆すこと自体は問題ないが、覆す際は必ずCLAUDE.mdの当該行も更新する）
 
+**追記（2026-09・同日中に発覚した第2の障害）**: 上記修正をデプロイし、ユーザーに再度`POST /monthly-wallpaper/regenerate`を実行してもらったところ、依然として`composited: false`のままだった。`query-worker-logs.mjs`で再確認したところ、今度は別のエラー`Already initialized. The `initWasm()` function can be used only once.`が出ていた。
+
+- **原因**: `compositeMonthlyWallpaper()`はカレンダー版・署名版の2つのオーバーレイを`Promise.all([applyOverlay(calendarElement), applyOverlay(signatureElement)])`で**並行**生成しており、それぞれが`renderElementToPng()`経由で`ensureResvg()`を呼ぶ。`ensureResvg()`は`if (_resvgReady) return;`という真偽値チェックだけで二重初期化を防いでいたが、これは非同期処理の競合に対して安全ではない（古典的なdouble-checked lockingの欠陥）。2つの並行呼び出しが両方とも`_resvgReady === false`を見てから初期化処理に入り、片方の`mod.initWasm()`が完了する前にもう片方も`initWasm()`を呼んでしまい、`@resvg/resvg-wasm`側の「一度きり」制約に抵触していた。この競合はR2実行時fetch版のコードにも同じ構造で存在していたが、最初のエラー（動的コード生成禁止）がその手前で毎回先に発生していたため露見していなかった
+- **気づいた経緯**: 1つ目の修正をデプロイ後、ユーザーに`POST /monthly-wallpaper/regenerate`の再実行を依頼したところ、応答は`composited: false`のまま変化なし。再度`query-worker-logs`ワークフローを手動発火し、実ログから新しいエラーメッセージを特定した
+- **修正**: `ensureResvg()`を進行中の初期化`Promise`を共有する「シングルフライト」パターンに変更し、並行呼び出しがあっても実際の初期化処理（`initWasm()`呼び出し）が1回に限定されるようにした（`_resvgInitPromise`変数を追加）。あわせて、WASMロード処理自体を`_loadResvg()`として切り出し`ensureResvg(deps = {})`が`deps.loadResvgFn`で注入可能にすることで、一度きりのロード関数を模した依存注入でこのレースコンディション自体を`scripts/test-bot.mjs`でユニットテスト可能にした（実際の`@resvg/resvg-wasm`のWASM読み込みはNode.jsテスト環境では動作しないため、Photonと同じく依存注入によるロジック検証にとどめている）
+- **場所**: `worker/svg-render.js` `ensureResvg()`・`_loadResvg()`
+- **教訓**: 「真偽値フラグ＋`if (flag) return;`」による非同期処理の重複実行防止は、**並行呼び出しに対しては安全ではない**（両方が古い値を読んでから処理に入る競合が起きる）。一度きりの初期化APIを扱う場合は、フラグではなく「進行中のPromiseを共有するシングルフライトパターン」を使う。今回は1つ目のバグ（動的コード生成禁止）の陰に隠れて2つ目のバグ（並行呼び出しの競合）が発覚しなかった。1つの修正で本番検証が通らなかった場合、「まだ同じ問題か」と決めつけず、修正後に改めて実ログを取得して**エラーメッセージ自体が変わっていないか**を必ず確認する（今回は`query-worker-logs`の再実行でメッセージが変わっていたことに気づき、別問題だと判断できた）
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）

@@ -31,7 +31,7 @@ import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale
 import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
-import { renderElementToPng, _setSatoriForTest, _setResvgForTest } from "../worker/svg-render.js";
+import { renderElementToPng, ensureResvg, _setSatoriForTest, _setResvgForTest } from "../worker/svg-render.js";
 
 let passed = 0;
 let failed = 0;
@@ -5322,6 +5322,27 @@ console.log("\n[renderElementToPng: Satori+resvgのモック経由呼び出し]"
     }
     assert("resvg初期化失敗時はエラーを投げる", threw);
     _setSatoriForTest(null);
+  }
+
+  {
+    // 2026-09実機バグ: compositeMonthlyWallpaper()がカレンダー版・署名版を
+    // Promise.all()で並行生成するため、ensureResvg()も並行に呼ばれる。
+    // 一度きりのロード関数（@resvg/resvg-wasmのinitWasm()を模擬）を2回呼んでしまうと
+    // 本番で"Already initialized"例外になっていた。シングルフライトで1回に限定されることを検証する
+    _setResvgForTest(null);
+    let loadCalls = 0;
+    const loadResvgFn = async () => {
+      loadCalls += 1;
+      if (loadCalls > 1) throw new Error("Already initialized. The `initWasm()` function can be used only once.");
+      await new Promise((resolve) => setTimeout(resolve, 10)); // 並行呼び出しが重なる時間を確保
+      return class MockResvg {};
+    };
+    await Promise.all([
+      ensureResvg({ loadResvgFn }),
+      ensureResvg({ loadResvgFn }),
+    ]);
+    assert("並行呼び出しでもロード関数は1回しか呼ばれない", loadCalls === 1);
+    _setResvgForTest(null);
   }
 }
 
