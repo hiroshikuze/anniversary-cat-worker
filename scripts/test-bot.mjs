@@ -5409,6 +5409,12 @@ console.log("\n[_buildCalendarOverlayElement / _buildSignatureOnlyElement: 構�
   const el = _buildCalendarOverlayElement(2026, 10, { width: 1080, height: 1920 });
   assert("ルート要素はdiv", el.type === "div");
   assert("badge・calendarPanel・signatureの3要素を持つ", el.props.children.length === 3);
+  // Bug#37: 月名バッジ（先頭の子要素）に月番号（例: 10月→"10"）が含まれていることを検証。
+  // el全体に対する文字列チェックだとカレンダー本体の日付セル（10月なら「10日」）と衝突して
+  // 誤検知するため、monthBadge要素（children[0]）だけを対象にする
+  const monthBadgeJson = JSON.stringify(el.props.children[0]);
+  assert("月名バッジに月番号を含む（10月→\"10\"）", monthBadgeJson.includes("\"10\""));
+  assert("月名バッジに英語月名を含む（10月→October）", monthBadgeJson.includes("October"));
   const sigOnly = _buildSignatureOnlyElement({ width: 1080, height: 1920 });
   assert("署名のみ要素もdivルート", sigOnly.type === "div");
   assert("署名テキストを含む", JSON.stringify(sigOnly).includes("nyanmusu"));
@@ -5417,11 +5423,14 @@ console.log("\n[_buildCalendarOverlayElement / _buildSignatureOnlyElement: 構�
 console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
 {
   const mockBytes = new Uint8Array([1, 2, 3]);
-  function makeMockPhotonImage(w = 2000, h = 1000) {
+  // Bug#37: get_raw_pixelsを追加（_detectCropBox()用）。デフォルトは全面白（255）を返し、
+  // _detectCropBox()がnullを返す＝再センタリング不要という既存挙動を変えない
+  function makeMockPhotonImage(w = 2000, h = 1000, pixels = null) {
     return {
       get_width: () => w,
       get_height: () => h,
       get_bytes: () => mockBytes,
+      get_raw_pixels: () => pixels ?? new Uint8Array(w * h * 4).fill(255),
       free: () => {},
     };
   }
@@ -5431,7 +5440,7 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
   const mockFns = {
     resize: () => makeMockPhotonImage(1920, 960),
     crop: () => makeMockPhotonImage(1080, 1920),
-    SamplingFilter: { Lanczos3: "Lanczos3" },
+    SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
     watermark: () => {},
   };
 
@@ -5460,6 +5469,103 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
   });
   assert("失敗時はcomposited=false", failResult.composited === false);
   assert("失敗時は元画像をそのまま返す", failResult.calendarImageData === "YmFzZTY0" && failResult.noCalendarImageData === "YmFzZTY0");
+}
+
+console.log("\n[compositeMonthlyWallpaper: Bug#37 カレンダーなし版の被写体センタリング]");
+{
+  const mockBytes = new Uint8Array([1, 2, 3]);
+  function makeMockPhotonImage(w = 2000, h = 1000, pixels = null) {
+    return {
+      get_width: () => w,
+      get_height: () => h,
+      get_bytes: () => mockBytes,
+      get_raw_pixels: () => pixels ?? new Uint8Array(w * h * 4).fill(255),
+      free: () => {},
+    };
+  }
+  const MockPhotonImage = { new_from_byteslice: () => makeMockPhotonImage() };
+
+  // 上半分が被写体（非白）・下半分が背景（白）のサンプル画像を模擬する
+  // （reserveCalendarSpaceで画像下部に余白を空けさせた状態を再現）
+  function makeBiasedPixels(w, h) {
+    const pixels = new Uint8Array(w * h * 4).fill(255);
+    for (let y = 0; y < h / 2; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        pixels[i] = pixels[i + 1] = pixels[i + 2] = 0; // 非白（被写体）
+      }
+    }
+    return pixels;
+  }
+
+  {
+    // 正常系: 被写体が上寄り（下半分が余白）の場合、検出領域の再クロップ・再フィットが走る
+    let cropCalls = 0;
+    const mockFns = {
+      resize: (img, w, h, filter) => filter === "Nearest"
+        ? makeMockPhotonImage(64, 114, makeBiasedPixels(64, 114))
+        : makeMockPhotonImage(1920, 960),
+      crop: () => { cropCalls++; return makeMockPhotonImage(1080, 1920); },
+      SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
+      watermark: () => {},
+    };
+    const result = await compositeMonthlyWallpaper("YmFzZTY0", 2026, 10, {
+      ensurePhotonFn: async () => {},
+      getPhotonImageFn: () => MockPhotonImage,
+      getPhotonFnsFn: () => mockFns,
+      renderElementToPngFn: async () => new Uint8Array([9, 9, 9]),
+      ensureFontsFn: async () => {},
+      getFontsFn: () => [],
+    });
+    assert("被写体検出時は合成成功", result.composited === true);
+    // 通常のcrop呼び出し（base 1回）に加え、検出領域の切り出し＋再フィットで追加のcrop呼び出しが発生する
+    assert("被写体が上寄りの場合、通常より多くcrop()が呼ばれる（再センタリング発火）", cropCalls > 1);
+  }
+
+  {
+    // 境界値: 被写体が既に中央付近（余白が小さい）場合は再センタリングしない
+    let cropCalls = 0;
+    const mockFns = {
+      resize: (img, w, h, filter) => filter === "Nearest"
+        ? makeMockPhotonImage(64, 114, null) // 全面白 → _detectCropBoxはnullを返す
+        : makeMockPhotonImage(1920, 960),
+      crop: () => { cropCalls++; return makeMockPhotonImage(1080, 1920); },
+      SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
+      watermark: () => {},
+    };
+    const result = await compositeMonthlyWallpaper("YmFzZTY0", 2026, 10, {
+      ensurePhotonFn: async () => {},
+      getPhotonImageFn: () => MockPhotonImage,
+      getPhotonFnsFn: () => mockFns,
+      renderElementToPngFn: async () => new Uint8Array([9, 9, 9]),
+      ensureFontsFn: async () => {},
+      getFontsFn: () => [],
+    });
+    assert("余白が小さい場合も合成成功", result.composited === true);
+    assert("余白が小さい場合はcrop()がベース分の1回のみ", cropCalls === 1);
+  }
+
+  {
+    // エラー系: 再センタリング処理自体が失敗してもカレンダーあり版の生成は成功する
+    const mockFns = {
+      resize: (img, w, h, filter) => {
+        if (filter === "Nearest") throw new Error("resize for detection failed");
+        return makeMockPhotonImage(1920, 960);
+      },
+      crop: () => makeMockPhotonImage(1080, 1920),
+      SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
+      watermark: () => {},
+    };
+    const result = await compositeMonthlyWallpaper("YmFzZTY0", 2026, 10, {
+      ensurePhotonFn: async () => {},
+      getPhotonImageFn: () => MockPhotonImage,
+      getPhotonFnsFn: () => mockFns,
+      renderElementToPngFn: async () => new Uint8Array([9, 9, 9]),
+      ensureFontsFn: async () => {},
+      getFontsFn: () => [],
+    });
+    assert("再センタリング処理が失敗しても全体は失敗しない", result.composited === true);
+  }
 }
 
 console.log("\n[isLastDayOfMonthJST: 正常系・境界値]");

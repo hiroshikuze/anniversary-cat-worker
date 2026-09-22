@@ -317,11 +317,13 @@ export function _buildCalendarOverlayElement(year, month, options = {}) {
     },
   };
 
+  // Bug#37: 元のバッジPNGデザイン案（「October」＋大きな「10」）のうち月番号がSatori書き換え時に
+  // 抜け落ちていた。大きな月番号（左）＋月名・年を縦積みにしたブロック（右）の横並びに修正する
   const monthBadge = {
     type: "div",
     props: {
       style: {
-        display: "flex", flexDirection: "column", position: "absolute",
+        display: "flex", flexDirection: "row", alignItems: "flex-end", position: "absolute",
         left: 40, top: 56, padding: "18px 26px", borderRadius: 20,
         backgroundColor: "rgba(255,255,255,0.82)",
       },
@@ -329,15 +331,30 @@ export function _buildCalendarOverlayElement(year, month, options = {}) {
         {
           type: "div",
           props: {
-            style: { display: "flex", fontFamily: "Gloock", fontSize: 40, color: COLOR_WEEKDAY },
-            children: MONTH_NAMES_EN[month - 1],
+            style: { display: "flex", fontFamily: "Gloock", fontSize: 72, color: COLOR_WEEKDAY },
+            children: String(month),
           },
         },
         {
           type: "div",
           props: {
-            style: { display: "flex", fontFamily: "WorkSans", fontWeight: 700, fontSize: 26, color: COLOR_WEEKDAY },
-            children: String(year),
+            style: { display: "flex", flexDirection: "column", marginLeft: 16 },
+            children: [
+              {
+                type: "div",
+                props: {
+                  style: { display: "flex", fontFamily: "Gloock", fontSize: 32, color: COLOR_WEEKDAY },
+                  children: MONTH_NAMES_EN[month - 1],
+                },
+              },
+              {
+                type: "div",
+                props: {
+                  style: { display: "flex", fontFamily: "WorkSans", fontWeight: 700, fontSize: 22, color: COLOR_WEEKDAY },
+                  children: String(year),
+                },
+              },
+            ],
           },
         },
       ],
@@ -389,22 +406,67 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     const bytes = base64ToBytes(imageData);
     const srcImg = PhotonImage.new_from_byteslice(bytes);
 
-    const srcW = srcImg.get_width();
-    const srcH = srcImg.get_height();
-    const scale = Math.max(width / srcW, height / srcH);
-    const scaledW = Math.round(srcW * scale);
-    const scaledH = Math.round(srcH * scale);
-    const scaledImg = resize(srcImg, scaledW, scaledH, SamplingFilter.Lanczos3);
-    const x1 = Math.round((scaledW - width) / 2);
-    const y1 = Math.round((scaledH - height) / 2);
-    const baseImg = crop(scaledImg, x1, y1, x1 + width, y1 + height);
+    // アスペクト比を保って拡大しはみ出た分を対称にクロップする（cover-fit）。
+    // Bug#37の再センタリングでも同じアルゴリズムを再利用するため関数化した
+    function coverCrop(img, w, h, targetW, targetH) {
+      const scale = Math.max(targetW / w, targetH / h);
+      const scaledW = Math.round(w * scale);
+      const scaledH = Math.round(h * scale);
+      const scaledImg = resize(img, scaledW, scaledH, SamplingFilter.Lanczos3);
+      const cx1 = Math.round((scaledW - targetW) / 2);
+      const cy1 = Math.round((scaledH - targetH) / 2);
+      const cropped = crop(scaledImg, cx1, cy1, cx1 + targetW, cy1 + targetH);
+      scaledImg.free();
+      return cropped;
+    }
 
+    const baseImg = coverCrop(srcImg, srcImg.get_width(), srcImg.get_height(), width, height);
     const baseBytes = baseImg.get_bytes();
 
-    async function applyOverlay(element) {
+    // Bug#37: カレンダーなし版限定の被写体センタリング。reserveCalendarSpaceのプロンプト指示で
+    // 画像下部に余白（実測30〜46%）を空けさせているため、カレンダーあり版はカレンダー帯で
+    // 覆えるがカレンダーなし版は覆うものがなく被写体が上寄りに見える。既存の_detectCropBox()
+    // （/generateの自動トリミングと同じロジック）を再利用し、検出した被写体領域を切り出してから
+    // 同じcoverCrop()で1080x1920へ再フィットする（ズームイン＋再センタリング）。
+    // 失敗してもカレンダーあり版の生成自体には影響させない（個別try/catch）
+    let noCalendarBaseBytes = baseBytes;
+    try {
+      const sampleW = 64;
+      const sampleH = Math.round(sampleW * height / width);
+      const small = resize(baseImg, sampleW, sampleH, SamplingFilter.Nearest);
+      try {
+        const pixels = small.get_raw_pixels();
+        // 実測で余白量が30〜46%とばらつくため、/generateの自動トリミング用デフォルト
+        // （maxMarginRatio=0.2）では過小評価してしまう
+        const box = _detectCropBox(pixels, sampleW, sampleH, { maxMarginRatio: 0.5 });
+        if (box) {
+          const bx1 = Math.round(box.x1 * width);
+          const by1 = Math.round(box.y1 * height);
+          const bx2 = Math.round(box.x2 * width);
+          const by2 = Math.round(box.y2 * height);
+          const contentImg = crop(baseImg, bx1, by1, bx2, by2);
+          try {
+            const recentered = coverCrop(contentImg, bx2 - bx1, by2 - by1, width, height);
+            try {
+              noCalendarBaseBytes = recentered.get_bytes();
+            } finally {
+              recentered.free();
+            }
+          } finally {
+            contentImg.free();
+          }
+        }
+      } finally {
+        small.free();
+      }
+    } catch (err) {
+      console.warn(`[monthly-wallpaper] カレンダーなし版の再センタリング失敗、通常クロップで継続: ${err.message}`);
+    }
+
+    async function applyOverlay(element, sourceBytes) {
       const overlayPng = await renderElementToPngFn(element, { width, height, fonts });
       const overlayImg = PhotonImage.new_from_byteslice(overlayPng);
-      const targetImg = PhotonImage.new_from_byteslice(baseBytes);
+      const targetImg = PhotonImage.new_from_byteslice(sourceBytes);
       try {
         watermark(targetImg, overlayImg, 0n, 0n);
         return uint8ArrayToBase64(targetImg.get_bytes());
@@ -418,12 +480,11 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     const signatureElement = _buildSignatureOnlyElement({ width, height });
 
     const [calendarImageData, noCalendarImageData] = await Promise.all([
-      applyOverlay(calendarElement),
-      applyOverlay(signatureElement),
+      applyOverlay(calendarElement, baseBytes),
+      applyOverlay(signatureElement, noCalendarBaseBytes),
     ]);
 
     srcImg.free();
-    scaledImg.free();
     baseImg.free();
 
     return { calendarImageData, noCalendarImageData, mimeType: "image/png", composited: true };

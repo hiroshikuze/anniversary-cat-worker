@@ -1046,16 +1046,28 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 **関数設計**:
 
-- `_buildCalendarOverlayElement(year, month, options)`（`worker/image-utils.js`・純粋関数）: 指定年月のカレンダー格子（曜日見出し・日付数字・日曜/祝日=赤・土曜=青・`@holiday-jp/holiday_jp`で祝日判定）＋左上の月名・年バッジ＋左下の「© nyanmusu」署名を含むSatori要素ツリー（JSX形状のプレーンオブジェクト）を返す。`options`にキャンバスサイズ・フォント名を渡す
+- `_buildCalendarOverlayElement(year, month, options)`（`worker/image-utils.js`・純粋関数）: 指定年月のカレンダー格子（曜日見出し・日付数字・日曜/祝日=赤・土曜=青・`@holiday-jp/holiday_jp`で祝日判定）＋左上の月名・年バッジ（月番号を大きく＋月名・年を並べて表示。詳細は下記「月名バッジの構成」参照）＋左下の「© nyanmusu」署名を含むSatori要素ツリー（JSX形状のプレーンオブジェクト）を返す。`options`にキャンバスサイズ・フォント名を渡す
 - `_buildSignatureOnlyElement(options)`（同ファイル・純粋関数）: 「© nyanmusu」署名のみのSatori要素ツリーを返す（「カレンダーなし」版用）
 - `compositeMonthlyWallpaper(imageData, year, month, deps = {})`（`worker/image-utils.js`）: `autoCropImage()`と同じ「依存関数を引数で受け取る」テストパターンを踏襲
+
+**月名バッジの構成（2026-09修正）**: 当初の実装は`monthBadge`が月名（`October`）と年（`2026`）のみを描画しており、事前生成バッジPNG時代の元デザイン（「October」＋大きな「10」の月番号を並べる構成）にあった月番号が抜け落ちていた。実機投稿で発覚（ユーザー指摘）し修正した。現在は`monthBadge`を横並び（`flexDirection: "row"`）にし、大きな月番号（`String(month)`・Gloock・大サイズ）を左に、月名＋年を縦積みにしたブロックを右に配置する。
+
+**カレンダーなし版の被写体センタリング（2026-09追加・実機投稿で発覚）**: 当初の実装はカレンダーあり版・なし版とも同一のcover-crop画像を共有していた。`reserveCalendarSpace`のプロンプト指示で画像下部に余白（実測30〜46%）を空けさせているため、カレンダーあり版はカレンダー帯でその余白を覆えるが、カレンダーなし版は覆うものがなく被写体が上寄りに見え、下に不自然な空白が残っていた（ユーザー指摘）。
+
+修正は既存の`_detectCropBox()`（`/generate`の自動トリミング機能・`autoCropImage()`と共通のWASM非依存ロジック）を再利用する。
+
+1. `coverCrop(img, w, h, targetW, targetH)`（`compositeMonthlyWallpaper()`内のローカルヘルパー、元々インラインだった cover-fit（アスペクト比を保って拡大しはみ出た分を対称にクロップする）計算を関数化）で通常のカレンダーあり版の1080×1920ベース画像（`baseImg`/`baseBytes`）を作る
+2. `baseImg`を64px幅（アスペクト比維持）にダウンサンプルし`_detectCropBox()`で被写体のバウンディングボックスを検出。`maxMarginRatio`は`/generate`用デフォルトの`0.2`ではなく`0.5`を指定する（実測30〜46%の余白量を正しく検出するため。デフォルトのままだと過小評価する）
+3. 検出できた場合、そのボックスで`baseImg`をクロップして被写体領域のみを取り出し、同じ`coverCrop()`で再度1080×1920へフィットし直す（ズームイン＋再センタリング。単純な平行移動ではなく拡大を伴うため、上下に余白が残っていた場合のみ確実に解消できる）
+4. 検出できなかった場合（既に余白が小さい）は`baseImg`をそのまま使う（安全策・`autoCropImage()`と同じ設計方針）
+5. この再センタリング処理全体を個別の`try/catch`で囲み、失敗時は`baseImg`にフォールバックする（カレンダーあり版の生成自体には影響させない。`compositeMonthlyWallpaper()`全体の外側`try/catch`とは別のより狭いフォールバック）
 
 **合成処理の流れ**:
 
 1. 生成画像を1080×1920（スマホ壁紙・フルHD縦）へcover-cropでリサイズ（Photon）
 2. `_buildCalendarOverlayElement()`でカレンダー版の要素ツリーを組み立て、`renderElementToPng()`（`worker/svg-render.js`）でオーバーレイPNGを生成
 3. オーバーレイPNGをPhotonの`watermark()`で生成画像に貼り付ける（カレンダー版）
-4. 「カレンダーなし」版も同時に生成する: 同じcover-crop画像に`_buildSignatureOnlyElement()`のオーバーレイ（署名のみ）を貼ったもの（full-bleed、カレンダー帯・月名バッジなし）
+4. 「カレンダーなし」版も同時に生成する: 上記「カレンダーなし版の被写体センタリング」で得た画像に`_buildSignatureOnlyElement()`のオーバーレイ（署名のみ）を貼ったもの（full-bleed、カレンダー帯・月名バッジなし）
 5. 失敗時（Photon/Satori/resvg読み込み失敗等）は既存`autoCropImage()`と同様、未加工画像にフォールバックし処理全体は失敗させない
 
 **実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。
@@ -1064,7 +1076,8 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 - **1ラウンド目**: Bluesky/Mastodonへの投稿自体は成功したが、`compositeMonthlyWallpaper()`が失敗し未加工画像にフォールバックしていた（`composited: false`）。`query-worker-logs.mjs`で実ログを確認し、上記「resvgのWASM」項に記載の`Wasm code generation disallowed by embedder`エラーを特定・修正しデプロイ（Bug#36本体）
 - **2ラウンド目**: 修正後に再実行しても依然`composited: false`。再度`query-worker-logs.mjs`で確認したところ、今度は別のエラー`Already initialized. The initWasm() function can be used only once.`に変わっていた。上記「`ensureResvg()`はシングルフライトパターン」項に記載の並行呼び出し競合を特定・修正（Bug#36追記）。**この修正はPR #182として作成済みだが、本ドキュメント執筆時点で未マージ・未デプロイ**
-- **3ラウンド目（未実施）**: PR #182マージ・デプロイ後、再度`/monthly-wallpaper/regenerate`を実行し、`composited: true`になること・Bluesky/Mastodonの投稿画像でカレンダー格子・月名バッジ・祝日色分けが正しく表示されることの目視確認が必要
+- **3ラウンド目**: PR #182マージ・デプロイ後に`composited: true`を確認（resvg関連の障害は解消）。ただしBluesky投稿の目視確認で新たに2件の見た目の問題が判明: (1) 月名バッジに月番号「10」が表示されていない、(2) カレンダーなし版で被写体が上寄りになり下に不自然な余白が残る。いずれも上記「月名バッジの構成」「カレンダーなし版の被写体センタリング」で修正済み
+- **4ラウンド目（未実施）**: 上記2件の修正をデプロイ後、再度`/monthly-wallpaper/regenerate`を実行し、月番号の表示・カレンダーなし版の被写体センタリングを目視確認する必要がある
 - **投稿URLのDiscord通知記載（2026-09追加・PR #182に含む）**: 上記の実機検証を繰り返す過程で、投稿の成否確認・テスト投稿の手動削除のたびにログからURLを手動組み立てる手間が発生したため、`buildBlueskyPostUrl()`とMastodon Status APIの`url`フィールドを使い、Discord通知の成否行に投稿URLを直接記載するようにした（日次Bot・月替わり壁紙の両方に適用。詳細は「Discord通知」節の「投稿URLの記載」参照）
 
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
