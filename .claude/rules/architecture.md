@@ -1125,11 +1125,20 @@ resvgのラスタライズコスト・Photonのデコード/エンコードコ�
 
 **実装**:
 
-- `_buildCalendarOverlayElement(year, month, options)`・`_buildSignatureOnlyElement(options)`内の固定px値（フォントサイズ・パディング・角丸・マージン等）を、基準幅1080に対する`width`の比率（`scale = width / 1080`）でスケールするよう変更した。`width=1080`指定時（デフォルト）は`scale=1`となり従来と完全に同じ値になるため、既存の呼び出し・テストへの後方互換を保っている
+- `_buildCalendarOverlayElement(year, month, options)`・`_buildSignatureOnlyElement(options)`内の固定px値（フォントサイズ・パディング・角丸・マージン等）を、基準幅1080に対する`width`の比率（`scale = width / 1080`）でスケールするよう変更した。`width=1080`指定時は`scale=1`となり従来と完全に同じ値になるため、既存の呼び出し・テストへの後方互換を保っている
 - `compositeMonthlyWallpaper(imageData, year, month, deps = {})`は、`renderWidth = Math.round(width * RENDER_SCALE)`・`renderHeight = Math.round(height * RENDER_SCALE)`を算出し、ベースクロップ・再センタリング判定・`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`の呼び出し・Satori/resvg描画・Photon合成のすべてを`renderWidth`/`renderHeight`基準で行う。カレンダーあり版・なし版それぞれの合成が完了した最後の1ステップとして、Photonの`resize(img, width, height, SamplingFilter.Lanczos3)`で目標解像度へ拡大してから`get_bytes()`/base64エンコードする
 - 診断用の`console.log`（`[monthly-wallpaper-composite]`プレフィックス）に拡大ステップの完了ログを追加する
 
-**未検証（2026-09時点）**: CPU予算削減の実効性・実際のカレンダー文字の見た目（Satori/resvgでの実描画）はいずれもローカルで検証できない（`performance.now()`が同期WASM処理では進まない制約のため）。デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を複数回実行し、`error 1102`の再現率低下とカレンダー文字の可読性を実機で確認する。
+**実機再検証（2026-09・撤回）**: デプロイ後にユーザーが`POST /monthly-wallpaper/regenerate`を3回実行したところ**3回とも`error 1102`**という結果になった。`query-worker-logs.mjs`でログを相関させると、(1) カレンダー版オーバーレイ描画（Satori/resvg＋Lanczos3拡大）は完走したがその直後で失敗、(2) 合成・R2保存まで完全に成功（`composited=true`）したにもかかわらずその後（Bluesky/Mastodon投稿またはDiscord通知の段階と推測）で失敗、(3) 合成開始直後に失敗、という3パターンが混在していた。このプロジェクトの過去の記録（Bug#37: 「追加のLanczos3リサイズを1回上乗せしただけでCPU予算を超過させた」）に照らすと、**今回追加したカレンダーあり版・なし版それぞれ1回ずつ計2回のLanczos3拡大呼び出しが、縮小解像度化で浮いた分を相殺・悪化させた可能性が高い**と判断し、この最終拡大ステップ自体を撤回した（詳細は下記「最終拡大の撤回」参照）。
+
+### 最終拡大の撤回・540×960のまま配信（2026-09追加）
+
+上記の実機再検証結果を受け、**Lanczos3による目標解像度（1080×1920）への最終拡大処理を撤去し、縮小解像度（540×960）のまま2版を返す**方式に変更した。
+
+- `compositeMonthlyWallpaper()`の`width`/`height`デフォルト値を`1080`/`1920`から`540`/`960`へ変更し、`renderWidth`/`renderHeight`・`RENDER_SCALE`・`upscaleToTarget()`は廃止して、ベースクロップから合成・エンコードまで単一の`width`/`height`基準で行う（PR #186時点の実装に戻す形だが、目標解像度の値だけが540×960に変わっている）
+- `_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`のフォントサイズ等のスケーリング機構（`elementScale = width / 1080`）は維持する（`width=540`指定時に自動的に半分のフォントサイズになるため、追加のスケーリング計算は不要）
+- **画質とのトレードオフ**: 540×960はフルHD（1080×1920）の1/4の画素数であり、高精細ディスプレイでは壁紙としてのシャープさが劣る。ただし「文字が読めないほどではないがフル解像度よりは粗い」という許容範囲と判断し、確実にCPU予算内へ収める方を優先した。将来Workers Paidプラン（CPU上限引き上げ）へ移行する場合は、`width`/`height`のデフォルトを1080/1920へ戻すだけで元の解像度に復帰できる
+- **未検証（2026-09時点）**: この変更もCPU予算削減の実効性はローカルで検証できない。デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を複数回実行し、`error 1102`の再現率が実際に下がったかを確認する。下がらない場合は「Satori/resvg描画コスト自体」または「投稿・通知フェーズの累積コスト」が主因と判断し、Workers Paidプランへの移行等、別の対策を検討する
 
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
 
