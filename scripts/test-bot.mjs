@@ -5483,7 +5483,11 @@ console.log("\n[compositeMonthlyWallpaper: Bug#37 カレンダーなし版の被
       free: () => {},
     };
   }
-  const MockPhotonImage = { new_from_byteslice: () => makeMockPhotonImage() };
+  // Bug#37追記: ズームイン方式（追加のLanczos3リサイズ）が本番でCPU予算超過（error 1102）を
+  // 招いたため、リサイズなしの「scaledImg内でのシフトのみ」方式に変更した。テスト用の元画像は
+  // 幅1080×高さ2400（cover-fit後にscaledH=2400・height=1920で480pxの垂直方向の余剰スラックが
+  // 生まれる）にし、シフトが実際に発生しうる状態を再現する
+  const MockPhotonImage = { new_from_byteslice: () => makeMockPhotonImage(1080, 2400) };
 
   // 上半分が被写体（非白）・下半分が背景（白）のサンプル画像を模擬する
   // （reserveCalendarSpaceで画像下部に余白を空けさせた状態を再現）
@@ -5499,12 +5503,13 @@ console.log("\n[compositeMonthlyWallpaper: Bug#37 カレンダーなし版の被
   }
 
   {
-    // 正常系: 被写体が上寄り（下半分が余白）の場合、検出領域の再クロップ・再フィットが走る
+    // 正常系: 被写体が上寄り（下半分が余白）の場合、scaledImgから窓をずらす追加crop()が走る
+    // （resize()は追加で呼ばれない＝CPU負荷を増やさないことも暗に検証）
     let cropCalls = 0;
     const mockFns = {
       resize: (img, w, h, filter) => filter === "Nearest"
         ? makeMockPhotonImage(64, 114, makeBiasedPixels(64, 114))
-        : makeMockPhotonImage(1920, 960),
+        : makeMockPhotonImage(1080, 2400),
       crop: () => { cropCalls++; return makeMockPhotonImage(1080, 1920); },
       SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
       watermark: () => {},
@@ -5518,7 +5523,7 @@ console.log("\n[compositeMonthlyWallpaper: Bug#37 カレンダーなし版の被
       getFontsFn: () => [],
     });
     assert("被写体検出時は合成成功", result.composited === true);
-    // 通常のcrop呼び出し（base 1回）に加え、検出領域の切り出し＋再フィットで追加のcrop呼び出しが発生する
+    // 通常のcrop呼び出し（base 1回）に加え、シフト後の窓を切り出す追加のcrop呼び出しが発生する
     assert("被写体が上寄りの場合、通常より多くcrop()が呼ばれる（再センタリング発火）", cropCalls > 1);
   }
 
@@ -5528,7 +5533,7 @@ console.log("\n[compositeMonthlyWallpaper: Bug#37 カレンダーなし版の被
     const mockFns = {
       resize: (img, w, h, filter) => filter === "Nearest"
         ? makeMockPhotonImage(64, 114, null) // 全面白 → _detectCropBoxはnullを返す
-        : makeMockPhotonImage(1920, 960),
+        : makeMockPhotonImage(1080, 2400),
       crop: () => { cropCalls++; return makeMockPhotonImage(1080, 1920); },
       SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
       watermark: () => {},

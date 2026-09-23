@@ -406,29 +406,28 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     const bytes = base64ToBytes(imageData);
     const srcImg = PhotonImage.new_from_byteslice(bytes);
 
-    // アスペクト比を保って拡大しはみ出た分を対称にクロップする（cover-fit）。
-    // Bug#37の再センタリングでも同じアルゴリズムを再利用するため関数化した
-    function coverCrop(img, w, h, targetW, targetH) {
-      const scale = Math.max(targetW / w, targetH / h);
-      const scaledW = Math.round(w * scale);
-      const scaledH = Math.round(h * scale);
-      const scaledImg = resize(img, scaledW, scaledH, SamplingFilter.Lanczos3);
-      const cx1 = Math.round((scaledW - targetW) / 2);
-      const cy1 = Math.round((scaledH - targetH) / 2);
-      const cropped = crop(scaledImg, cx1, cy1, cx1 + targetW, cy1 + targetH);
-      scaledImg.free();
-      return cropped;
-    }
-
-    const baseImg = coverCrop(srcImg, srcImg.get_width(), srcImg.get_height(), width, height);
+    const srcW = srcImg.get_width();
+    const srcH = srcImg.get_height();
+    const scale = Math.max(width / srcW, height / srcH);
+    const scaledW = Math.round(srcW * scale);
+    const scaledH = Math.round(srcH * scale);
+    const scaledImg = resize(srcImg, scaledW, scaledH, SamplingFilter.Lanczos3);
+    const x1 = Math.round((scaledW - width) / 2);
+    const y1 = Math.round((scaledH - height) / 2);
+    const baseImg = crop(scaledImg, x1, y1, x1 + width, y1 + height);
     const baseBytes = baseImg.get_bytes();
 
     // Bug#37: カレンダーなし版限定の被写体センタリング。reserveCalendarSpaceのプロンプト指示で
     // 画像下部に余白（実測30〜46%）を空けさせているため、カレンダーあり版はカレンダー帯で
     // 覆えるがカレンダーなし版は覆うものがなく被写体が上寄りに見える。既存の_detectCropBox()
-    // （/generateの自動トリミングと同じロジック）を再利用し、検出した被写体領域を切り出してから
-    // 同じcoverCrop()で1080x1920へ再フィットする（ズームイン＋再センタリング）。
-    // 失敗してもカレンダーあり版の生成自体には影響させない（個別try/catch）
+    // （/generateの自動トリミングと同じロジック）を再利用し、被写体の垂直中心を検出する。
+    //
+    // 当初は検出領域を切り出してcover-fitで1080x1920へズームイン再フィットする方式だったが、
+    // Satori×2＋resvg×2＋Photon合成×2という既に重い処理に追加のLanczos3リサイズを丸ごと
+    // 1回上乗せしたことで、本番でCloudflare Workersのerror 1102（CPU/メモリ上限超過による
+    // 強制終了）を引き起こした（Bug#37追記）。resize()を一切追加しない「scaledImg内で
+    // クロップ窓をずらすだけ」の軽量な方式に変更した。scaledImgに十分な垂直方向の余剰が
+    // ない場合は効果が限定的というトレードオフがあるが、CPU予算超過による全体失敗より安全
     let noCalendarBaseBytes = baseBytes;
     try {
       const sampleW = 64;
@@ -440,20 +439,16 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
         // （maxMarginRatio=0.2）では過小評価してしまう
         const box = _detectCropBox(pixels, sampleW, sampleH, { maxMarginRatio: 0.5 });
         if (box) {
-          const bx1 = Math.round(box.x1 * width);
-          const by1 = Math.round(box.y1 * height);
-          const bx2 = Math.round(box.x2 * width);
-          const by2 = Math.round(box.y2 * height);
-          const contentImg = crop(baseImg, bx1, by1, bx2, by2);
-          try {
-            const recentered = coverCrop(contentImg, bx2 - bx1, by2 - by1, width, height);
+          const contentCenterY = (box.y1 + box.y2) / 2;
+          const shiftPx = Math.round((contentCenterY - 0.5) * height);
+          const newY1 = Math.max(0, Math.min(scaledH - height, y1 + shiftPx));
+          if (Math.abs(newY1 - y1) >= 4) {
+            const recropped = crop(scaledImg, x1, newY1, x1 + width, newY1 + height);
             try {
-              noCalendarBaseBytes = recentered.get_bytes();
+              noCalendarBaseBytes = recropped.get_bytes();
             } finally {
-              recentered.free();
+              recropped.free();
             }
-          } finally {
-            contentImg.free();
           }
         }
       } finally {
@@ -485,6 +480,7 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     ]);
 
     srcImg.free();
+    scaledImg.free();
     baseImg.free();
 
     return { calendarImageData, noCalendarImageData, mimeType: "image/png", composited: true };
