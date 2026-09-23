@@ -1138,7 +1138,7 @@ resvgのラスタライズコスト・Photonのデコード/エンコードコ�
 - `compositeMonthlyWallpaper()`の`width`/`height`デフォルト値を`1080`/`1920`から`540`/`960`へ変更し、`renderWidth`/`renderHeight`・`RENDER_SCALE`・`upscaleToTarget()`は廃止して、ベースクロップから合成・エンコードまで単一の`width`/`height`基準で行う（PR #186時点の実装に戻す形だが、目標解像度の値だけが540×960に変わっている）
 - `_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`のフォントサイズ等のスケーリング機構（`elementScale = width / 1080`）は維持する（`width=540`指定時に自動的に半分のフォントサイズになるため、追加のスケーリング計算は不要）
 - **画質とのトレードオフ**: 540×960はフルHD（1080×1920）の1/4の画素数であり、高精細ディスプレイでは壁紙としてのシャープさが劣る。ただし「文字が読めないほどではないがフル解像度よりは粗い」という許容範囲と判断し、確実にCPU予算内へ収める方を優先した。将来Workers Paidプラン（CPU上限引き上げ）へ移行する場合は、`width`/`height`のデフォルトを1080/1920へ戻すだけで元の解像度に復帰できる
-- **未検証（2026-09時点）**: この変更もCPU予算削減の実効性はローカルで検証できない。デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を複数回実行し、`error 1102`の再現率が実際に下がったかを確認する。下がらない場合は「Satori/resvg描画コスト自体」または「投稿・通知フェーズの累積コスト」が主因と判断し、Workers Paidプランへの移行等、別の対策を検討する
+- **実機再検証の結果（2026-09・解消確認）**: デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を3回実行し、**3回とも成功**（`error 1102`の再現なし）を確認した。低解像度合成パイプライン自体（540×960・拡大処理なし）に絞ったことで、error 1102は解消したと判断する。Satori/resvgの処理コストがピクセル数に強く依存するという仮説（Bug#37の記録）、および「追加のLanczos3リサイズが逆効果になる」という過去の教訓が、今回もそのまま当てはまる結果となった
 
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
 
