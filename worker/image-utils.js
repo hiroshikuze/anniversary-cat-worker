@@ -206,6 +206,12 @@ const SIGNATURE_GAP_ABOVE_CALENDAR = 32; // カレンダー帯の下端と署名
 // 比率化したもの。calendarPanel/署名のCALENDAR_MARGIN_RATIO/SAFE_AREA_RATIOとは意図的に一致しない
 const MONTH_BADGE_LEFT_RATIO = 160 / 1080;
 const MONTH_BADGE_TOP_RATIO = 260 / 1920;
+// 2026-09追記（error 1102の追加対策）: _buildCalendarOverlayElement()/_buildSignatureOnlyElement()内の
+// フォントサイズ等の固定px値は、この基準幅に対するwidthの比率でスケールする（詳細は下記参照）
+const REFERENCE_CANVAS_WIDTH = 1080;
+// compositeMonthlyWallpaper()の合成解像度（目標解像度に対する比率）。resvg/Photonの処理コストは
+// ピクセル数にほぼ比例するため、縮小解像度で合成してから最後にLanczos3で拡大しCPU負荷を下げる
+const RENDER_SCALE = 0.5;
 
 /** 指定年月の日数（純粋関数） */
 export function _daysInMonth(year, month) {
@@ -250,6 +256,7 @@ export function _buildCalendarWeeks(year, month) {
 /** 「© nyanmusu」署名のみのSatori要素ツリーを返す（カレンダーなし版用・純粋関数） */
 export function _buildSignatureOnlyElement(options = {}) {
   const { width = 1080, height = 1920 } = options;
+  const elementScale = width / REFERENCE_CANVAS_WIDTH;
   const left = Math.round(width * CALENDAR_MARGIN_RATIO);
   const bottom = Math.round(height * SAFE_AREA_RATIO);
   return {
@@ -263,7 +270,7 @@ export function _buildSignatureOnlyElement(options = {}) {
         props: {
           style: {
             display: "flex", position: "absolute", left, bottom,
-            color: "#ffffff", fontFamily: "WorkSans", fontSize: 26,
+            color: "#ffffff", fontFamily: "WorkSans", fontSize: Math.round(26 * elementScale),
           },
           children: SIGNATURE_TEXT,
         },
@@ -280,6 +287,8 @@ export function _buildSignatureOnlyElement(options = {}) {
  */
 export function _buildCalendarOverlayElement(year, month, options = {}) {
   const { width = 1080, height = 1920 } = options;
+  const elementScale = width / REFERENCE_CANVAS_WIDTH;
+  const px = (n) => Math.round(n * elementScale);
   const weeks = _buildCalendarWeeks(year, month);
 
   const headerRow = {
@@ -291,7 +300,7 @@ export function _buildCalendarOverlayElement(year, month, options = {}) {
         props: {
           style: {
             display: "flex", flex: 1, justifyContent: "center",
-            fontFamily: "WorkSans", fontSize: 22, fontWeight: 700,
+            fontFamily: "WorkSans", fontSize: px(22), fontWeight: 700,
             color: idx === 0 ? COLOR_SUNDAY_HOLIDAY : idx === 6 ? COLOR_SATURDAY : COLOR_WEEKDAY,
           },
           children: label,
@@ -303,13 +312,13 @@ export function _buildCalendarOverlayElement(year, month, options = {}) {
   const weekRows = weeks.map((week) => ({
     type: "div",
     props: {
-      style: { display: "flex", flexDirection: "row", width: "100%", marginTop: 10 },
+      style: { display: "flex", flexDirection: "row", width: "100%", marginTop: px(10) },
       children: week.map((day, idx) => ({
         type: "div",
         props: {
           style: {
             display: "flex", flex: 1, justifyContent: "center",
-            fontFamily: "WorkSans", fontSize: 30,
+            fontFamily: "WorkSans", fontSize: px(30),
             color: day === null ? "transparent" : _dayColor(year, month, day, idx),
           },
           children: day === null ? "" : String(day),
@@ -327,7 +336,7 @@ export function _buildCalendarOverlayElement(year, month, options = {}) {
       style: {
         display: "flex", flexDirection: "column", position: "absolute",
         left: calMargin, right: calMargin, bottom: safeBottom + SIGNATURE_GAP_ABOVE_CALENDAR,
-        padding: 28, borderRadius: 24,
+        padding: px(28), borderRadius: px(24),
         backgroundColor: "rgba(255,255,255,0.82)",
       },
       children: [headerRow, ...weekRows],
@@ -344,33 +353,33 @@ export function _buildCalendarOverlayElement(year, month, options = {}) {
     props: {
       style: {
         display: "flex", flexDirection: "row", alignItems: "flex-end", position: "absolute",
-        left: badgeLeft, top: badgeTop, padding: "18px 26px", borderRadius: 20,
+        left: badgeLeft, top: badgeTop, padding: `${px(18)}px ${px(26)}px`, borderRadius: px(20),
         backgroundColor: "rgba(255,255,255,0.82)",
       },
       children: [
         {
           type: "div",
           props: {
-            style: { display: "flex", fontFamily: "Gloock", fontSize: 72, color: COLOR_WEEKDAY },
+            style: { display: "flex", fontFamily: "Gloock", fontSize: px(72), color: COLOR_WEEKDAY },
             children: String(month),
           },
         },
         {
           type: "div",
           props: {
-            style: { display: "flex", flexDirection: "column", marginLeft: 16 },
+            style: { display: "flex", flexDirection: "column", marginLeft: px(16) },
             children: [
               {
                 type: "div",
                 props: {
-                  style: { display: "flex", fontFamily: "Gloock", fontSize: 32, color: COLOR_WEEKDAY },
+                  style: { display: "flex", fontFamily: "Gloock", fontSize: px(32), color: COLOR_WEEKDAY },
                   children: MONTH_NAMES_EN[month - 1],
                 },
               },
               {
                 type: "div",
                 props: {
-                  style: { display: "flex", fontFamily: "WorkSans", fontWeight: 700, fontSize: 22, color: COLOR_WEEKDAY },
+                  style: { display: "flex", fontFamily: "WorkSans", fontWeight: 700, fontSize: px(22), color: COLOR_WEEKDAY },
                   children: String(year),
                 },
               },
@@ -413,6 +422,7 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     getFontsFn,
     width               = 1080,
     height              = 1920,
+    renderScale         = RENDER_SCALE,
   } = deps;
 
   // Bug#37追記: error 1102（CPU/メモリ上限超過による強制終了）発生時、JS例外を伴わないため
@@ -428,20 +438,28 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     if (ensureFontsFn) await ensureFontsFn();
     const fonts = getFontsFn ? getFontsFn() : [];
 
+    // 2026-09追記（error 1102の追加対策）: resvg/Photonの処理コストはピクセル数にほぼ比例するため、
+    // ベースクロップ・再センタリング・Satori/resvg描画・Photon合成のすべてを縮小解像度
+    // (renderWidth/renderHeight)で行い、最後にLanczos3で目標解像度へ拡大する。
+    // fal.ai等のAI超解像は使わない（カレンダー文字がぼやける・歪むリスクがあるため）。
+    // 詳細は.claude/rules/architecture.mdの「低解像度合成＋Photon Lanczos3での最終拡大」参照
+    const renderWidth = Math.round(width * renderScale);
+    const renderHeight = Math.round(height * renderScale);
+
     const bytes = base64ToBytes(imageData);
     const srcImg = PhotonImage.new_from_byteslice(bytes);
 
     const srcW = srcImg.get_width();
     const srcH = srcImg.get_height();
-    const scale = Math.max(width / srcW, height / srcH);
+    const scale = Math.max(renderWidth / srcW, renderHeight / srcH);
     const scaledW = Math.round(srcW * scale);
     const scaledH = Math.round(srcH * scale);
     const scaledImg = resize(srcImg, scaledW, scaledH, SamplingFilter.Lanczos3);
-    const x1 = Math.round((scaledW - width) / 2);
-    const y1 = Math.round((scaledH - height) / 2);
-    const baseImg = crop(scaledImg, x1, y1, x1 + width, y1 + height);
+    const x1 = Math.round((scaledW - renderWidth) / 2);
+    const y1 = Math.round((scaledH - renderHeight) / 2);
+    const baseImg = crop(scaledImg, x1, y1, x1 + renderWidth, y1 + renderHeight);
     const baseBytes = baseImg.get_bytes();
-    console.log("[monthly-wallpaper-composite] ベースクロップ完了");
+    console.log("[monthly-wallpaper-composite] ベースクロップ完了（縮小解像度）");
 
     // Bug#37: カレンダーなし版限定の被写体センタリング。reserveCalendarSpaceのプロンプト指示で
     // 画像下部に余白（実測30〜46%）を空けさせているため、カレンダーあり版はカレンダー帯で
@@ -457,7 +475,7 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     let noCalendarBaseBytes = baseBytes;
     try {
       const sampleW = 64;
-      const sampleH = Math.round(sampleW * height / width);
+      const sampleH = Math.round(sampleW * renderHeight / renderWidth);
       const small = resize(baseImg, sampleW, sampleH, SamplingFilter.Nearest);
       try {
         const pixels = small.get_raw_pixels();
@@ -466,10 +484,10 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
         const box = _detectCropBox(pixels, sampleW, sampleH, { maxMarginRatio: 0.5 });
         if (box) {
           const contentCenterY = (box.y1 + box.y2) / 2;
-          const shiftPx = Math.round((contentCenterY - 0.5) * height);
-          const newY1 = Math.max(0, Math.min(scaledH - height, y1 + shiftPx));
+          const shiftPx = Math.round((contentCenterY - 0.5) * renderHeight);
+          const newY1 = Math.max(0, Math.min(scaledH - renderHeight, y1 + shiftPx));
           if (Math.abs(newY1 - y1) >= 4) {
-            const recropped = crop(scaledImg, x1, newY1, x1 + width, newY1 + height);
+            const recropped = crop(scaledImg, x1, newY1, x1 + renderWidth, newY1 + renderHeight);
             try {
               noCalendarBaseBytes = recropped.get_bytes();
             } finally {
@@ -489,13 +507,25 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     // カレンダーなし版（署名のみ）はSatoriの表現力を必要としないため、CPU削減のため
     // Photonのdraw_text_with_border()（縁取り文字を直接画像へ焼き込む）に置き換えた。
     // Satori render・resvgラスタライズ・オーバーレイ用のPhoton合成を1セット分削除できる
+    // 縮小解像度で合成した画像をPhoton Lanczos3で目標解像度へ拡大する共通処理。
+    // fal.ai等のAI超解像は使わない（カレンダー文字がぼやける・歪むリスクがあるため。
+    // 詳細は.claude/rules/architecture.md参照）
+    function upscaleToTarget(img) {
+      const upscaledImg = resize(img, width, height, SamplingFilter.Lanczos3);
+      try {
+        return uint8ArrayToBase64(upscaledImg.get_bytes());
+      } finally {
+        upscaledImg.free();
+      }
+    }
+
     async function applyCalendarOverlay(element, sourceBytes) {
-      const overlayPng = await renderElementToPngFn(element, { width, height, fonts });
+      const overlayPng = await renderElementToPngFn(element, { width: renderWidth, height: renderHeight, fonts });
       const overlayImg = PhotonImage.new_from_byteslice(overlayPng);
       const targetImg = PhotonImage.new_from_byteslice(sourceBytes);
       try {
         watermark(targetImg, overlayImg, 0n, 0n);
-        return uint8ArrayToBase64(targetImg.get_bytes());
+        return upscaleToTarget(targetImg);
       } finally {
         overlayImg.free();
         targetImg.free();
@@ -505,24 +535,24 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     function drawSignature(sourceBytes) {
       const targetImg = PhotonImage.new_from_byteslice(sourceBytes);
       try {
-        const fontSize = 26;
+        const fontSize = Math.round(26 * renderScale);
         // Bug#38: Satori版の_buildSignatureOnlyElement()と同じ比率でカレンダー帯の左端・
-        // 下部セーフエリアに揃える（スマートフォン実機での見切れ対策）
-        const x = Math.round(width * CALENDAR_MARGIN_RATIO);
-        const y = height - Math.round(height * SAFE_AREA_RATIO) - fontSize;
+        // 下部セーフエリアに揃える（スマートフォン実機での見切れ対策）。縮小解像度基準で計算する
+        const x = Math.round(renderWidth * CALENDAR_MARGIN_RATIO);
+        const y = renderHeight - Math.round(renderHeight * SAFE_AREA_RATIO) - fontSize;
         drawTextWithBorder(targetImg, SIGNATURE_TEXT, x, y, fontSize);
-        return uint8ArrayToBase64(targetImg.get_bytes());
+        return upscaleToTarget(targetImg);
       } finally {
         targetImg.free();
       }
     }
 
-    const calendarElement = _buildCalendarOverlayElement(year, month, { width, height });
+    const calendarElement = _buildCalendarOverlayElement(year, month, { width: renderWidth, height: renderHeight });
 
     const calendarImageData = await applyCalendarOverlay(calendarElement, baseBytes);
-    console.log("[monthly-wallpaper-composite] カレンダー版オーバーレイ描画完了");
+    console.log("[monthly-wallpaper-composite] カレンダー版オーバーレイ描画完了（縮小解像度→目標解像度へ拡大済み）");
     const noCalendarImageData = drawSignature(noCalendarBaseBytes);
-    console.log("[monthly-wallpaper-composite] カレンダーなし版署名描画完了");
+    console.log("[monthly-wallpaper-composite] カレンダーなし版署名描画完了（縮小解像度→目標解像度へ拡大済み）");
 
     srcImg.free();
     scaledImg.free();
