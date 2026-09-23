@@ -1075,11 +1075,19 @@ export async function runMonthlyWallpaperPost(env, handleGenerate, ctx = null, d
     console.log(`${prefix} generate 完了 source=${generated.source}`);
 
     // ── 3. カレンダー・署名オーバーレイ合成 ─────────────────────────────
+    // Bug#37追記: 過去にこの処理がCPU予算を超過しCloudflare Workersに強制終了された
+    // （error 1102）ことがあるため、所要時間を計測してKVに記録する。ただしSatori/resvg/Photonは
+    // いずれも同期的なWASM呼び出しでI/Oを挟まないため、performance.now()がここで一切進まず
+    // 計測値が0msになる可能性がある（architecture.mdの「CPU時間の計測追加」参照）
+    console.log(`${prefix} カレンダー合成 開始`);
+    const tCompositeStart = performance.now();
     const composite = await compositeMonthlyWallpaperFn(generated.imageData, year, month, {
       renderElementToPngFn: renderElementToPng,
       ensureFontsFn: ensureFonts,
       getFontsFn: getFonts,
     });
+    await _deferOrAwait(recordCpuCheckpoint("monthly-wallpaper-composite", performance.now() - tCompositeStart, env.RATE_KV), ctx);
+    console.log(`${prefix} カレンダー合成 完了 composited=${composite.composited}`);
     if (!composite.composited) {
       console.warn(`${prefix} カレンダー合成失敗、未加工画像で継続`);
     }

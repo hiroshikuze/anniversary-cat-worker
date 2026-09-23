@@ -1056,11 +1056,15 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 修正は既存の`_detectCropBox()`（`/generate`の自動トリミング機能・`autoCropImage()`と共通のWASM非依存ロジック）を再利用する。
 
-1. `coverCrop(img, w, h, targetW, targetH)`（`compositeMonthlyWallpaper()`内のローカルヘルパー、元々インラインだった cover-fit（アスペクト比を保って拡大しはみ出た分を対称にクロップする）計算を関数化）で通常のカレンダーあり版の1080×1920ベース画像（`baseImg`/`baseBytes`）を作る
-2. `baseImg`を64px幅（アスペクト比維持）にダウンサンプルし`_detectCropBox()`で被写体のバウンディングボックスを検出。`maxMarginRatio`は`/generate`用デフォルトの`0.2`ではなく`0.5`を指定する（実測30〜46%の余白量を正しく検出するため。デフォルトのままだと過小評価する）
-3. 検出できた場合、そのボックスで`baseImg`をクロップして被写体領域のみを取り出し、同じ`coverCrop()`で再度1080×1920へフィットし直す（ズームイン＋再センタリング。単純な平行移動ではなく拡大を伴うため、上下に余白が残っていた場合のみ確実に解消できる）
-4. 検出できなかった場合（既に余白が小さい）は`baseImg`をそのまま使う（安全策・`autoCropImage()`と同じ設計方針）
+**設計変更（2026-09・実機でCloudflare error 1102＝Worker強制終了を検知）**: 当初案は検出領域を切り出してから`coverCrop()`（cover-fit：アスペクト比を保って拡大しはみ出た分を対称にクロップする処理）で改めて1080×1920へ**ズームイン**して再フィットする方式だった。デプロイ直後の実機検証で`POST /monthly-wallpaper/regenerate`が`error 1102`を返しDiscord通知も届かない障害が発生した。`query-worker-logs.mjs`で実ログを確認すると、`generate 完了`ログの直後・`カレンダー合成失敗`警告すら出ないまま途切れており、JS例外（`try/catch`で捕捉可能）ではなくCloudflare基盤側の強制終了（CPU/メモリ上限超過）と判明した。Satori×2レンダリング＋resvgラスタライズ×2＋Photon合成×2という元々重い処理に、ズームイン方式が追加の高品質リサイズ（`SamplingFilter.Lanczos3`）を丸ごともう1回加えたことがCPU予算を超過させたと判断し、**リサイズを伴わない「同一スケール内でのシフトのみ」の軽量な再センタリング**に設計変更した:
+
+1. 生成画像をこれまで通りcover-fitで1080×1920のベース画像（`baseImg`/`baseBytes`）を作る際、その手前で使うスケール済み画像（`scaledImg`。目標サイズより一回り大きい）を`compositeMonthlyWallpaper()`のスコープ内に保持しておく（従来は`baseImg`生成直後に解放していたが、なし版のシフトに再利用するため解放を遅らせる）
+2. `baseImg`を64px幅（アスペクト比維持）にダウンサンプルし`_detectCropBox()`で被写体のバウンディングボックスを検出。`maxMarginRatio`は`/generate`用デフォルトの`0.2`ではなく`0.5`を指定する（実測30〜46%の余白量を正しく検出するため）
+3. 検出できた場合、被写体の垂直方向の中心位置を計算し、`scaledImg`内でのクロップ開始位置（`y1`）を「被写体が新しい窓の中心に来る」ようシフトさせる。シフト量は`scaledImg`の余剰分（`scaledImg`の高さ − 1080×1920の高さ）の範囲でクランプする。**リサイズは一切行わず、`scaledImg`から窓をずらして`crop()`するだけ**（ズームなし・平行移動のみ）
+4. シフト量が小さい（4px未満）・検出できない・`scaledImg`に余剰分がなく実質シフトできない場合は`baseImg`をそのまま使う（安全策・`autoCropImage()`と同じ設計方針）
 5. この再センタリング処理全体を個別の`try/catch`で囲み、失敗時は`baseImg`にフォールバックする（カレンダーあり版の生成自体には影響させない。`compositeMonthlyWallpaper()`全体の外側`try/catch`とは別のより狭いフォールバック）
+
+この方式は「AIが生成した画像に元々十分な縦方向の余剰（`scaledImg`が目標サイズより大きい分）がある場合」にのみ被写体を動かせるトレードオフがある（プロンプトが9:16ちょうどで生成させているため余剰が小さいケースでは効果が限定的）。ただしCPU予算超過でリクエストごと失敗する（Discord通知すら届かない）よりは、被写体の位置調整が部分的にとどまる方が実害が小さいと判断した。詳細は`.claude/bugs-history.md`のBug#37追記参照。
 
 **合成処理の流れ**:
 
@@ -1077,7 +1081,12 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 - **1ラウンド目**: Bluesky/Mastodonへの投稿自体は成功したが、`compositeMonthlyWallpaper()`が失敗し未加工画像にフォールバックしていた（`composited: false`）。`query-worker-logs.mjs`で実ログを確認し、上記「resvgのWASM」項に記載の`Wasm code generation disallowed by embedder`エラーを特定・修正しデプロイ（Bug#36本体）
 - **2ラウンド目**: 修正後に再実行しても依然`composited: false`。再度`query-worker-logs.mjs`で確認したところ、今度は別のエラー`Already initialized. The initWasm() function can be used only once.`に変わっていた。上記「`ensureResvg()`はシングルフライトパターン」項に記載の並行呼び出し競合を特定・修正（Bug#36追記）。**この修正はPR #182として作成済みだが、本ドキュメント執筆時点で未マージ・未デプロイ**
 - **3ラウンド目**: PR #182マージ・デプロイ後に`composited: true`を確認（resvg関連の障害は解消）。ただしBluesky投稿の目視確認で新たに2件の見た目の問題が判明: (1) 月名バッジに月番号「10」が表示されていない、(2) カレンダーなし版で被写体が上寄りになり下に不自然な余白が残る。いずれも上記「月名バッジの構成」「カレンダーなし版の被写体センタリング」で修正済み
-- **4ラウンド目（未実施）**: 上記2件の修正をデプロイ後、再度`/monthly-wallpaper/regenerate`を実行し、月番号の表示・カレンダーなし版の被写体センタリングを目視確認する必要がある
+- **4ラウンド目**: PR #183マージ・デプロイ後に`/monthly-wallpaper/regenerate`を再実行したところ`error 1102`（Cloudflare Workers強制終了・CPU/メモリ上限超過）が返りDiscord通知も届かなかった。`query-worker-logs.mjs`でログを確認すると`generate 完了`直後・`カレンダー合成失敗`警告すら出ないまま途切れており、JS例外ではなく基盤側の強制終了と判明。カレンダーなし版センタリング（3ラウンド目の修正）が追加した「検出領域をズームインして再フィット」処理（追加のLanczos3リサイズ）がCPU予算を超過させたと判断し、リサイズを伴わない軽量なシフト方式に設計変更した（Bug#37追記。詳細は上記「カレンダーなし版の被写体センタリング」の「設計変更」参照）
+- **5ラウンド目（未実施）**: 軽量化後の修正をデプロイ後、再度`/monthly-wallpaper/regenerate`を実行し、`error 1102`が再発しないこと・Discord通知が届くこと・月番号の表示・カレンダーなし版の被写体センタリング（効果は限定的な場合がある旨は許容）を確認する必要がある
+
+**CPU時間の計測追加（2026-09・Bug#37追記の再発防止・PR #184に含む）**: 軽量化の効果を推測ではなく実測で確認できるようにするため、`runMonthlyWallpaperPost()`の`compositeMonthlyWallpaperFn()`呼び出しを`recordCpuCheckpoint("monthly-wallpaper-composite", ..., env.RATE_KV)`で計測しKV集計する（`/cpu-usage`で確認可能。月次1回・手動再生成時のみの低頻度経路のためKV書き込み予算への影響は無視できる）。ただし**この計測値がそのまま信頼できるとは限らない**: `generate-autoCrop`の計測（上記「CPU計測は機能しないことが判明」参照）と同様、`compositeMonthlyWallpaper()`内部はPhoton・Satori・resvgいずれも同期的なWASM呼び出しでI/Oを挟まないため、`performance.now()`が計測区間内で一切進まず差分が0msになる可能性がある。この計測値がゼロや不自然に小さい値を示した場合でも「処理が軽い」と早合点せず、`compositeMonthlyWallpaper()`内部に追加した詳細な`console.log`（下記）とCloudflare側が記録する実タイムスタンプ（`query-worker-logs.mjs`で確認）を併用し、どのステップまで到達してから終了したかで実態を判断する。
+
+`recordCpuCheckpoint()`は`worker/index.js`で定義されており、`worker/image-utils.js`は`worker/index.js`にimportされる側（逆方向importは循環参照になる。`worker/r2-storage.js`と同じ制約）のため、`compositeMonthlyWallpaper()`内部には`recordCpuCheckpoint()`を直接呼ばず、素の`console.log()`（`[monthly-wallpaper-composite]`プレフィックス）を主要ステップ（開始・ベースクロップ完了・再センタリング検出/シフト判定・カレンダー版/カレンダーなし版オーバーレイ描画それぞれの完了）の直後に追加した。計測（`recordCpuCheckpoint`）は呼び出し元の`runMonthlyWallpaperPost()`（`worker/bot.js`、既に`recordCpuCheckpoint`をimport済み）側で全体時間のみラップする。
 - **投稿URLのDiscord通知記載（2026-09追加・PR #182に含む）**: 上記の実機検証を繰り返す過程で、投稿の成否確認・テスト投稿の手動削除のたびにログからURLを手動組み立てる手間が発生したため、`buildBlueskyPostUrl()`とMastodon Status APIの`url`フィールドを使い、Discord通知の成否行に投稿URLを直接記載するようにした（日次Bot・月替わり壁紙の両方に適用。詳細は「Discord通知」節の「投稿URLの記載」参照）
 
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
