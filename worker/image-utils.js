@@ -231,6 +231,16 @@ const COLOR_WEEKDAY = "#2b2b2b";
 const SAFE_AREA_RATIO = 0.09; // 上下セーフエリア（全高の約9%）
 const CALENDAR_MARGIN_RATIO = 0.1225; // カレンダー帯の左右マージン（全幅の約12.25%・横幅は約75.5%相当）
 const SIGNATURE_GAP_ABOVE_CALENDAR = 32; // カレンダー帯の下端と署名の間隔（従来デザインを踏襲）
+// calendarPanelの内側パディング（px(28)相当の基準値）。_buildCalendarOverlayElement()と
+// stampSignature()（compositeMonthlyWallpaper()内）の両方から参照する共有定数（2026-09追加）
+const CALENDAR_PANEL_PADDING_PX = 28;
+// 署名（© nyanmusu）のx座標補正値（2026-09追加・署名の左ズレ修正）。当初はcalendarPanelの
+// スケールするpaddingとPNGアセット自体の内側余白の理論差分（約5px）で補正したが、実際に
+// width=540で合成した出力画像を直接ピクセル解析した結果、カレンダー「sun」の可視テキスト
+// 開始位置(x=96)と署名の可視テキスト開始位置(x=75)の実際の差は21pxだった。理論値との乖離は
+// WorkSansフォント自体の左サイドベアリング（文字の輪郭がpaddingの内側からさらに内側にある分）を
+// 考慮できていなかったため。padding差の理論計算ではなく、実際の出力画像の直接計測値を使う
+const SIGNATURE_X_OFFSET_PX = 21;
 // 月名バッジのみユーザーの実機フィードバックによる具体的な座標指定（1080x1920基準で160px,260px）を
 // 比率化したもの。calendarPanel/署名のCALENDAR_MARGIN_RATIO/SAFE_AREA_RATIOとは意図的に一致しない
 const MONTH_BADGE_LEFT_RATIO = 160 / 1080;
@@ -338,7 +348,7 @@ export function _buildCalendarOverlayElement(year, month, options = {}) {
       style: {
         display: "flex", flexDirection: "column", position: "absolute",
         left: calMargin, right: calMargin, bottom: safeBottom + SIGNATURE_GAP_ABOVE_CALENDAR,
-        padding: px(28), borderRadius: px(24),
+        padding: px(CALENDAR_PANEL_PADDING_PX), borderRadius: px(24),
         backgroundColor: "rgba(255,255,255,0.82)",
       },
       children: [headerRow, ...weekRows],
@@ -515,7 +525,11 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     function stampSignature(targetImg) {
       const sigImg = PhotonImage.new_from_byteslice(signatureBytes);
       try {
-        const x = Math.round(width * CALENDAR_MARGIN_RATIO);
+        // 2026-09追記: calendarPanel/monthBadgeの可視テキストはpadding・フォントのside-bearingの
+        // 分だけボックス左端より内側から始まるが、署名PNGはボックス左端にそのまま貼ると内側に
+        // 寄る量が足りず、可視テキストがカレンダー・月名バッジより左にずれて見えていた。
+        // SIGNATURE_X_OFFSET_PXは実際の出力画像を直接計測して得た補正値（詳細は定義箇所参照）
+        const x = Math.round(width * CALENDAR_MARGIN_RATIO) + SIGNATURE_X_OFFSET_PX;
         const y = height - Math.round(height * SAFE_AREA_RATIO) - sigImg.get_height();
         watermark(targetImg, sigImg, BigInt(x), BigInt(y));
       } finally {
