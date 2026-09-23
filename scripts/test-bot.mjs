@@ -5431,8 +5431,12 @@ console.log("\n[_buildCalendarOverlayElement / _buildSignatureOnlyElement: 構�
   const calendarPanelStyle = el.props.children[1].props.style;
   const embeddedSignatureStyle = el.props.children[2].props.style;
   const sigOnlyStyle = sigOnly.props.children.props.style;
-  assert("月名バッジのtopが上部セーフエリア分だけ確保されている", monthBadgeStyle.top === safeArea);
-  assert("月名バッジのleftがカレンダー帯の左端と揃う", monthBadgeStyle.left === calMargin);
+  // 2026-09追記: 月名バッジのみユーザー指定の具体的な座標(160px, 260px / 1080x1920基準)を使う。
+  // calendarPanel/署名のSAFE_AREA_RATIO/CALENDAR_MARGIN_RATIOとは意図的に一致しない
+  const badgeLeft = Math.round(1080 * (160 / 1080)); // 160
+  const badgeTop = Math.round(1920 * (260 / 1920)); // 260
+  assert("月名バッジのtopがユーザー指定の座標(260px相当)", monthBadgeStyle.top === badgeTop);
+  assert("月名バッジのleftがユーザー指定の座標(160px相当)", monthBadgeStyle.left === badgeLeft);
   assert("カレンダー帯の左右マージンが約12.25%（横幅約75.5%相当）", calendarPanelStyle.left === calMargin && calendarPanelStyle.right === calMargin);
   assert("カレンダー帯のbottomが下部セーフエリア＋署名との間隔分だけ浮いている", calendarPanelStyle.bottom === safeArea + 32);
   assert("埋め込み署名（カレンダー版）のleftがカレンダー帯の左端と揃う", embeddedSignatureStyle.left === calMargin);

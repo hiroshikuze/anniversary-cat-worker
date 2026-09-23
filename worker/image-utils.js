@@ -202,6 +202,10 @@ const SIGNATURE_TEXT = "© nyanmusu";
 const SAFE_AREA_RATIO = 0.09; // 上下セーフエリア（全高の約9%）
 const CALENDAR_MARGIN_RATIO = 0.1225; // カレンダー帯の左右マージン（全幅の約12.25%・横幅は約75.5%相当）
 const SIGNATURE_GAP_ABOVE_CALENDAR = 32; // カレンダー帯の下端と署名の間隔（従来デザインを踏襲）
+// 月名バッジのみユーザーの実機フィードバックによる具体的な座標指定（1080x1920基準で160px,260px）を
+// 比率化したもの。calendarPanel/署名のCALENDAR_MARGIN_RATIO/SAFE_AREA_RATIOとは意図的に一致しない
+const MONTH_BADGE_LEFT_RATIO = 160 / 1080;
+const MONTH_BADGE_TOP_RATIO = 260 / 1920;
 
 /** 指定年月の日数（純粋関数） */
 export function _daysInMonth(year, month) {
@@ -332,13 +336,15 @@ export function _buildCalendarOverlayElement(year, month, options = {}) {
 
   // Bug#37: 元のバッジPNGデザイン案（「October」＋大きな「10」）のうち月番号がSatori書き換え時に
   // 抜け落ちていた。大きな月番号（左）＋月名・年を縦積みにしたブロック（右）の横並びに修正する
-  const safeTop = Math.round(height * SAFE_AREA_RATIO);
+  // Bug#38: 位置はユーザーの実機フィードバックによる具体的な座標指定（160px, 260px）を使う
+  const badgeLeft = Math.round(width * MONTH_BADGE_LEFT_RATIO);
+  const badgeTop = Math.round(height * MONTH_BADGE_TOP_RATIO);
   const monthBadge = {
     type: "div",
     props: {
       style: {
         display: "flex", flexDirection: "row", alignItems: "flex-end", position: "absolute",
-        left: calMargin, top: safeTop, padding: "18px 26px", borderRadius: 20,
+        left: badgeLeft, top: badgeTop, padding: "18px 26px", borderRadius: 20,
         backgroundColor: "rgba(255,255,255,0.82)",
       },
       children: [

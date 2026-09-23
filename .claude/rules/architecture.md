@@ -1109,7 +1109,8 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 - **上下セーフエリア**: 全高の約9%を上下それぞれの余白として確保する（`SAFE_AREA_RATIO = 0.09`・1080×1920基準で約173px）。`monthBadge`の`top`をこの値に、`calendarPanel`・署名の`bottom`基準をこの値に変更し、オーバーレイ全体をわずかに中央寄りにシフトする
 - **カレンダー帯の横幅・左右マージン**: カレンダーブロックの横幅を全幅の約75.5%に収め、左右に均等なマージンを確保して中央に配置する。ユーザーが提示した2つの数値（横幅75.5%・左右マージン各11%）はそのままでは合計97.5%になり厳密には矛盾するため、より安全側（マージンが広くなる側）の解釈を採用し、横幅75.5%を厳密値として左右マージンを逆算した（`CALENDAR_MARGIN_RATIO = 0.1225`・約132px、約12.25%）。指定の11%よりマージンが広がる方向の丸めなので、要求された「スマートフォンのバー等と干渉しない浮き」の意図には反しない
-- **月名バッジ・署名の左端をカレンダー帯の左端に揃える**: 従来`monthBadge`は`left: 40`・署名は`left: 32`とカレンダー帯の左端（旧`left: 40`）と微妙にずれていた。`CALENDAR_MARGIN_RATIO`を3要素（`monthBadge`・`calendarPanel`・署名）で共有することで左端が自動的に揃うようにした
+- **署名の左端をカレンダー帯の左端に揃える**: 従来署名は`left: 32`とカレンダー帯の左端（旧`left: 40`）と微妙にずれていた。`CALENDAR_MARGIN_RATIO`を`calendarPanel`・署名で共有することで左端が自動的に揃うようにした
+- **月名バッジの位置は実機フィードバックの具体的な座標指定を優先する（2026-09追加）**: 当初`monthBadge`も`calendarPanel`と同じ`CALENDAR_MARGIN_RATIO`/`SAFE_AREA_RATIO`（左132px・上173px相当）を暫定的に適用していたが、ユーザーから「160px, 260pxの位置に置く」という具体的な座標指定を受けたため、`monthBadge`のみ`MONTH_BADGE_LEFT_RATIO`（160/1080）・`MONTH_BADGE_TOP_RATIO`（260/1920）という独立した比率定数に切り替えた。`calendarPanel`・署名の左端とは意図的に完全一致しない（バッジは実機の曲面・カメラアイランド等を避けるためカレンダー帯よりもやや内側・下に配置する方が安全という判断）
 - **カレンダー帯と署名の縦の余白**: 署名（コピーライト）を画面最下部のセーフエリア境界（`SAFE_AREA_RATIO`基準）に配置し、カレンダー帯はその上に既存デザインと同じ32pxの間隔を保って浮かせる（`calendarPanel`の`bottom`＝署名の`bottom` + 32px）。底面ギリギリに張り付かない設計は従来から踏襲済みだったため、セーフエリアの基準点を「画面下端」から「セーフエリア境界」に置き換えるだけで対応できた
 
 **実装箇所**: `worker/image-utils.js` `_buildSignatureOnlyElement()`・`_buildCalendarOverlayElement()`（`monthBadge`・`calendarPanel`）・`compositeMonthlyWallpaper()`内の`drawSignature()`（カレンダーなし版のPhoton直接描画、同じ比率を独立に計算）。3箇所とも同一の`SAFE_AREA_RATIO`・`CALENDAR_MARGIN_RATIO`定数（`width`/`height`引数から動的に計算する比率であり固定px値ではない）を参照するため、キャンバスサイズを変更しても比率は保たれる。
