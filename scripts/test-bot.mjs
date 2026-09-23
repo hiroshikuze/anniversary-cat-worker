@@ -5625,11 +5625,13 @@ console.log("\n[runMonthlyWallpaperPost: 正常フロー（モック合成・R2�
     async put(key, value) { store[key] = value; },
     async get(key) { return key in store ? { arrayBuffer: async () => new ArrayBuffer(0) } : null; },
   };
+  const kv = makeKvMock();
   const env = {
     GEMINI_API_KEY: "test-key",
     BLUESKY_IDENTIFIER: "", BLUESKY_APP_PASSWORD: "",
     DISCORD_WEBHOOK_URL: "",
     IMAGE_BUCKET: bucket,
+    RATE_KV: kv,
   };
 
   let generateBody;
@@ -5652,6 +5654,12 @@ console.log("\n[runMonthlyWallpaperPost: 正常フロー（モック合成・R2�
   assert("R2にno-calendar.pngが保存される", savedKeys.some(k => k.endsWith("/no-calendar.png")));
   assert("R2にmeta.jsonが保存される", savedKeys.some(k => k.endsWith("/meta.json")));
   assert("保存キーがmonthly-wallpaper/プレフィックス", savedKeys.every(k => k.startsWith("monthly-wallpaper/")));
+  // Bug#37再発防止（1102対策）: compositeMonthlyWallpaperFn()呼び出しのCPU/壁時計時間が
+  // recordCpuCheckpoint()経由でKVに記録されることを検証（実際の所要時間は0msになりうる点に
+  // 注意。architecture.mdの「CPU時間の計測追加」参照）
+  const today = new Date().toISOString().slice(0, 10);
+  const cpuStored = JSON.parse(kv.store[`cpu-time:${today}`] ?? "{}");
+  assert("monthly-wallpaper-compositeのCPU計測がKVに記録される", cpuStored["monthly-wallpaper-composite"]?.calls === 1);
 }
 
 console.log("\n[runMonthlyWallpaperPost: Discord通知にBluesky/Mastodon投稿URLが記載される（2026-09追加）]");

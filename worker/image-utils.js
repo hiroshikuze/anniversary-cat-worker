@@ -395,6 +395,11 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     height              = 1920,
   } = deps;
 
+  // Bug#37追記: error 1102（CPU/メモリ上限超過による強制終了）発生時、JS例外を伴わないため
+  // どのステップまで到達したかをCloudflare側の実タイムスタンプ（query-worker-logs.mjs）から
+  // 判断できるよう、主要ステップの直後に素のconsole.logを置く（recordCpuCheckpoint()は
+  // worker/index.jsとの循環import制約により呼べないため、計測自体は呼び出し元のbot.jsで行う）
+  console.log("[monthly-wallpaper-composite] 開始");
   try {
     await ensurePhotonFn();
     const PhotonImage = getPhotonImageFn();
@@ -416,6 +421,7 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     const y1 = Math.round((scaledH - height) / 2);
     const baseImg = crop(scaledImg, x1, y1, x1 + width, y1 + height);
     const baseBytes = baseImg.get_bytes();
+    console.log("[monthly-wallpaper-composite] ベースクロップ完了");
 
     // Bug#37: カレンダーなし版限定の被写体センタリング。reserveCalendarSpaceのプロンプト指示で
     // 画像下部に余白（実測30〜46%）を空けさせているため、カレンダーあり版はカレンダー帯で
@@ -457,6 +463,7 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     } catch (err) {
       console.warn(`[monthly-wallpaper] カレンダーなし版の再センタリング失敗、通常クロップで継続: ${err.message}`);
     }
+    console.log(`[monthly-wallpaper-composite] 再センタリング判定完了 shifted=${noCalendarBaseBytes !== baseBytes}`);
 
     async function applyOverlay(element, sourceBytes) {
       const overlayPng = await renderElementToPngFn(element, { width, height, fonts });
@@ -478,6 +485,7 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
       applyOverlay(calendarElement, baseBytes),
       applyOverlay(signatureElement, noCalendarBaseBytes),
     ]);
+    console.log("[monthly-wallpaper-composite] オーバーレイ描画完了");
 
     srcImg.free();
     scaledImg.free();
