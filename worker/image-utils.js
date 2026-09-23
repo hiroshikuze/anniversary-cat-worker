@@ -196,6 +196,12 @@ const COLOR_SUNDAY_HOLIDAY = "#c0392b";
 const COLOR_SATURDAY = "#2e6da4";
 const COLOR_WEEKDAY = "#2b2b2b";
 const SIGNATURE_TEXT = "© nyanmusu";
+// Bug#38: スマートフォン実機（iPhone 17 Pro）で月名バッジ・カレンダー帯・署名が画面の曲面や
+// システムUIに隠れて見切れていた。オーバーレイ要素の配置を固定px値ではなく画面サイズに対する
+// 比率で管理し、キャンバスサイズが変わっても安全マージンが保たれるようにする
+const SAFE_AREA_RATIO = 0.09; // 上下セーフエリア（全高の約9%）
+const CALENDAR_MARGIN_RATIO = 0.1225; // カレンダー帯の左右マージン（全幅の約12.25%・横幅は約75.5%相当）
+const SIGNATURE_GAP_ABOVE_CALENDAR = 32; // カレンダー帯の下端と署名の間隔（従来デザインを踏襲）
 
 /** 指定年月の日数（純粋関数） */
 export function _daysInMonth(year, month) {
@@ -240,6 +246,8 @@ export function _buildCalendarWeeks(year, month) {
 /** 「© nyanmusu」署名のみのSatori要素ツリーを返す（カレンダーなし版用・純粋関数） */
 export function _buildSignatureOnlyElement(options = {}) {
   const { width = 1080, height = 1920 } = options;
+  const left = Math.round(width * CALENDAR_MARGIN_RATIO);
+  const bottom = Math.round(height * SAFE_AREA_RATIO);
   return {
     type: "div",
     props: {
@@ -250,7 +258,7 @@ export function _buildSignatureOnlyElement(options = {}) {
         type: "div",
         props: {
           style: {
-            display: "flex", position: "absolute", left: 32, bottom: 32,
+            display: "flex", position: "absolute", left, bottom,
             color: "#ffffff", fontFamily: "WorkSans", fontSize: 26,
           },
           children: SIGNATURE_TEXT,
@@ -306,12 +314,16 @@ export function _buildCalendarOverlayElement(year, month, options = {}) {
     },
   }));
 
+  // Bug#38: スマートフォン実機で見切れないよう、左右マージン・下端の浮きを画面サイズ比率で算出する
+  const calMargin = Math.round(width * CALENDAR_MARGIN_RATIO);
+  const safeBottom = Math.round(height * SAFE_AREA_RATIO);
   const calendarPanel = {
     type: "div",
     props: {
       style: {
         display: "flex", flexDirection: "column", position: "absolute",
-        left: 40, right: 40, bottom: 64, padding: 28, borderRadius: 24,
+        left: calMargin, right: calMargin, bottom: safeBottom + SIGNATURE_GAP_ABOVE_CALENDAR,
+        padding: 28, borderRadius: 24,
         backgroundColor: "rgba(255,255,255,0.82)",
       },
       children: [headerRow, ...weekRows],
@@ -320,12 +332,13 @@ export function _buildCalendarOverlayElement(year, month, options = {}) {
 
   // Bug#37: 元のバッジPNGデザイン案（「October」＋大きな「10」）のうち月番号がSatori書き換え時に
   // 抜け落ちていた。大きな月番号（左）＋月名・年を縦積みにしたブロック（右）の横並びに修正する
+  const safeTop = Math.round(height * SAFE_AREA_RATIO);
   const monthBadge = {
     type: "div",
     props: {
       style: {
         display: "flex", flexDirection: "row", alignItems: "flex-end", position: "absolute",
-        left: 40, top: 56, padding: "18px 26px", borderRadius: 20,
+        left: calMargin, top: safeTop, padding: "18px 26px", borderRadius: 20,
         backgroundColor: "rgba(255,255,255,0.82)",
       },
       children: [
@@ -487,7 +500,11 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
       const targetImg = PhotonImage.new_from_byteslice(sourceBytes);
       try {
         const fontSize = 26;
-        drawTextWithBorder(targetImg, SIGNATURE_TEXT, 32, height - 32 - fontSize, fontSize);
+        // Bug#38: Satori版の_buildSignatureOnlyElement()と同じ比率でカレンダー帯の左端・
+        // 下部セーフエリアに揃える（スマートフォン実機での見切れ対策）
+        const x = Math.round(width * CALENDAR_MARGIN_RATIO);
+        const y = height - Math.round(height * SAFE_AREA_RATIO) - fontSize;
+        drawTextWithBorder(targetImg, SIGNATURE_TEXT, x, y, fontSize);
         return uint8ArrayToBase64(targetImg.get_bytes());
       } finally {
         targetImg.free();

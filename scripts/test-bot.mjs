@@ -5421,6 +5421,24 @@ console.log("\n[_buildCalendarOverlayElement / _buildSignatureOnlyElement: 構�
   // ユーザー指摘（2026-09）: 署名テキストに黒背景パネルは不要という指定が実装に反映されて
   // いなかった。半透明黒背景（backgroundColor）を持たないことを検証する
   assert("署名要素に背景色（黒背景パネル）を持たない", !JSON.stringify(sigOnly).includes("backgroundColor"));
+
+  // Bug#38: スマートフォン実機（iPhone 17 Pro）で月名バッジ・カレンダー帯・署名が画面端に
+  // 見切れていた。SAFE_AREA_RATIO（全高の約9%）・CALENDAR_MARGIN_RATIO（全幅の約12.25%、
+  // カレンダー帯の横幅は約75.5%に相当）を1080x1920基準で検証する
+  const safeArea = Math.round(1920 * 0.09); // 173
+  const calMargin = Math.round(1080 * 0.1225); // 132
+  const monthBadgeStyle = el.props.children[0].props.style;
+  const calendarPanelStyle = el.props.children[1].props.style;
+  const embeddedSignatureStyle = el.props.children[2].props.style;
+  const sigOnlyStyle = sigOnly.props.children.props.style;
+  assert("月名バッジのtopが上部セーフエリア分だけ確保されている", monthBadgeStyle.top === safeArea);
+  assert("月名バッジのleftがカレンダー帯の左端と揃う", monthBadgeStyle.left === calMargin);
+  assert("カレンダー帯の左右マージンが約12.25%（横幅約75.5%相当）", calendarPanelStyle.left === calMargin && calendarPanelStyle.right === calMargin);
+  assert("カレンダー帯のbottomが下部セーフエリア＋署名との間隔分だけ浮いている", calendarPanelStyle.bottom === safeArea + 32);
+  assert("埋め込み署名（カレンダー版）のleftがカレンダー帯の左端と揃う", embeddedSignatureStyle.left === calMargin);
+  assert("埋め込み署名（カレンダー版）のbottomが下部セーフエリア分だけ確保されている", embeddedSignatureStyle.bottom === safeArea);
+  assert("署名単独版のleftがカレンダー帯の左端と揃う", sigOnlyStyle.left === calMargin);
+  assert("署名単独版のbottomが下部セーフエリア分だけ確保されている", sigOnlyStyle.bottom === safeArea);
 }
 
 console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
@@ -5470,6 +5488,15 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
   // renderElementToPngFn()はカレンダー版1回のみ呼ばれる（従来の2回から半減）
   assert("Satori/resvg経由のオーバーレイ描画はカレンダー版1回のみ", renderCalls.length === 1);
   assert("カレンダーなし版はdraw_text_with_border()で署名を直接描画する", drawTextCalls.length === 1 && drawTextCalls[0].text.includes("nyanmusu"));
+  // Bug#38: カレンダーなし版（Photon直接描画）の署名座標も、Satori版と同じ
+  // SAFE_AREA_RATIO/CALENDAR_MARGIN_RATIOから算出されていることを検証する
+  {
+    const fontSize = 26;
+    const expectedX = Math.round(1080 * 0.1225); // 132
+    const expectedY = 1920 - Math.round(1920 * 0.09) - fontSize; // 1920-173-26=1721
+    assert("カレンダーなし版署名のxがカレンダー帯の左端と揃う", drawTextCalls[0].x === expectedX);
+    assert("カレンダーなし版署名のyが下部セーフエリア分だけ確保されている", drawTextCalls[0].y === expectedY);
+  }
 
   // 失敗時フォールバック
   const failResult = await compositeMonthlyWallpaper("YmFzZTY0", 2026, 10, {

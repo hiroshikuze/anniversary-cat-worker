@@ -1074,7 +1074,7 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 4. 「カレンダーなし」版も同時に生成する: 上記「カレンダーなし版の被写体センタリング」で得た画像に`_buildSignatureOnlyElement()`のオーバーレイ（署名のみ）を貼ったもの（full-bleed、カレンダー帯・月名バッジなし）
 5. 失敗時（Photon/Satori/resvg読み込み失敗等）は既存`autoCropImage()`と同様、未加工画像にフォールバックし処理全体は失敗させない
 
-**実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。
+**実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。スマートフォン実機でのセーフエリア調整（Bug#38・上記「スマートフォン実機でのセーフエリア調整」参照）も実装済みだが、実機での見切れ解消は次回の手動再生成実行時にユーザーが確認する（本ドキュメント執筆時点で未デプロイ）。
 
 **実機検証の結果（2026-09・2ラウンド実施済み・3ラウンド目待ち）**: デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を`X-Bypass-Token`ヘッダー付きで手動実行。
 
@@ -1102,6 +1102,19 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 **署名の黒背景パネルは削除（2026-09・ユーザー指摘で判明した実装ミス）**: `_buildSignatureOnlyElement()`は当初から`backgroundColor: "rgba(0,0,0,0.35)"`の半透明黒背景パネルを描画していたが、これは最初から不要という指定だったにもかかわらず実装時に反映されていなかった（`.claude/bugs-history.md`の別機能・フロントエンドCanvas watermarkの黒背景仕様と混同したとみられる）。`_buildSignatureOnlyElement()`から背景パネルを削除し、白文字のみにした。この関数はカレンダー版の埋め込み署名（`_buildCalendarOverlayElement()`内、Satori継続使用）にも使われているため、この修正はカレンダー版・カレンダーなし版の両方に適用される。カレンダーなし版側はPhotonの`draw_text_with_border()`（縁取り文字、背景パネルなし）に置き換わるため、両者は異なる描画技術ながら「黒背景なし・縁取り/白文字で可読性を担保」という統一感のある見た目になる。
 
 - **投稿URLのDiscord通知記載（2026-09追加・PR #182に含む）**: 上記の実機検証を繰り返す過程で、投稿の成否確認・テスト投稿の手動削除のたびにログからURLを手動組み立てる手間が発生したため、`buildBlueskyPostUrl()`とMastodon Status APIの`url`フィールドを使い、Discord通知の成否行に投稿URLを直接記載するようにした（日次Bot・月替わり壁紙の両方に適用。詳細は「Discord通知」節の「投稿URLの記載」参照）
+
+**スマートフォン実機でのセーフエリア調整（2026-09・iPhone 17 Pro実機テストで発覚・Bug#38）**: 実際に投稿された壁紙画像をiPhone 17 Proの待受に設定したところ、左上の月名バッジ・下部のカレンダー帯・署名が、画面の曲面（ディスプレイ端の湾曲）やシステムUI（時計・ホームインジケーター等）に隠れて見切れることが判明した（ユーザーが実機で目視確認）。それまでの配置（`monthBadge`は`top: 56`・`calendarPanel`は`left/right: 40, bottom: 64`・署名は`left: 32, bottom: 32`）は、Cloudflare Workers上の画像処理として動作確認はできても、実際のスマートフォン端末の画面形状までは考慮していなかった。
+
+修正方針（Geminiとの壁打ちを経てユーザーが確定した数値仕様）: イラスト自体の構図（テイスト・フォント・解像度・被写体の位置）は変更せず、オーバーレイ要素（月名バッジ・カレンダー帯・署名）の配置のみを画面中央寄りに調整する。背景側の左右マージン（キャラクターの登場位置に影響する余白）はこの調整の対象外（ユーザーが明示的に許容）。
+
+- **上下セーフエリア**: 全高の約9%を上下それぞれの余白として確保する（`SAFE_AREA_RATIO = 0.09`・1080×1920基準で約173px）。`monthBadge`の`top`をこの値に、`calendarPanel`・署名の`bottom`基準をこの値に変更し、オーバーレイ全体をわずかに中央寄りにシフトする
+- **カレンダー帯の横幅・左右マージン**: カレンダーブロックの横幅を全幅の約75.5%に収め、左右に均等なマージンを確保して中央に配置する。ユーザーが提示した2つの数値（横幅75.5%・左右マージン各11%）はそのままでは合計97.5%になり厳密には矛盾するため、より安全側（マージンが広くなる側）の解釈を採用し、横幅75.5%を厳密値として左右マージンを逆算した（`CALENDAR_MARGIN_RATIO = 0.1225`・約132px、約12.25%）。指定の11%よりマージンが広がる方向の丸めなので、要求された「スマートフォンのバー等と干渉しない浮き」の意図には反しない
+- **月名バッジ・署名の左端をカレンダー帯の左端に揃える**: 従来`monthBadge`は`left: 40`・署名は`left: 32`とカレンダー帯の左端（旧`left: 40`）と微妙にずれていた。`CALENDAR_MARGIN_RATIO`を3要素（`monthBadge`・`calendarPanel`・署名）で共有することで左端が自動的に揃うようにした
+- **カレンダー帯と署名の縦の余白**: 署名（コピーライト）を画面最下部のセーフエリア境界（`SAFE_AREA_RATIO`基準）に配置し、カレンダー帯はその上に既存デザインと同じ32pxの間隔を保って浮かせる（`calendarPanel`の`bottom`＝署名の`bottom` + 32px）。底面ギリギリに張り付かない設計は従来から踏襲済みだったため、セーフエリアの基準点を「画面下端」から「セーフエリア境界」に置き換えるだけで対応できた
+
+**実装箇所**: `worker/image-utils.js` `_buildSignatureOnlyElement()`・`_buildCalendarOverlayElement()`（`monthBadge`・`calendarPanel`）・`compositeMonthlyWallpaper()`内の`drawSignature()`（カレンダーなし版のPhoton直接描画、同じ比率を独立に計算）。3箇所とも同一の`SAFE_AREA_RATIO`・`CALENDAR_MARGIN_RATIO`定数（`width`/`height`引数から動的に計算する比率であり固定px値ではない）を参照するため、キャンバスサイズを変更しても比率は保たれる。
+
+**未検証（2026-09時点）**: この修正はローカルのユニットテスト（要素ツリー・Photon描画呼び出しの数値アサーション）でのみ検証済み。実際のiPhone/Android実機での見切れ解消は、次回`POST /monthly-wallpaper/regenerate`実行後にユーザーが目視確認する。
 
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
 
