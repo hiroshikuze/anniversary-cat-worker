@@ -1116,6 +1116,12 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 - **アセットの読み込み**: フォント（`.ttf`）と同じ「ビルド時ESM静的importをData型としてArrayBuffer化する」パターンを踏襲する。`wrangler.toml`の`[[rules]]`に`**/*.png`のglobを追加し、`worker/image-utils.js`内で遅延importする（Photon/フォントローダーと同じ「`_setXForTest()`」パターンでテスト時に差し替え可能にする）
 - **既知の制約**: PNGアセットは`compositeMonthlyWallpaper()`の出力解像度（現状540×960）を前提に固定サイズでデザインしている。将来`width`/`height`を1080×1920へ戻す場合（例: Workers Paidプランへの移行時）、このアセットは自動的にはスケールしない（Satoriの`elementScale`とは異なる仕組みのため）。解像度を変更する際はアセットを再生成する必要がある
 
+**署名の左端インデントがカレンダー・月名バッジとズレていた問題（2026-09・実機投稿で発覚）**: 上記デプロイ後の実機投稿画像をユーザーが目視確認したところ、署名（© nyanmusu）のテキストがカレンダー帯・月名バッジ（10 October）の文字開始位置より左に寄って見えることが判明した。
+
+- **原因**: `calendarPanel`・`monthBadge`（Satori要素）はいずれも`padding`（`px(28)`・`px(26)`、`elementScale = width / 1080`でスケールする）を内側に持つため、ボックスの左端と実際に見える文字の開始位置がキャンバス幅に応じて一定の比率でズレる。一方、署名PNG（`worker/assets/signature.png`）は`stampSignature()`内で`x = Math.round(width * CALENDAR_MARGIN_RATIO)`（＝`calendarPanel`のボックス左端と同一）にそのまま貼り付けており、**画像自体に焼き込まれた内側余白（実測で左端から約9px・デザイン時の固定ピクセル値でキャンバス幅に応じてスケールしない）** が`calendarPanel`のスケールする`padding`（`width=540`時で14px）より小さいため、署名の可視テキストがカレンダーの可視テキストより約5px左に寄って見えていた
+- **修正**: `stampSignature()`のx座標に「`calendarPanel`の`padding`（スケール後）− PNGに焼き込まれた既知の余白（`SIGNATURE_ASSET_PADDING_PX = 9`という定数として明記）」を加算し、可視テキストの開始位置をカレンダーの可視テキストと揃えた。`calendarPanel`の`padding`値（`28`）は`_buildCalendarOverlayElement()`と`stampSignature()`の両方から参照する共有定数`CALENDAR_PANEL_PADDING_PX`に切り出し、マジックナンバーの重複を避けた
+- **この修正が解決しないこと**: `SIGNATURE_ASSET_PADDING_PX`はPNGアセットの実測値をハードコードした定数であり、アセット自体を再生成した場合は再計測して値を更新する必要がある。またキャンバス幅（`width`）を1080に戻した場合、`calendarPanel`側の余白はスケールして28pxに戻るが、署名PNG側の余白は固定9pxのままのため再びズレが生じる（上記「既知の制約」と同じ根本原因）。解像度を変更する際はこの定数も合わせて見直すこと
+
 - **投稿URLのDiscord通知記載（2026-09追加・PR #182に含む）**: 上記の実機検証を繰り返す過程で、投稿の成否確認・テスト投稿の手動削除のたびにログからURLを手動組み立てる手間が発生したため、`buildBlueskyPostUrl()`とMastodon Status APIの`url`フィールドを使い、Discord通知の成否行に投稿URLを直接記載するようにした（日次Bot・月替わり壁紙の両方に適用。詳細は「Discord通知」節の「投稿URLの記載」参照）
 
 **スマートフォン実機でのセーフエリア調整（2026-09・iPhone 17 Pro実機テストで発覚・Bug#38）**: 実際に投稿された壁紙画像をiPhone 17 Proの待受に設定したところ、左上の月名バッジ・下部のカレンダー帯・署名が、画面の曲面（ディスプレイ端の湾曲）やシステムUI（時計・ホームインジケーター等）に隠れて見切れることが判明した（ユーザーが実機で目視確認）。それまでの配置（`monthBadge`は`top: 56`・`calendarPanel`は`left/right: 40, bottom: 64`・署名は`left: 32, bottom: 32`）は、Cloudflare Workers上の画像処理として動作確認はできても、実際のスマートフォン端末の画面形状までは考慮していなかった。

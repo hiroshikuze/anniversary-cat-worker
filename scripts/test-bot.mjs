@@ -5513,10 +5513,15 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
   // compositeMonthlyWallpaper()の出力解像度そのものが540x960になる（デフォルト値の変更）
   assert("Satori/resvg描画・出力ともに540x960で行われる（デフォルト解像度）", renderCalls[0].options.width === 540 && renderCalls[0].options.height === 960);
   {
-    // 署名の貼り付け位置（x）はカレンダー版・カレンダーなし版とも同じ比率で揃う
-    const expectedX = Math.round(540 * 0.1225); // 66
-    assert("カレンダー版署名のxがカレンダー帯左端と揃う", Number(watermarkCalls[1].x) === expectedX);
-    assert("カレンダーなし版署名のxがカレンダー帯左端と揃う", Number(watermarkCalls[2].x) === expectedX);
+    // 2026-09追記: 署名PNGの可視テキストがカレンダーの可視テキストより左に寄って見える問題を修正。
+    // calendarPanelのボックス左端（calMargin）にそのままPNGを貼るのではなく、calendarPanelの
+    // スケールするpadding（width=540時14px）からPNG自体に焼き込まれた固定余白（9px）を差し引いた
+    // 分だけ右にずらすことで、可視テキストの開始位置をカレンダー・月名バッジと揃える
+    const calMargin = Math.round(540 * 0.1225); // 66
+    const calendarPaddingScaled = Math.round(28 * (540 / 1080)); // 14
+    const expectedX = calMargin + calendarPaddingScaled - 9; // 71
+    assert("カレンダー版署名のxがカレンダーの可視テキスト開始位置と揃う", Number(watermarkCalls[1].x) === expectedX);
+    assert("カレンダーなし版署名のxがカレンダーの可視テキスト開始位置と揃う", Number(watermarkCalls[2].x) === expectedX);
   }
   {
     const upscaleCalls = resizeCalls.filter((c) => c.filter === "Lanczos3" && c.w === 1080 && c.h === 1920);

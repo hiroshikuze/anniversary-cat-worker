@@ -231,6 +231,13 @@ const COLOR_WEEKDAY = "#2b2b2b";
 const SAFE_AREA_RATIO = 0.09; // 上下セーフエリア（全高の約9%）
 const CALENDAR_MARGIN_RATIO = 0.1225; // カレンダー帯の左右マージン（全幅の約12.25%・横幅は約75.5%相当）
 const SIGNATURE_GAP_ABOVE_CALENDAR = 32; // カレンダー帯の下端と署名の間隔（従来デザインを踏襲）
+// calendarPanelの内側パディング（px(28)相当の基準値）。_buildCalendarOverlayElement()と
+// stampSignature()（compositeMonthlyWallpaper()内）の両方から参照する共有定数（2026-09追加）
+const CALENDAR_PANEL_PADDING_PX = 28;
+// worker/assets/signature.pngに焼き込まれたテキストの左上余白の実測値（デザイン時の固定ピクセル値・
+// キャンバス幅に応じてスケールしない）。calendarPanelの可視テキスト開始位置と揃えるための
+// オフセット計算に使う（2026-09追加・署名の左ズレ修正）
+const SIGNATURE_ASSET_PADDING_PX = 9;
 // 月名バッジのみユーザーの実機フィードバックによる具体的な座標指定（1080x1920基準で160px,260px）を
 // 比率化したもの。calendarPanel/署名のCALENDAR_MARGIN_RATIO/SAFE_AREA_RATIOとは意図的に一致しない
 const MONTH_BADGE_LEFT_RATIO = 160 / 1080;
@@ -338,7 +345,7 @@ export function _buildCalendarOverlayElement(year, month, options = {}) {
       style: {
         display: "flex", flexDirection: "column", position: "absolute",
         left: calMargin, right: calMargin, bottom: safeBottom + SIGNATURE_GAP_ABOVE_CALENDAR,
-        padding: px(28), borderRadius: px(24),
+        padding: px(CALENDAR_PANEL_PADDING_PX), borderRadius: px(24),
         backgroundColor: "rgba(255,255,255,0.82)",
       },
       children: [headerRow, ...weekRows],
@@ -515,7 +522,12 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     function stampSignature(targetImg) {
       const sigImg = PhotonImage.new_from_byteslice(signatureBytes);
       try {
-        const x = Math.round(width * CALENDAR_MARGIN_RATIO);
+        // 2026-09追記: calendarPanel/monthBadgeの可視テキストはスケールするpaddingの分だけ
+        // ボックス左端より内側から始まるが、署名PNGはボックス左端にそのまま貼ると画像自体に
+        // 焼き込まれた固定余白（SIGNATURE_ASSET_PADDING_PX）しか内側に寄らず、可視テキストが
+        // カレンダー・月名バッジより左にずれて見えていた。calendarPanelの可視テキスト開始位置に揃える
+        const calendarPaddingScaled = Math.round(CALENDAR_PANEL_PADDING_PX * (width / REFERENCE_CANVAS_WIDTH));
+        const x = Math.round(width * CALENDAR_MARGIN_RATIO) + calendarPaddingScaled - SIGNATURE_ASSET_PADDING_PX;
         const y = height - Math.round(height * SAFE_AREA_RATIO) - sigImg.get_height();
         watermark(targetImg, sigImg, BigInt(x), BigInt(y));
       } finally {
