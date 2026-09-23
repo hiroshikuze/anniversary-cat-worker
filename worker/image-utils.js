@@ -41,21 +41,25 @@ export function _setPhotonForTest(mockPhotonImage, mockFns = null) {
 }
 
 let _signatureAssetReady = false;
-let _signatureAsset      = null; // ArrayBuffer（worker/assets/signature.png）
+let _signatureAsset      = null; // Uint8Array（worker/assets/signature.png）
 
 /**
  * 月替わり壁紙の署名（© nyanmusu）を事前生成PNGアセット（worker/assets/signature.png）から
- * ArrayBufferとして遅延ロードする（Bug#39）。PhotonのdrawText系APIは色・ストローク制御が
+ * Uint8Arrayとして遅延ロードする（Bug#39）。PhotonのdrawText系APIは色・ストローク制御が
  * 不十分（draw_text()は白固定・draw_text_with_border()のボーダーは実装バグで判読不能な
  * 黒塗り矩形になる。詳細はarchitecture.mdの「署名を事前生成PNGアセット化」参照）ため、
  * 内容が変化しない署名テキストに限り事前生成PNG（ソフトドロップシャドウ）をwatermark()で
  * 貼り付ける方式に統一した。wrangler.tomlの[[rules]]で.pngをDataモジュール（ArrayBuffer）
  * としてimportできるよう設定済み（worker/svg-render.jsのensureFonts()と同じパターン）。
+ * Bug#39実機検証で判明: wrangler DataモジュールのdefaultエクスポートはArrayBufferであり、
+ * `PhotonImage.new_from_byteslice()`はUint8Arrayを要求する。ArrayBufferをそのまま渡すと
+ * wasm-bindgenのグルーコードがメモリを正しく読めずWASMの`unreachable`トラップで
+ * Worker全体が強制終了していた（本番実機で確認済み）。ここでUint8Arrayへ変換して保持する
  */
 export async function ensureSignatureAsset() {
   if (_signatureAssetReady) return;
   const { default: signaturePng } = await import("./assets/signature.png");
-  _signatureAsset = signaturePng;
+  _signatureAsset = new Uint8Array(signaturePng);
   _signatureAssetReady = true;
 }
 
