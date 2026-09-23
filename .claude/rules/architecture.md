@@ -1046,8 +1046,7 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 **関数設計**:
 
-- `_buildCalendarOverlayElement(year, month, options)`（`worker/image-utils.js`・純粋関数）: 指定年月のカレンダー格子（曜日見出し・日付数字・日曜/祝日=赤・土曜=青・`@holiday-jp/holiday_jp`で祝日判定）＋左上の月名・年バッジ（月番号を大きく＋月名・年を並べて表示。詳細は下記「月名バッジの構成」参照）＋左下の「© nyanmusu」署名を含むSatori要素ツリー（JSX形状のプレーンオブジェクト）を返す。`options`にキャンバスサイズ・フォント名を渡す
-- `_buildSignatureOnlyElement(options)`（同ファイル・純粋関数）: 「© nyanmusu」署名のみのSatori要素ツリーを返す（「カレンダーなし」版用）
+- `_buildCalendarOverlayElement(year, month, options)`（`worker/image-utils.js`・純粋関数）: 指定年月のカレンダー格子（曜日見出し・日付数字・日曜/祝日=赤・土曜=青・`@holiday-jp/holiday_jp`で祝日判定）＋左上の月名・年バッジ（月番号を大きく＋月名・年を並べて表示。詳細は下記「月名バッジの構成」参照）を含むSatori要素ツリー（JSX形状のプレーンオブジェクト）を返す。`options`にキャンバスサイズ・フォント名を渡す。**「© nyanmusu」署名はBug#39で事前生成PNGアセット化されたため、この要素ツリーには含まれない（下記「署名を事前生成PNGアセット化」参照）**
 - `compositeMonthlyWallpaper(imageData, year, month, deps = {})`（`worker/image-utils.js`）: `autoCropImage()`と同じ「依存関数を引数で受け取る」テストパターンを踏襲
 
 **月名バッジの構成（2026-09修正）**: 当初の実装は`monthBadge`が月名（`October`）と年（`2026`）のみを描画しており、事前生成バッジPNG時代の元デザイン（「October」＋大きな「10」の月番号を並べる構成）にあった月番号が抜け落ちていた。実機投稿で発覚（ユーザー指摘）し修正した。現在は`monthBadge`を横並び（`flexDirection: "row"`）にし、大きな月番号（`String(month)`・Gloock・大サイズ）を左に、月名＋年を縦積みにしたブロックを右に配置する。
@@ -1068,13 +1067,13 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 **合成処理の流れ**:
 
-1. 生成画像を1080×1920（スマホ壁紙・フルHD縦）へcover-cropでリサイズ（Photon）
+1. 生成画像を1080×1920（スマホ壁紙・フルHD縦。実際のデフォルト出力解像度は下記「最終拡大の撤回」参照）へcover-cropでリサイズ（Photon）
 2. `_buildCalendarOverlayElement()`でカレンダー版の要素ツリーを組み立て、`renderElementToPng()`（`worker/svg-render.js`）でオーバーレイPNGを生成
-3. オーバーレイPNGをPhotonの`watermark()`で生成画像に貼り付ける（カレンダー版）
-4. 「カレンダーなし」版も同時に生成する: 上記「カレンダーなし版の被写体センタリング」で得た画像に`_buildSignatureOnlyElement()`のオーバーレイ（署名のみ）を貼ったもの（full-bleed、カレンダー帯・月名バッジなし）
+3. オーバーレイPNGをPhotonの`watermark()`で生成画像に貼り付け、続けて署名アセット（`worker/assets/signature.png`）も`watermark()`で貼り付ける（カレンダー版・Bug#39）
+4. 「カレンダーなし」版も同時に生成する: 上記「カレンダーなし版の被写体センタリング」で得た画像に署名アセットのみを`watermark()`で貼り付けたもの（full-bleed、カレンダー帯・月名バッジなし。Bug#39以前はSatoriの署名オーバーレイを使用していた）
 5. 失敗時（Photon/Satori/resvg読み込み失敗等）は既存`autoCropImage()`と同様、未加工画像にフォールバックし処理全体は失敗させない
 
-**実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。スマートフォン実機でのセーフエリア調整（Bug#38・上記「スマートフォン実機でのセーフエリア調整」参照）も実装済みだが、実機での見切れ解消は次回の手動再生成実行時にユーザーが確認する（本ドキュメント執筆時点で未デプロイ）。
+**実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`compositeMonthlyWallpaper()`/署名アセットローダー`ensureSignatureAsset()`。Bug#39以前は`_buildSignatureOnlyElement()`も存在したが廃止済み）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。スマートフォン実機でのセーフエリア調整（Bug#38・上記「スマートフォン実機でのセーフエリア調整」参照）も実装済み。署名の可読性修正（Bug#39・上記「署名を事前生成PNGアセット化」参照）はローカルユニットテスト・`wrangler deploy --dry-run`のビルド確認済みだが、実機での可読性確認は次回の手動再生成実行時にユーザーが確認する（本ドキュメント執筆時点で未デプロイ）。
 
 **実機検証の結果（2026-09・2ラウンド実施済み・3ラウンド目待ち）**: デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を`X-Bypass-Token`ヘッダー付きで手動実行。
 
@@ -1099,7 +1098,23 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 1を採用し、`compositeMonthlyWallpaper()`はSatori/resvgをカレンダー版の1回のみ呼び出す（従来の2回から半減）。カレンダーなし版は`noCalendarBaseBytes`をデコードしたPhoton画像に`draw_text_with_border(img, "© nyanmusu", x, y, fontSize)`を直接描画し（オーバーレイPNGの生成・合成が不要になる）、そのまま`get_bytes()`する。
 
-**署名の黒背景パネルは削除（2026-09・ユーザー指摘で判明した実装ミス）**: `_buildSignatureOnlyElement()`は当初から`backgroundColor: "rgba(0,0,0,0.35)"`の半透明黒背景パネルを描画していたが、これは最初から不要という指定だったにもかかわらず実装時に反映されていなかった（`.claude/bugs-history.md`の別機能・フロントエンドCanvas watermarkの黒背景仕様と混同したとみられる）。`_buildSignatureOnlyElement()`から背景パネルを削除し、白文字のみにした。この関数はカレンダー版の埋め込み署名（`_buildCalendarOverlayElement()`内、Satori継続使用）にも使われているため、この修正はカレンダー版・カレンダーなし版の両方に適用される。カレンダーなし版側はPhotonの`draw_text_with_border()`（縁取り文字、背景パネルなし）に置き換わるため、両者は異なる描画技術ながら「黒背景なし・縁取り/白文字で可読性を担保」という統一感のある見た目になる。
+**署名の黒背景パネルは削除（2026-09・ユーザー指摘で判明した実装ミス）**: `_buildSignatureOnlyElement()`は当初から`backgroundColor: "rgba(0,0,0,0.35)"`の半透明黒背景パネルを描画していたが、これは最初から不要という指定だったにもかかわらず実装時に反映されていなかった（`.claude/bugs-history.md`の別機能・フロントエンドCanvas watermarkの黒背景仕様と混同したとみられる）。`_buildSignatureOnlyElement()`から背景パネルを削除し、白文字のみにした。この時点ではカレンダー版（Satori継続使用）・カレンダーなし版（Photon `draw_text_with_border()`）の両方に適用されたが、この対応は後にBug#39で置き換えられている（下記「署名を事前生成PNGアセット化」参照）。
+
+### 署名を事前生成PNGアセット化（2026-09・Bug#39）
+
+上記の「黒背景パネル削除」後、実機投稿の目視確認で署名（© nyanmusu）が判読できない問題が2種類見つかった（詳細は`.claude/bugs-history.md`のBug#39参照）。
+
+1. **カレンダー版（Satori描画）**: 背景パネルを削除した結果、白文字のみ（縁取りなし）になっており、明るい背景色の上では文字が完全に溶けて見えなくなっていた
+2. **カレンダーなし版（Photon `draw_text_with_border()`）**: 本セッションでPhotonの実際のWASMをローカルで動かして検証したところ、`draw_text_with_border()`の「縁取り」は文字の輪郭に沿ったストロークではなく、**文字からわずかにずれた位置に描かれる塗りつぶし矩形（実装上の癖/バグ）** であることが判明した。フォントサイズが小さい（540×960化に伴い13px相当まで縮小済み）とこの矩形が文字を覆い尽くし、黒い塊にしか見えなくなる
+
+**根本原因**: Photonの文字描画API（`draw_text()`＝色固定（白）・縁取りなし、`draw_text_with_border()`＝縁取り部分に上記の癖がある）はどちらも色や縁取りの見た目を自由に制御できない。Satori側も白文字色のみで縁取りの仕組みを使っていなかった。**背景（AI生成イラスト）の明暗を問わず安定して読ませるには、色や縁取りを自在にデザインできる方法が必要**だった。
+
+**採用した方式**: 「© nyanmusu」は**内容が変化しない固定テキスト**である（カレンダーの日付・月名のように月ごとに変わらない）。月替わり壁紙のカレンダー部分をSatori動的描画にした理由（`CLAUDE.md`の「変えてはいけない設計判断」参照）は「内容が変わるものを事前生成PNGにすると柔軟性を失う」というものだったが、これは固定テキストの署名には当てはまらない。そこで**署名だけを事前に1枚の透過PNG（白文字＋柔らかいドロップシャドウ）として作成し、`worker/assets/signature.png`にコミット**した。実行時はSatori/resvgでの動的テキストレンダリングを一切行わず、既存の`watermark()`（カレンダーオーバーレイの合成に使っているPhoton関数と同一）で画像に貼り付けるだけにする。
+
+- **デザイン検討**: ユーザーとPython/PILでのシミュレーションを繰り返し、単色（縁取り・影なし）→縁取り（複数の太さ・不透明度）→ドロップシャドウの順で比較した。「ウォーターマークらしい控えめさ」の観点から、最終的に**柔らかいドロップシャドウ**（白文字・不透明度235/255、影は黒・不透明度140/255・オフセット1px・ガウスぼかし1.2px）を採用した
+- **実装**: `_buildCalendarOverlayElement()`からSatoriの`signature`子要素を削除し、`_buildSignatureOnlyElement()`自体を廃止した（もう呼び出し元がないため）。`compositeMonthlyWallpaper()`は`worker/assets/signature.png`を`watermark()`でカレンダーあり版・なし版の両方に貼り付ける共通処理に統一した（従来は描画方式が2種類に分かれていたが、1種類に統一されたことでコードもシンプルになった）
+- **アセットの読み込み**: フォント（`.ttf`）と同じ「ビルド時ESM静的importをData型としてArrayBuffer化する」パターンを踏襲する。`wrangler.toml`の`[[rules]]`に`**/*.png`のglobを追加し、`worker/image-utils.js`内で遅延importする（Photon/フォントローダーと同じ「`_setXForTest()`」パターンでテスト時に差し替え可能にする）
+- **既知の制約**: PNGアセットは`compositeMonthlyWallpaper()`の出力解像度（現状540×960）を前提に固定サイズでデザインしている。将来`width`/`height`を1080×1920へ戻す場合（例: Workers Paidプランへの移行時）、このアセットは自動的にはスケールしない（Satoriの`elementScale`とは異なる仕組みのため）。解像度を変更する際はアセットを再生成する必要がある
 
 - **投稿URLのDiscord通知記載（2026-09追加・PR #182に含む）**: 上記の実機検証を繰り返す過程で、投稿の成否確認・テスト投稿の手動削除のたびにログからURLを手動組み立てる手間が発生したため、`buildBlueskyPostUrl()`とMastodon Status APIの`url`フィールドを使い、Discord通知の成否行に投稿URLを直接記載するようにした（日次Bot・月替わり壁紙の両方に適用。詳細は「Discord通知」節の「投稿URLの記載」参照）
 
@@ -1113,7 +1128,7 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 - **月名バッジの位置は実機フィードバックの具体的な座標指定を優先する（2026-09追加）**: 当初`monthBadge`も`calendarPanel`と同じ`CALENDAR_MARGIN_RATIO`/`SAFE_AREA_RATIO`（左132px・上173px相当）を暫定的に適用していたが、ユーザーから「160px, 260pxの位置に置く」という具体的な座標指定を受けたため、`monthBadge`のみ`MONTH_BADGE_LEFT_RATIO`（160/1080）・`MONTH_BADGE_TOP_RATIO`（260/1920）という独立した比率定数に切り替えた。`calendarPanel`・署名の左端とは意図的に完全一致しない（バッジは実機の曲面・カメラアイランド等を避けるためカレンダー帯よりもやや内側・下に配置する方が安全という判断）
 - **カレンダー帯と署名の縦の余白**: 署名（コピーライト）を画面最下部のセーフエリア境界（`SAFE_AREA_RATIO`基準）に配置し、カレンダー帯はその上に既存デザインと同じ32pxの間隔を保って浮かせる（`calendarPanel`の`bottom`＝署名の`bottom` + 32px）。底面ギリギリに張り付かない設計は従来から踏襲済みだったため、セーフエリアの基準点を「画面下端」から「セーフエリア境界」に置き換えるだけで対応できた
 
-**実装箇所**: `worker/image-utils.js` `_buildSignatureOnlyElement()`・`_buildCalendarOverlayElement()`（`monthBadge`・`calendarPanel`）・`compositeMonthlyWallpaper()`内の`drawSignature()`（カレンダーなし版のPhoton直接描画、同じ比率を独立に計算）。3箇所とも同一の`SAFE_AREA_RATIO`・`CALENDAR_MARGIN_RATIO`定数（`width`/`height`引数から動的に計算する比率であり固定px値ではない）を参照するため、キャンバスサイズを変更しても比率は保たれる。
+**実装箇所（2026-09時点）**: `worker/image-utils.js` `_buildCalendarOverlayElement()`（`monthBadge`・`calendarPanel`）・`compositeMonthlyWallpaper()`内の`stampSignature()`（署名の貼り付け位置、同じ比率を独立に計算）。いずれも同一の`SAFE_AREA_RATIO`・`CALENDAR_MARGIN_RATIO`定数（`width`/`height`引数から動的に計算する比率であり固定px値ではない）を参照するため、キャンバスサイズを変更しても比率は保たれる。**当初は`_buildSignatureOnlyElement()`・`drawSignature()`の2関数がこの役割を担っていたが、Bug#39で署名が事前生成PNGアセット化されたことに伴い両関数は廃止され、`stampSignature()`に統一されている（詳細は上記「署名を事前生成PNGアセット化」参照）。**
 
 **未検証（2026-09時点）**: この修正はローカルのユニットテスト（要素ツリー・Photon描画呼び出しの数値アサーション）でのみ検証済み。実際のiPhone/Android実機での見切れ解消は、次回`POST /monthly-wallpaper/regenerate`実行後にユーザーが目視確認する。
 
@@ -1138,7 +1153,7 @@ resvgのラスタライズコスト・Photonのデコード/エンコードコ�
 - `compositeMonthlyWallpaper()`の`width`/`height`デフォルト値を`1080`/`1920`から`540`/`960`へ変更し、`renderWidth`/`renderHeight`・`RENDER_SCALE`・`upscaleToTarget()`は廃止して、ベースクロップから合成・エンコードまで単一の`width`/`height`基準で行う（PR #186時点の実装に戻す形だが、目標解像度の値だけが540×960に変わっている）
 - `_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`のフォントサイズ等のスケーリング機構（`elementScale = width / 1080`）は維持する（`width=540`指定時に自動的に半分のフォントサイズになるため、追加のスケーリング計算は不要）
 - **画質とのトレードオフ**: 540×960はフルHD（1080×1920）の1/4の画素数であり、高精細ディスプレイでは壁紙としてのシャープさが劣る。ただし「文字が読めないほどではないがフル解像度よりは粗い」という許容範囲と判断し、確実にCPU予算内へ収める方を優先した。将来Workers Paidプラン（CPU上限引き上げ）へ移行する場合は、`width`/`height`のデフォルトを1080/1920へ戻すだけで元の解像度に復帰できる
-- **未検証（2026-09時点）**: この変更もCPU予算削減の実効性はローカルで検証できない。デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を複数回実行し、`error 1102`の再現率が実際に下がったかを確認する。下がらない場合は「Satori/resvg描画コスト自体」または「投稿・通知フェーズの累積コスト」が主因と判断し、Workers Paidプランへの移行等、別の対策を検討する
+- **実機再検証の結果（2026-09・解消確認）**: デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を3回実行し、**3回とも成功**（`error 1102`の再現なし）を確認した。低解像度合成パイプライン自体（540×960・拡大処理なし）に絞ったことで、error 1102は解消したと判断する。Satori/resvgの処理コストがピクセル数に強く依存するという仮説（Bug#37の記録）、および「追加のLanczos3リサイズが逆効果になる」という過去の教訓が、今回もそのまま当てはまる結果となった
 
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
 

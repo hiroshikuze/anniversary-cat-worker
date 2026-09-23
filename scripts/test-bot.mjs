@@ -14,8 +14,8 @@ import { parseExpiryDate } from "./audit-suzuri-materials.mjs";
 import { parseSinceMs, buildQueryBody, parseArgs as parseQueryLogArgs } from "./query-worker-logs.mjs";
 import {
   _detectCropBox, autoCropImage, _setPhotonForTest as _setImageUtilsPhotonForTest,
-  _daysInMonth, _buildCalendarWeeks, _buildCalendarOverlayElement, _buildSignatureOnlyElement,
-  _dayColor, compositeMonthlyWallpaper,
+  _daysInMonth, _buildCalendarWeeks, _buildCalendarOverlayElement,
+  _dayColor, compositeMonthlyWallpaper, _setSignatureAssetForTest,
 } from "../worker/image-utils.js";
 import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptionForTest } from "../worker/suzuri.js";
 
@@ -5404,62 +5404,48 @@ console.log("\n[_dayColor: 日曜/祝日/土曜/平日の色分け]");
   assert("通常の平日は既定色", _dayColor(2026, 10, 5, 1) === "#2b2b2b");
 }
 
-console.log("\n[_buildCalendarOverlayElement / _buildSignatureOnlyElement: 構造]");
+console.log("\n[_buildCalendarOverlayElement: 構造]");
 {
   const el = _buildCalendarOverlayElement(2026, 10, { width: 1080, height: 1920 });
   assert("ルート要素はdiv", el.type === "div");
-  assert("badge・calendarPanel・signatureの3要素を持つ", el.props.children.length === 3);
+  // Bug#39: 署名（© nyanmusu）は事前生成PNGアセット化し、watermark()でPhoton側から貼り付ける
+  // ようになったため、Satori要素ツリーからは削除された（badge・calendarPanelの2要素のみ）
+  assert("badge・calendarPanelの2要素を持つ（署名要素は含まない）", el.props.children.length === 2);
   // Bug#37: 月名バッジ（先頭の子要素）に月番号（例: 10月→"10"）が含まれていることを検証。
   // el全体に対する文字列チェックだとカレンダー本体の日付セル（10月なら「10日」）と衝突して
   // 誤検知するため、monthBadge要素（children[0]）だけを対象にする
   const monthBadgeJson = JSON.stringify(el.props.children[0]);
   assert("月名バッジに月番号を含む（10月→\"10\"）", monthBadgeJson.includes("\"10\""));
   assert("月名バッジに英語月名を含む（10月→October）", monthBadgeJson.includes("October"));
-  const sigOnly = _buildSignatureOnlyElement({ width: 1080, height: 1920 });
-  assert("署名のみ要素もdivルート", sigOnly.type === "div");
-  assert("署名テキストを含む", JSON.stringify(sigOnly).includes("nyanmusu"));
-  // ユーザー指摘（2026-09）: 署名テキストに黒背景パネルは不要という指定が実装に反映されて
-  // いなかった。半透明黒背景（backgroundColor）を持たないことを検証する
-  assert("署名要素に背景色（黒背景パネル）を持たない", !JSON.stringify(sigOnly).includes("backgroundColor"));
+  assert("要素ツリーに署名テキストを含まない（PNGアセット化されたため）", !JSON.stringify(el).includes("nyanmusu"));
 
-  // Bug#38: スマートフォン実機（iPhone 17 Pro）で月名バッジ・カレンダー帯・署名が画面端に
+  // Bug#38: スマートフォン実機（iPhone 17 Pro）で月名バッジ・カレンダー帯が画面端に
   // 見切れていた。SAFE_AREA_RATIO（全高の約9%）・CALENDAR_MARGIN_RATIO（全幅の約12.25%、
   // カレンダー帯の横幅は約75.5%に相当）を1080x1920基準で検証する
   const safeArea = Math.round(1920 * 0.09); // 173
   const calMargin = Math.round(1080 * 0.1225); // 132
   const monthBadgeStyle = el.props.children[0].props.style;
   const calendarPanelStyle = el.props.children[1].props.style;
-  const embeddedSignatureStyle = el.props.children[2].props.style;
-  const sigOnlyStyle = sigOnly.props.children.props.style;
   // 2026-09追記: 月名バッジのみユーザー指定の具体的な座標(160px, 260px / 1080x1920基準)を使う。
-  // calendarPanel/署名のSAFE_AREA_RATIO/CALENDAR_MARGIN_RATIOとは意図的に一致しない
+  // calendarPanelのSAFE_AREA_RATIO/CALENDAR_MARGIN_RATIOとは意図的に一致しない
   const badgeLeft = Math.round(1080 * (160 / 1080)); // 160
   const badgeTop = Math.round(1920 * (260 / 1920)); // 260
   assert("月名バッジのtopがユーザー指定の座標(260px相当)", monthBadgeStyle.top === badgeTop);
   assert("月名バッジのleftがユーザー指定の座標(160px相当)", monthBadgeStyle.left === badgeLeft);
   assert("カレンダー帯の左右マージンが約12.25%（横幅約75.5%相当）", calendarPanelStyle.left === calMargin && calendarPanelStyle.right === calMargin);
   assert("カレンダー帯のbottomが下部セーフエリア＋署名との間隔分だけ浮いている", calendarPanelStyle.bottom === safeArea + 32);
-  assert("埋め込み署名（カレンダー版）のleftがカレンダー帯の左端と揃う", embeddedSignatureStyle.left === calMargin);
-  assert("埋め込み署名（カレンダー版）のbottomが下部セーフエリア分だけ確保されている", embeddedSignatureStyle.bottom === safeArea);
-  assert("署名単独版のleftがカレンダー帯の左端と揃う", sigOnlyStyle.left === calMargin);
-  assert("署名単独版のbottomが下部セーフエリア分だけ確保されている", sigOnlyStyle.bottom === safeArea);
 }
 
-console.log("\n[_buildCalendarOverlayElement / _buildSignatureOnlyElement: 縮小解像度でのフォントサイズスケーリング]");
+console.log("\n[_buildCalendarOverlayElement: 縮小解像度でのフォントサイズスケーリング]");
 {
   // 2026-09追記: error 1102対策として、compositeMonthlyWallpaper()の出力解像度をデフォルト
   // 1080x1920から540x960へ変更した（詳細はarchitecture.mdの「最終拡大の撤回」参照）。
   // 固定px値だったフォントサイズ等が基準幅1080に対する比率(elementScale)でスケールされることを検証する
   const elHalf = _buildCalendarOverlayElement(2026, 10, { width: 540, height: 960 });
-  const monthBadgeStyleHalf = elHalf.props.children[0].props.style;
   const monthNumberStyleHalf = elHalf.props.children[0].props.children[0].props.style;
   const headerCellStyleHalf = elHalf.props.children[1].props.children[0].props.children[0].props.style;
   assert("width=540のとき月名バッジの月番号フォントサイズは半分(72→36)", monthNumberStyleHalf.fontSize === 36);
   assert("width=540のとき曜日見出しフォントサイズは半分(22→11)", headerCellStyleHalf.fontSize === 11);
-
-  const sigOnlyHalf = _buildSignatureOnlyElement({ width: 540, height: 960 });
-  const sigOnlyStyleHalf = sigOnlyHalf.props.children.props.style;
-  assert("width=540のとき署名フォントサイズは半分(26→13)", sigOnlyStyleHalf.fontSize === 13);
 
   // width=1080（基準）指定時は従来と完全に同じ値になる（後方互換）
   const elFull = _buildCalendarOverlayElement(2026, 10, { width: 1080, height: 1920 });
@@ -5484,14 +5470,15 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
   const MockPhotonImage = {
     new_from_byteslice: () => makeMockPhotonImage(),
   };
-  const drawTextCalls = [];
   const resizeCalls = [];
+  // Bug#39: 署名は事前生成PNGアセット化されwatermark()で貼り付けられる。何が貼り付けられたか
+  // を検証できるよう、watermarkCallsに(target, stamp, x, y)を記録する
+  const watermarkCalls = [];
   const mockFns = {
     resize: (img, w, h, filter) => { resizeCalls.push({ w, h, filter }); return makeMockPhotonImage(w, h); },
     crop: () => makeMockPhotonImage(1080, 1920),
     SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
-    watermark: () => {},
-    draw_text_with_border: (img, text, x, y, fontSize) => { drawTextCalls.push({ text, x, y, fontSize }); },
+    watermark: (target, stamp, x, y) => { watermarkCalls.push({ target, stamp, x, y }); },
   };
 
   const renderCalls = [];
@@ -5499,6 +5486,9 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
     renderCalls.push({ element, options });
     return new Uint8Array([9, 9, 9]);
   };
+
+  const mockSignatureBytes = new Uint8Array([7, 7, 7]);
+  _setSignatureAssetForTest(mockSignatureBytes);
 
   const result = await compositeMonthlyWallpaper("YmFzZTY0", 2026, 10, {
     ensurePhotonFn: async () => {},
@@ -5514,18 +5504,19 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
   // Bug#37追記: カレンダーなし版のSatori/resvg呼び出しを廃止したため、Satori/resvg経由の
   // renderElementToPngFn()はカレンダー版1回のみ呼ばれる（従来の2回から半減）
   assert("Satori/resvg経由のオーバーレイ描画はカレンダー版1回のみ", renderCalls.length === 1);
-  assert("カレンダーなし版はdraw_text_with_border()で署名を直接描画する", drawTextCalls.length === 1 && drawTextCalls[0].text.includes("nyanmusu"));
+  // Bug#39: カレンダー版はカレンダー格子オーバーレイ＋署名の2回、カレンダーなし版は署名のみの1回、
+  // 合計3回watermark()が呼ばれる（署名はPhotonのdraw系APIではなく事前生成PNGを貼り付ける方式に統一）
+  assert("watermark()はカレンダー版2回＋カレンダーなし版1回の計3回呼ばれる", watermarkCalls.length === 3);
 
   // 2026-09追記: 3回連続でerror 1102が再発したため、最終拡大(Lanczos3)ステップを撤回し
   // 540x960のまま配信する方式に変更した（詳細はarchitecture.mdの「最終拡大の撤回」参照）。
   // compositeMonthlyWallpaper()の出力解像度そのものが540x960になる（デフォルト値の変更）
   assert("Satori/resvg描画・出力ともに540x960で行われる（デフォルト解像度）", renderCalls[0].options.width === 540 && renderCalls[0].options.height === 960);
   {
-    const fontSize = 13; // Math.round(26 * (540/1080))
+    // 署名の貼り付け位置（x）はカレンダー版・カレンダーなし版とも同じ比率で揃う
     const expectedX = Math.round(540 * 0.1225); // 66
-    const expectedY = 960 - Math.round(960 * 0.09) - fontSize; // 960-86-13=861
-    assert("カレンダーなし版署名のxがカレンダー帯左端と揃う", drawTextCalls[0].x === expectedX);
-    assert("カレンダーなし版署名のyが下部セーフエリア分だけ確保されている", drawTextCalls[0].y === expectedY);
+    assert("カレンダー版署名のxがカレンダー帯左端と揃う", Number(watermarkCalls[1].x) === expectedX);
+    assert("カレンダーなし版署名のxがカレンダー帯左端と揃う", Number(watermarkCalls[2].x) === expectedX);
   }
   {
     const upscaleCalls = resizeCalls.filter((c) => c.filter === "Lanczos3" && c.w === 1080 && c.h === 1920);
@@ -5538,6 +5529,8 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
   });
   assert("失敗時はcomposited=false", failResult.composited === false);
   assert("失敗時は元画像をそのまま返す", failResult.calendarImageData === "YmFzZTY0" && failResult.noCalendarImageData === "YmFzZTY0");
+
+  _setSignatureAssetForTest(null);
 }
 
 console.log("\n[compositeMonthlyWallpaper: Bug#37 カレンダーなし版の被写体センタリング]");
@@ -5557,6 +5550,10 @@ console.log("\n[compositeMonthlyWallpaper: Bug#37 カレンダーなし版の被
   // 幅1080×高さ2400（cover-fit後にscaledH=2400・height=1920で480pxの垂直方向の余剰スラックが
   // 生まれる）にし、シフトが実際に発生しうる状態を再現する
   const MockPhotonImage = { new_from_byteslice: () => makeMockPhotonImage(1080, 2400) };
+  // Bug#39: 署名は事前生成PNGアセットをwatermark()で貼り付ける方式になったため、
+  // ensureSignatureAssetFn/getSignatureAssetFnのデフォルト実装（動的import）が
+  // Node環境で失敗しないようモックを注入する
+  _setSignatureAssetForTest(new Uint8Array([7, 7, 7]));
 
   // 上半分が被写体（非白）・下半分が背景（白）のサンプル画像を模擬する
   // （reserveCalendarSpaceで画像下部に余白を空けさせた状態を再現）
@@ -5582,7 +5579,6 @@ console.log("\n[compositeMonthlyWallpaper: Bug#37 カレンダーなし版の被
       crop: () => { cropCalls++; return makeMockPhotonImage(1080, 1920); },
       SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
       watermark: () => {},
-      draw_text_with_border: () => {},
     };
     const result = await compositeMonthlyWallpaper("YmFzZTY0", 2026, 10, {
       ensurePhotonFn: async () => {},
@@ -5607,7 +5603,6 @@ console.log("\n[compositeMonthlyWallpaper: Bug#37 カレンダーなし版の被
       crop: () => { cropCalls++; return makeMockPhotonImage(1080, 1920); },
       SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
       watermark: () => {},
-      draw_text_with_border: () => {},
     };
     const result = await compositeMonthlyWallpaper("YmFzZTY0", 2026, 10, {
       ensurePhotonFn: async () => {},
@@ -5631,7 +5626,6 @@ console.log("\n[compositeMonthlyWallpaper: Bug#37 カレンダーなし版の被
       crop: () => makeMockPhotonImage(1080, 1920),
       SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
       watermark: () => {},
-      draw_text_with_border: () => {},
     };
     const result = await compositeMonthlyWallpaper("YmFzZTY0", 2026, 10, {
       ensurePhotonFn: async () => {},
@@ -5643,6 +5637,8 @@ console.log("\n[compositeMonthlyWallpaper: Bug#37 カレンダーなし版の被
     });
     assert("再センタリング処理が失敗しても全体は失敗しない", result.composited === true);
   }
+
+  _setSignatureAssetForTest(null);
 }
 
 console.log("\n[isLastDayOfMonthJST: 正常系・境界値]");

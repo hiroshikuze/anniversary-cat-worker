@@ -51,6 +51,13 @@ type = "Data"
 globs = ["**/*.ttf"]
 fallthrough = true
 
+# 月替わり壁紙の署名（© nyanmusu、worker/assets/signature.png）を
+# ArrayBufferとしてimportできるようにする（worker/image-utils.js・Bug#39）
+[[rules]]
+type = "Data"
+globs = ["**/*.png"]
+fallthrough = true
+
 [observability.logs]
 enabled = true
 invocation_logs = true

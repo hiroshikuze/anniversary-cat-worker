@@ -26,7 +26,6 @@ export async function ensurePhoton() {
   _PhotonImage = mod.PhotonImage;
   _photonFns   = {
     crop: mod.crop, resize: mod.resize, SamplingFilter: mod.SamplingFilter, watermark: mod.watermark,
-    draw_text_with_border: mod.draw_text_with_border,
   };
   _photonReady = true;
 }
@@ -39,6 +38,33 @@ export function _setPhotonForTest(mockPhotonImage, mockFns = null) {
   _PhotonImage = mockPhotonImage;
   _photonFns   = mockFns;
   _photonReady = mockPhotonImage !== null;
+}
+
+let _signatureAssetReady = false;
+let _signatureAsset      = null; // ArrayBuffer（worker/assets/signature.png）
+
+/**
+ * 月替わり壁紙の署名（© nyanmusu）を事前生成PNGアセット（worker/assets/signature.png）から
+ * ArrayBufferとして遅延ロードする（Bug#39）。PhotonのdrawText系APIは色・ストローク制御が
+ * 不十分（draw_text()は白固定・draw_text_with_border()のボーダーは実装バグで判読不能な
+ * 黒塗り矩形になる。詳細はarchitecture.mdの「署名を事前生成PNGアセット化」参照）ため、
+ * 内容が変化しない署名テキストに限り事前生成PNG（ソフトドロップシャドウ）をwatermark()で
+ * 貼り付ける方式に統一した。wrangler.tomlの[[rules]]で.pngをDataモジュール（ArrayBuffer）
+ * としてimportできるよう設定済み（worker/svg-render.jsのensureFonts()と同じパターン）。
+ */
+export async function ensureSignatureAsset() {
+  if (_signatureAssetReady) return;
+  const { default: signaturePng } = await import("./assets/signature.png");
+  _signatureAsset = signaturePng;
+  _signatureAssetReady = true;
+}
+
+export function getSignatureAsset() { return _signatureAsset; }
+
+/** テスト用: 署名アセットのモックを注入する */
+export function _setSignatureAssetForTest(mockAsset) {
+  _signatureAsset = mockAsset;
+  _signatureAssetReady = mockAsset !== null;
 }
 
 /** base64 文字列を Uint8Array に変換（Cloudflare Workers の atob を使用） */
@@ -195,7 +221,6 @@ const WEEKDAY_LABELS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const COLOR_SUNDAY_HOLIDAY = "#c0392b";
 const COLOR_SATURDAY = "#2e6da4";
 const COLOR_WEEKDAY = "#2b2b2b";
-const SIGNATURE_TEXT = "© nyanmusu";
 // Bug#38: スマートフォン実機（iPhone 17 Pro）で月名バッジ・カレンダー帯・署名が画面の曲面や
 // システムUIに隠れて見切れていた。オーバーレイ要素の配置を固定px値ではなく画面サイズに対する
 // 比率で管理し、キャンバスサイズが変わっても安全マージンが保たれるようにする
@@ -206,7 +231,7 @@ const SIGNATURE_GAP_ABOVE_CALENDAR = 32; // カレンダー帯の下端と署名
 // 比率化したもの。calendarPanel/署名のCALENDAR_MARGIN_RATIO/SAFE_AREA_RATIOとは意図的に一致しない
 const MONTH_BADGE_LEFT_RATIO = 160 / 1080;
 const MONTH_BADGE_TOP_RATIO = 260 / 1920;
-// 2026-09追記（error 1102の追加対策）: _buildCalendarOverlayElement()/_buildSignatureOnlyElement()内の
+// 2026-09追記（error 1102の追加対策）: _buildCalendarOverlayElement()内の
 // フォントサイズ等の固定px値は、この基準幅に対するwidthの比率でスケールする。
 // compositeMonthlyWallpaper()のデフォルト出力解像度を540x960（この基準の半分）にすることで、
 // Satori/resvg・Photonの処理コストをピクセル数に応じて下げている（詳細はarchitecture.md参照）
@@ -250,32 +275,6 @@ export function _buildCalendarWeeks(year, month) {
   }
   if (week.some((d) => d !== null)) weeks.push(week);
   return weeks;
-}
-
-/** 「© nyanmusu」署名のみのSatori要素ツリーを返す（カレンダーなし版用・純粋関数） */
-export function _buildSignatureOnlyElement(options = {}) {
-  const { width = 1080, height = 1920 } = options;
-  const elementScale = width / REFERENCE_CANVAS_WIDTH;
-  const left = Math.round(width * CALENDAR_MARGIN_RATIO);
-  const bottom = Math.round(height * SAFE_AREA_RATIO);
-  return {
-    type: "div",
-    props: {
-      style: {
-        display: "flex", width, height, position: "relative",
-      },
-      children: {
-        type: "div",
-        props: {
-          style: {
-            display: "flex", position: "absolute", left, bottom,
-            color: "#ffffff", fontFamily: "WorkSans", fontSize: Math.round(26 * elementScale),
-          },
-          children: SIGNATURE_TEXT,
-        },
-      },
-    },
-  };
 }
 
 /**
@@ -389,13 +388,11 @@ export function _buildCalendarOverlayElement(year, month, options = {}) {
     },
   };
 
-  const signature = _buildSignatureOnlyElement({ width, height }).props.children;
-
   return {
     type: "div",
     props: {
       style: { display: "flex", width, height, position: "relative" },
-      children: [monthBadge, calendarPanel, signature],
+      children: [monthBadge, calendarPanel],
     },
   };
 }
@@ -419,6 +416,8 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     renderElementToPngFn,
     ensureFontsFn,
     getFontsFn,
+    ensureSignatureAssetFn = ensureSignatureAsset,
+    getSignatureAssetFn    = getSignatureAsset,
     // 2026-09追記: error 1102対策として出力解像度のデフォルトを1080x1920から540x960へ変更した
     // （詳細は.claude/rules/architecture.mdの「最終拡大の撤回」参照）
     width               = 540,
@@ -433,10 +432,15 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
   try {
     await ensurePhotonFn();
     const PhotonImage = getPhotonImageFn();
-    const { crop, resize, SamplingFilter, watermark, draw_text_with_border: drawTextWithBorder } = getPhotonFnsFn();
+    const { crop, resize, SamplingFilter, watermark } = getPhotonFnsFn();
 
     if (ensureFontsFn) await ensureFontsFn();
     const fonts = getFontsFn ? getFontsFn() : [];
+
+    // Bug#39: 署名（© nyanmusu）は事前生成PNGアセット化した。カレンダーあり・なし
+    // どちらの版もwatermark()で貼り付ける（Satori/Photonのテキスト描画APIは使わない）
+    await ensureSignatureAssetFn();
+    const signatureBytes = getSignatureAssetFn();
 
     // 2026-09追記（error 1102の撤回・再対策）: 縮小解像度(RENDER_SCALE)で合成してから
     // Lanczos3で目標解像度へ拡大する方式は、拡大呼び出し自体のコストがresvg/Photonの縮小効果を
@@ -500,16 +504,30 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     }
     console.log(`[monthly-wallpaper-composite] 再センタリング判定完了 shifted=${noCalendarBaseBytes !== baseBytes}`);
 
-    // Bug#37追記: カレンダー版はSatori/resvgでの色分け・カスタムフォント描画が必須だが、
-    // カレンダーなし版（署名のみ）はSatoriの表現力を必要としないため、CPU削減のため
-    // Photonのdraw_text_with_border()（縁取り文字を直接画像へ焼き込む）に置き換えた。
-    // Satori render・resvgラスタライズ・オーバーレイ用のPhoton合成を1セット分削除できる
+    // Bug#39: 署名は事前生成PNGアセット（watermark()で貼り付け）に統一したため、
+    // カレンダー版・カレンダーなし版とも同じ`stampSignature()`ヘルパーで署名を貼る。
+    // カレンダー帯の左端・下部セーフエリアに揃える位置合わせはSatori版（旧_buildSignatureOnlyElement）
+    // と同じ比率を使う（スマートフォン実機での見切れ対策・Bug#38を踏襲）
+    function stampSignature(targetImg) {
+      const sigImg = PhotonImage.new_from_byteslice(signatureBytes);
+      try {
+        const x = Math.round(width * CALENDAR_MARGIN_RATIO);
+        const y = height - Math.round(height * SAFE_AREA_RATIO) - sigImg.get_height();
+        watermark(targetImg, sigImg, BigInt(x), BigInt(y));
+      } finally {
+        sigImg.free();
+      }
+    }
+
+    // Bug#37追記: カレンダー版はSatori/resvgでの色分け・カスタムフォント描画が必須のため
+    // 引き続きrenderElementToPngFn()経由でオーバーレイを生成する
     async function applyCalendarOverlay(element, sourceBytes) {
       const overlayPng = await renderElementToPngFn(element, { width, height, fonts });
       const overlayImg = PhotonImage.new_from_byteslice(overlayPng);
       const targetImg = PhotonImage.new_from_byteslice(sourceBytes);
       try {
         watermark(targetImg, overlayImg, 0n, 0n);
+        stampSignature(targetImg);
         return uint8ArrayToBase64(targetImg.get_bytes());
       } finally {
         overlayImg.free();
@@ -517,16 +535,12 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
       }
     }
 
-    function drawSignature(sourceBytes) {
+    // Bug#37追記: カレンダーなし版（署名のみ）はSatoriの表現力を必要としないため、
+    // CPU削減のためSatori render・resvgラスタライズを行わない（1セット分削除）
+    function applySignatureOnly(sourceBytes) {
       const targetImg = PhotonImage.new_from_byteslice(sourceBytes);
       try {
-        // _buildSignatureOnlyElement()と同じelementScale基準でフォントサイズをスケールする
-        const fontSize = Math.round(26 * (width / REFERENCE_CANVAS_WIDTH));
-        // Bug#38: Satori版の_buildSignatureOnlyElement()と同じ比率でカレンダー帯の左端・
-        // 下部セーフエリアに揃える（スマートフォン実機での見切れ対策）
-        const x = Math.round(width * CALENDAR_MARGIN_RATIO);
-        const y = height - Math.round(height * SAFE_AREA_RATIO) - fontSize;
-        drawTextWithBorder(targetImg, SIGNATURE_TEXT, x, y, fontSize);
+        stampSignature(targetImg);
         return uint8ArrayToBase64(targetImg.get_bytes());
       } finally {
         targetImg.free();
@@ -537,7 +551,7 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
 
     const calendarImageData = await applyCalendarOverlay(calendarElement, baseBytes);
     console.log("[monthly-wallpaper-composite] カレンダー版オーバーレイ描画完了");
-    const noCalendarImageData = drawSignature(noCalendarBaseBytes);
+    const noCalendarImageData = applySignatureOnly(noCalendarBaseBytes);
     console.log("[monthly-wallpaper-composite] カレンダーなし版署名描画完了");
 
     srcImg.free();
