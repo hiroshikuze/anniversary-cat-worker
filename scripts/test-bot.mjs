@@ -5445,6 +5445,28 @@ console.log("\n[_buildCalendarOverlayElement / _buildSignatureOnlyElement: 構�
   assert("署名単独版のbottomが下部セーフエリア分だけ確保されている", sigOnlyStyle.bottom === safeArea);
 }
 
+console.log("\n[_buildCalendarOverlayElement / _buildSignatureOnlyElement: 縮小解像度でのフォントサイズスケーリング]");
+{
+  // 2026-09追記: error 1102対策として、compositeMonthlyWallpaper()は縮小解像度(width=540,
+  // height=960相当)でSatori/resvg描画を行ってから最後にPhoton Lanczos3で拡大する方式に変更した。
+  // 固定px値だったフォントサイズ等が基準幅1080に対する比率(elementScale)でスケールされることを検証する
+  const elHalf = _buildCalendarOverlayElement(2026, 10, { width: 540, height: 960 });
+  const monthBadgeStyleHalf = elHalf.props.children[0].props.style;
+  const monthNumberStyleHalf = elHalf.props.children[0].props.children[0].props.style;
+  const headerCellStyleHalf = elHalf.props.children[1].props.children[0].props.children[0].props.style;
+  assert("width=540のとき月名バッジの月番号フォントサイズは半分(72→36)", monthNumberStyleHalf.fontSize === 36);
+  assert("width=540のとき曜日見出しフォントサイズは半分(22→11)", headerCellStyleHalf.fontSize === 11);
+
+  const sigOnlyHalf = _buildSignatureOnlyElement({ width: 540, height: 960 });
+  const sigOnlyStyleHalf = sigOnlyHalf.props.children.props.style;
+  assert("width=540のとき署名フォントサイズは半分(26→13)", sigOnlyStyleHalf.fontSize === 13);
+
+  // width=1080（基準）指定時は従来と完全に同じ値になる（後方互換）
+  const elFull = _buildCalendarOverlayElement(2026, 10, { width: 1080, height: 1920 });
+  const monthNumberStyleFull = elFull.props.children[0].props.children[0].props.style;
+  assert("width=1080（基準）のとき月番号フォントサイズは従来通り72", monthNumberStyleFull.fontSize === 72);
+}
+
 console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
 {
   const mockBytes = new Uint8Array([1, 2, 3]);
@@ -5463,8 +5485,9 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
     new_from_byteslice: () => makeMockPhotonImage(),
   };
   const drawTextCalls = [];
+  const resizeCalls = [];
   const mockFns = {
-    resize: () => makeMockPhotonImage(1920, 960),
+    resize: (img, w, h, filter) => { resizeCalls.push({ w, h, filter }); return makeMockPhotonImage(w, h); },
     crop: () => makeMockPhotonImage(1080, 1920),
     SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
     watermark: () => {},
@@ -5492,14 +5515,20 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
   // renderElementToPngFn()はカレンダー版1回のみ呼ばれる（従来の2回から半減）
   assert("Satori/resvg経由のオーバーレイ描画はカレンダー版1回のみ", renderCalls.length === 1);
   assert("カレンダーなし版はdraw_text_with_border()で署名を直接描画する", drawTextCalls.length === 1 && drawTextCalls[0].text.includes("nyanmusu"));
-  // Bug#38: カレンダーなし版（Photon直接描画）の署名座標も、Satori版と同じ
-  // SAFE_AREA_RATIO/CALENDAR_MARGIN_RATIOから算出されていることを検証する
+
+  // 2026-09追記: error 1102対策として、Satori/resvg描画・Photon合成は縮小解像度
+  // (RENDER_SCALE=0.5・540x960相当)で行い、最後にLanczos3で目標解像度(1080x1920)へ拡大する
+  assert("Satori/resvg描画は縮小解像度(540x960)で行われる", renderCalls[0].options.width === 540 && renderCalls[0].options.height === 960);
   {
-    const fontSize = 26;
-    const expectedX = Math.round(1080 * 0.1225); // 132
-    const expectedY = 1920 - Math.round(1920 * 0.09) - fontSize; // 1920-173-26=1721
-    assert("カレンダーなし版署名のxがカレンダー帯の左端と揃う", drawTextCalls[0].x === expectedX);
-    assert("カレンダーなし版署名のyが下部セーフエリア分だけ確保されている", drawTextCalls[0].y === expectedY);
+    const fontSize = 13; // Math.round(26 * 0.5)
+    const expectedX = Math.round(540 * 0.1225); // 66
+    const expectedY = 960 - Math.round(960 * 0.09) - fontSize; // 960-86-13=861
+    assert("カレンダーなし版署名のxが縮小解像度でのカレンダー帯左端と揃う", drawTextCalls[0].x === expectedX);
+    assert("カレンダーなし版署名のyが縮小解像度での下部セーフエリア分だけ確保されている", drawTextCalls[0].y === expectedY);
+  }
+  {
+    const upscaleCalls = resizeCalls.filter((c) => c.filter === "Lanczos3" && c.w === 1080 && c.h === 1920);
+    assert("最後に目標解像度(1080x1920)へLanczos3で拡大する呼び出しが2回（カレンダーあり・なし各1回）ある", upscaleCalls.length === 2);
   }
 
   // 失敗時フォールバック

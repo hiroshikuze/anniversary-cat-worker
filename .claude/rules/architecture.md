@@ -1117,6 +1117,20 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 
 **未検証（2026-09時点）**: この修正はローカルのユニットテスト（要素ツリー・Photon描画呼び出しの数値アサーション）でのみ検証済み。実際のiPhone/Android実機での見切れ解消は、次回`POST /monthly-wallpaper/regenerate`実行後にユーザーが目視確認する。
 
+**低解像度合成＋Photon Lanczos3での最終拡大（2026-09追加・error 1102の追加対策）**: PR #186（カレンダーなし版のSatori/resvg排除）デプロイ後も、`query-worker-logs.mjs`で実機ログを確認すると`error 1102`が断続的に再発していた。失敗地点は毎回`再センタリング判定完了`の直後〜`カレンダー版オーバーレイ描画完了`の前後に集中しており、**カレンダー版1回分のSatori/resvg描画＋Photonでの複数回の画像デコード/エンコードだけでも、Workers Free上限のCPU予算を超過しうる**ことが判明した（詳細は`.claude/bugs-history.md`のBug#37追記参照）。
+
+resvgのラスタライズコスト・Photonのデコード/エンコードコストはいずれも処理するピクセル数にほぼ比例する。そこで、**カレンダー合成のパイプライン全体（ベースクロップ・再センタリング・Satori/resvg描画・Photon合成）を縮小解像度（`RENDER_SCALE = 0.5`・540×960相当、面積で1/4）で実行し、最後にPhotonの`resize()`（`SamplingFilter.Lanczos3`）で目標解像度（1080×1920）へ拡大**する方式に変更した。
+
+**なぜfal.ai（ESRGAN）ではなくPhotonのLanczos3を使うか**: 当初「fal.aiで最後に高解像度化する」案も検討したが却下した。fal.aiのESRGAN 2xは「AIが生成した猫イラスト（写真的な質感）の高精細化」を想定して選定したモデルであり（`CLAUDE.md`の「変えてはいけない設計判断」参照）、月替わり壁紙の最終画像はそこに**Satori/resvgで描いたフラットなベクター文字（カレンダーの数字・月名）が重なった合成物**である。AI超解像モデルを平坦な色面上のシャープな文字に適用すると、エッジのぼやけ・歪み・ノイズ（ハルシネーション）が生じやすく、カレンダーの可読性という本機能の核心を損なうリスクが高いと判断した。Photonの`Lanczos3`は単純な補間拡大でハルシネーションが起きないため、多少のソフト化はあっても文字が破綻しにくい。事前にPython/PILで簡易シミュレーション（低解像度描画→Lanczos拡大 vs フル解像度ネイティブ描画の比較）を行い、ユーザーが劣化度合いを確認したうえで採用した。
+
+**実装**:
+
+- `_buildCalendarOverlayElement(year, month, options)`・`_buildSignatureOnlyElement(options)`内の固定px値（フォントサイズ・パディング・角丸・マージン等）を、基準幅1080に対する`width`の比率（`scale = width / 1080`）でスケールするよう変更した。`width=1080`指定時（デフォルト）は`scale=1`となり従来と完全に同じ値になるため、既存の呼び出し・テストへの後方互換を保っている
+- `compositeMonthlyWallpaper(imageData, year, month, deps = {})`は、`renderWidth = Math.round(width * RENDER_SCALE)`・`renderHeight = Math.round(height * RENDER_SCALE)`を算出し、ベースクロップ・再センタリング判定・`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`の呼び出し・Satori/resvg描画・Photon合成のすべてを`renderWidth`/`renderHeight`基準で行う。カレンダーあり版・なし版それぞれの合成が完了した最後の1ステップとして、Photonの`resize(img, width, height, SamplingFilter.Lanczos3)`で目標解像度へ拡大してから`get_bytes()`/base64エンコードする
+- 診断用の`console.log`（`[monthly-wallpaper-composite]`プレフィックス）に拡大ステップの完了ログを追加する
+
+**未検証（2026-09時点）**: CPU予算削減の実効性・実際のカレンダー文字の見た目（Satori/resvgでの実描画）はいずれもローカルで検証できない（`performance.now()`が同期WASM処理では進まない制約のため）。デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を複数回実行し、`error 1102`の再現率低下とカレンダー文字の可読性を実機で確認する。
+
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
 
 `runBot()`と同じ構造を踏襲する。`deps.compositeMonthlyWallpaperFn`（省略時`compositeMonthlyWallpaper`）はSatori/resvgという重いWASM処理を伴うためテスト時に必ずモック可能にしている（`_pollFalAndGetTexture()`と同じ「依存関数を引数で受け取る」パターン）。
