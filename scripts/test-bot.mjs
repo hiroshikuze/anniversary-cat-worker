@@ -5447,8 +5447,8 @@ console.log("\n[_buildCalendarOverlayElement / _buildSignatureOnlyElement: 構�
 
 console.log("\n[_buildCalendarOverlayElement / _buildSignatureOnlyElement: 縮小解像度でのフォントサイズスケーリング]");
 {
-  // 2026-09追記: error 1102対策として、compositeMonthlyWallpaper()は縮小解像度(width=540,
-  // height=960相当)でSatori/resvg描画を行ってから最後にPhoton Lanczos3で拡大する方式に変更した。
+  // 2026-09追記: error 1102対策として、compositeMonthlyWallpaper()の出力解像度をデフォルト
+  // 1080x1920から540x960へ変更した（詳細はarchitecture.mdの「最終拡大の撤回」参照）。
   // 固定px値だったフォントサイズ等が基準幅1080に対する比率(elementScale)でスケールされることを検証する
   const elHalf = _buildCalendarOverlayElement(2026, 10, { width: 540, height: 960 });
   const monthBadgeStyleHalf = elHalf.props.children[0].props.style;
@@ -5516,19 +5516,20 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
   assert("Satori/resvg経由のオーバーレイ描画はカレンダー版1回のみ", renderCalls.length === 1);
   assert("カレンダーなし版はdraw_text_with_border()で署名を直接描画する", drawTextCalls.length === 1 && drawTextCalls[0].text.includes("nyanmusu"));
 
-  // 2026-09追記: error 1102対策として、Satori/resvg描画・Photon合成は縮小解像度
-  // (RENDER_SCALE=0.5・540x960相当)で行い、最後にLanczos3で目標解像度(1080x1920)へ拡大する
-  assert("Satori/resvg描画は縮小解像度(540x960)で行われる", renderCalls[0].options.width === 540 && renderCalls[0].options.height === 960);
+  // 2026-09追記: 3回連続でerror 1102が再発したため、最終拡大(Lanczos3)ステップを撤回し
+  // 540x960のまま配信する方式に変更した（詳細はarchitecture.mdの「最終拡大の撤回」参照）。
+  // compositeMonthlyWallpaper()の出力解像度そのものが540x960になる（デフォルト値の変更）
+  assert("Satori/resvg描画・出力ともに540x960で行われる（デフォルト解像度）", renderCalls[0].options.width === 540 && renderCalls[0].options.height === 960);
   {
-    const fontSize = 13; // Math.round(26 * 0.5)
+    const fontSize = 13; // Math.round(26 * (540/1080))
     const expectedX = Math.round(540 * 0.1225); // 66
     const expectedY = 960 - Math.round(960 * 0.09) - fontSize; // 960-86-13=861
-    assert("カレンダーなし版署名のxが縮小解像度でのカレンダー帯左端と揃う", drawTextCalls[0].x === expectedX);
-    assert("カレンダーなし版署名のyが縮小解像度での下部セーフエリア分だけ確保されている", drawTextCalls[0].y === expectedY);
+    assert("カレンダーなし版署名のxがカレンダー帯左端と揃う", drawTextCalls[0].x === expectedX);
+    assert("カレンダーなし版署名のyが下部セーフエリア分だけ確保されている", drawTextCalls[0].y === expectedY);
   }
   {
     const upscaleCalls = resizeCalls.filter((c) => c.filter === "Lanczos3" && c.w === 1080 && c.h === 1920);
-    assert("最後に目標解像度(1080x1920)へLanczos3で拡大する呼び出しが2回（カレンダーあり・なし各1回）ある", upscaleCalls.length === 2);
+    assert("目標解像度(1080x1920)へのLanczos3拡大は行わない（撤回済み）", upscaleCalls.length === 0);
   }
 
   // 失敗時フォールバック
