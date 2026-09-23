@@ -12,6 +12,12 @@
 
 3ステップ以上のタスクは実装前に計画を提示し、承認を得てから進む。これはルール7の起点となる（Plan承認後にTodoWriteを列挙する）。
 
+**着手判定基準（2026-09追加・再発防止）**: 以下のいずれかに該当する文言がユーザーメッセージに含まれる場合、それは「実装承認」ではなく「検討・壁打ちの依頼」とみなし、Planを提示した時点で止まる（Docsフェーズへ進まない）。
+
+- 意見を求める文言の例:「どう思いますか」「どうですか」「〜を考えましたが」「〜でどうでしょう」「〜のつもりですが」
+- 上記に該当する場合はPlanを提示するにとどめ、次のユーザー発言に明確な承認語（「進めて」「お願いします」「それで」「OK」「反映して」「実装して」等）が含まれてから、はじめてDocsフェーズへ進む
+- ユーザーが具体的な数値・仕様入りで意見を求めてきた場合でも、それを「実装可能な仕様書」と解釈して即座に着手しない。数値の精緻さ・具体性は承認の証拠にはならない
+
 ### 2. Self-Improvement Loop
 
 ミスのパターンを `.claude/revision_log.md` に記録し、毎セッション冒頭で読み返す。
@@ -63,6 +69,14 @@ TodoWriteの1番目の項目がドキュメント以外になっている場合�
 
 - `[Docs完了] → Testsフェーズへ移ります`
 - `[Tests完了] → Codeフェーズへ移ります`
+
+**見た目・レイアウトに関わるタスクの追加ゲート（2026-09追加・再発防止）:**
+
+UI・画像合成・座標配置など、完成物を実際に見なければ良し悪しを判断できないタスクでは、「ユニットテストの数値アサーションが通った」をもってユーザーの承認とみなさない。
+
+- Plan提示時、可能な範囲で座標・レイアウトの模式図（例: Python/PIL等でのモックアップ、簡易SVG）を添えてユーザーに見せ、実装前に見た目の方向性の合意を得る
+- Cloudflare Workers実機でしかレンダリングできない要素（Satori/resvg等のWASM描画）は模式図で近似する旨を明記し、模式図が最終成果物そのものではないことを伝える
+- 実装後のユニットテストは「意図した座標計算になっているか」の確認にすぎず、「ユーザーが見た目を承認したか」の代替にはならない。実機検証が可能な場合は実機確認を、不可能な場合は模式図での事前合意を必須とする
 
 **違反を検知した場合（自己検知・ユーザー指摘いずれも）:**
 
@@ -213,7 +227,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | 外部通信の共通リトライ（5xx・ネットワーク例外を指数バックオフでリトライ。SUZURI登録・fal.aiポーリング・共有URL画像取得等に適用） | `worker/http-utils.js` `fetchWithRetry()` `worker/index.js` `_pollFalAndGetTexture()` | 稼働中 |
 | Workers Traces有効化・CPU時間計測チェックポイント（Cron・HTTPエンドポイント問わず重い処理に`recordCpuCheckpoint()`で計測を恒久設置。Workers Free上限10ms対策のBug#32の一環） | `wrangler.toml` `[observability.traces]` `worker/index.js` `recordCpuCheckpoint()` `worker/bot.js` | 稼働中 |
 | CPU時間のステップ別KV集計・API化（`/usage`と同パターン。`/cpu-usage`でCIログから確認可能） | `worker/index.js` `incrementCpuTimeKv()` `recordCpuCheckpoint()` `/cpu-usage` `scripts/health-check.js` | 稼働中 |
-| 月替わり壁紙プレゼント（Bluesky/Mastodon限定・カレンダー付き/なし2版・月末Cron＋手動再生成エンドポイント） | `worker/bot.js` `runMonthlyWallpaperPost()` `worker/image-utils.js` `compositeMonthlyWallpaper()` `worker/svg-render.js` `POST /monthly-wallpaper/regenerate` | 実装済み・実機再検証待ち（`npm test`は全件成功。実機検証でresvg.wasm関連の障害を2件（Bug#36本体・追記）検知・修正済み（デプロイ済み・`composited: true`まで確認）。その後Bluesky投稿の目視確認で月名バッジの月番号欠落・カレンダーなし版の被写体センタリング不足の2点を検知（Bug#37）・修正済みだが本ドキュメント執筆時点で未デプロイ。デプロイ後の実機再検証はユーザーが実施する。詳細は`.claude/rules/architecture.md`の「月替わり壁紙プレゼント機能」の「実装状況」参照） |
+| 月替わり壁紙プレゼント（Bluesky/Mastodon限定・カレンダー付き/なし2版・月末Cron＋手動再生成エンドポイント） | `worker/bot.js` `runMonthlyWallpaperPost()` `worker/image-utils.js` `compositeMonthlyWallpaper()` `worker/svg-render.js` `POST /monthly-wallpaper/regenerate` | 実装済み・実機再検証待ち（`npm test`は全件成功。実機検証で(1)resvg.wasm関連障害2件（Bug#36本体・追記）、(2)月名バッジの月番号欠落・カレンダーなし版の被写体センタリング不足（Bug#37）、(3)カレンダーなし版センタリングの重量化によるCloudflare error 1102（CPU/メモリ上限超過・Bug#37追記×2）を順に検知・修正し、5ラウンド目でPR #184デプロイ後に`composited: true`完走を確認。ただしerror 1102は断続的再発のため6ラウンド目としてカレンダーなし版のSatori/resvg排除（PR #185）を実施済みだが本ドキュメント執筆時点で未デプロイ・未検証。さらにその後の実機（iPhone 17 Pro）目視確認で月名バッジ・カレンダー帯・署名が画面の曲面/システムUIに隠れて見切れる問題を検知（Bug#38）・セーフエリア比率での配置修正済みだが同じくPR #185に含めてpush済みで未デプロイ・未検証。デプロイ後の実機再検証はユーザーが実施する。詳細は`.claude/rules/architecture.md`の「月替わり壁紙プレゼント機能」の「実装状況」「実機検証の結果」参照） |
 
 ### 主要な定数値・APIエンドポイント一覧
 

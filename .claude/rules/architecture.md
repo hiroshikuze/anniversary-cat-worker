@@ -1074,7 +1074,7 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 4. 「カレンダーなし」版も同時に生成する: 上記「カレンダーなし版の被写体センタリング」で得た画像に`_buildSignatureOnlyElement()`のオーバーレイ（署名のみ）を貼ったもの（full-bleed、カレンダー帯・月名バッジなし）
 5. 失敗時（Photon/Satori/resvg読み込み失敗等）は既存`autoCropImage()`と同様、未加工画像にフォールバックし処理全体は失敗させない
 
-**実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。
+**実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`/`compositeMonthlyWallpaper()`）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。スマートフォン実機でのセーフエリア調整（Bug#38・上記「スマートフォン実機でのセーフエリア調整」参照）も実装済みだが、実機での見切れ解消は次回の手動再生成実行時にユーザーが確認する（本ドキュメント執筆時点で未デプロイ）。
 
 **実機検証の結果（2026-09・2ラウンド実施済み・3ラウンド目待ち）**: デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を`X-Bypass-Token`ヘッダー付きで手動実行。
 
@@ -1082,12 +1082,40 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 - **2ラウンド目**: 修正後に再実行しても依然`composited: false`。再度`query-worker-logs.mjs`で確認したところ、今度は別のエラー`Already initialized. The initWasm() function can be used only once.`に変わっていた。上記「`ensureResvg()`はシングルフライトパターン」項に記載の並行呼び出し競合を特定・修正（Bug#36追記）。**この修正はPR #182として作成済みだが、本ドキュメント執筆時点で未マージ・未デプロイ**
 - **3ラウンド目**: PR #182マージ・デプロイ後に`composited: true`を確認（resvg関連の障害は解消）。ただしBluesky投稿の目視確認で新たに2件の見た目の問題が判明: (1) 月名バッジに月番号「10」が表示されていない、(2) カレンダーなし版で被写体が上寄りになり下に不自然な余白が残る。いずれも上記「月名バッジの構成」「カレンダーなし版の被写体センタリング」で修正済み
 - **4ラウンド目**: PR #183マージ・デプロイ後に`/monthly-wallpaper/regenerate`を再実行したところ`error 1102`（Cloudflare Workers強制終了・CPU/メモリ上限超過）が返りDiscord通知も届かなかった。`query-worker-logs.mjs`でログを確認すると`generate 完了`直後・`カレンダー合成失敗`警告すら出ないまま途切れており、JS例外ではなく基盤側の強制終了と判明。カレンダーなし版センタリング（3ラウンド目の修正）が追加した「検出領域をズームインして再フィット」処理（追加のLanczos3リサイズ）がCPU予算を超過させたと判断し、リサイズを伴わない軽量なシフト方式に設計変更した（Bug#37追記。詳細は上記「カレンダーなし版の被写体センタリング」の「設計変更」参照）
-- **5ラウンド目（未実施）**: 軽量化後の修正をデプロイ後、再度`/monthly-wallpaper/regenerate`を実行し、`error 1102`が再発しないこと・Discord通知が届くこと・月番号の表示・カレンダーなし版の被写体センタリング（効果は限定的な場合がある旨は許容）を確認する必要がある
+- **5ラウンド目**: PR #184マージ・デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を2回連続で手動実行。**1回目は`error 1102`が再発、2回目は`composited: true`で完走**（Bluesky/Mastodon投稿・Discord通知とも成功）。`query-worker-logs.mjs`で1回目のログを確認すると、`再センタリング判定完了`の直後で途切れておりオーバーレイ描画（`Promise.all([applyOverlay(カレンダー版), applyOverlay(カレンダーなし版)])`＝Satori×2＋resvg×2＋Photon合成×2）の区間で強制終了していたと判明。Bug#37追記のシフト方式への変更で以前より先まで進むようにはなったが、**真のCPUボトルネックはSatori/resvgのオーバーレイ描画そのもの**（未着手）であり、生成画像の内容による処理時間のばらつき次第で成否が分かれる不安定な状態が続いていた
+- **6ラウンド目（未実施・PR #185）**: 下記「カレンダーなし版のSatori/resvg排除」（error 1102対策）と「スマートフォン実機でのセーフエリア調整」（Bug#38・見切れ対策）の両方をまとめて含むPR #185をデプロイ後、再度`/monthly-wallpaper/regenerate`を複数回実行し、(a) `error 1102`の再現率が実際に下がったか、(b) iPhone/Androidの実機で月名バッジ・カレンダー帯・署名が見切れなくなったかの2点を確認する必要がある（(a)は完全に0%になる保証はない。カレンダー版のSatori/resvgは維持しているため）
 
 **CPU時間の計測追加（2026-09・Bug#37追記の再発防止・PR #184に含む）**: 軽量化の効果を推測ではなく実測で確認できるようにするため、`runMonthlyWallpaperPost()`の`compositeMonthlyWallpaperFn()`呼び出しを`recordCpuCheckpoint("monthly-wallpaper-composite", ..., env.RATE_KV)`で計測しKV集計する（`/cpu-usage`で確認可能。月次1回・手動再生成時のみの低頻度経路のためKV書き込み予算への影響は無視できる）。ただし**この計測値がそのまま信頼できるとは限らない**: `generate-autoCrop`の計測（上記「CPU計測は機能しないことが判明」参照）と同様、`compositeMonthlyWallpaper()`内部はPhoton・Satori・resvgいずれも同期的なWASM呼び出しでI/Oを挟まないため、`performance.now()`が計測区間内で一切進まず差分が0msになる可能性がある。この計測値がゼロや不自然に小さい値を示した場合でも「処理が軽い」と早合点せず、`compositeMonthlyWallpaper()`内部に追加した詳細な`console.log`（下記）とCloudflare側が記録する実タイムスタンプ（`query-worker-logs.mjs`で確認）を併用し、どのステップまで到達してから終了したかで実態を判断する。
 
 `recordCpuCheckpoint()`は`worker/index.js`で定義されており、`worker/image-utils.js`は`worker/index.js`にimportされる側（逆方向importは循環参照になる。`worker/r2-storage.js`と同じ制約）のため、`compositeMonthlyWallpaper()`内部には`recordCpuCheckpoint()`を直接呼ばず、素の`console.log()`（`[monthly-wallpaper-composite]`プレフィックス）を主要ステップ（開始・ベースクロップ完了・再センタリング検出/シフト判定・カレンダー版/カレンダーなし版オーバーレイ描画それぞれの完了）の直後に追加した。計測（`recordCpuCheckpoint`）は呼び出し元の`runMonthlyWallpaperPost()`（`worker/bot.js`、既に`recordCpuCheckpoint`をimport済み）側で全体時間のみラップする。
+
+**カレンダーなし版のSatori/resvg排除（2026-09・5ラウンド目で1102の再発を確認して追加対応）**: 5ラウンド目の実機検証で、シフト方式への軽量化後も`error 1102`が（毎回ではないが）再発することを確認した。`query-worker-logs.mjs`で失敗ログを見ると、`再センタリング判定完了`の直後・`オーバーレイ描画完了`の手前で途切れており、真のCPUボトルネックは`Promise.all([applyOverlay(カレンダー版), applyOverlay(カレンダーなし版)])`区間（Satori×2＋resvgラスタライズ×2＋Photon合成×2）にあると判明した。
+
+カレンダー版は日付ごとの色分け（日曜/祝日=赤・土曜=青）とカスタムフォントが必須のためSatori/resvgを維持するしかないが、**カレンダーなし版（「© nyanmusu」署名のみ）はSatoriの表現力を必要としない**。3案を比較した:
+
+1. **署名をPhotonの`draw_text_with_border()`に置き換える（採用）**: Satori render・resvgラスタライズ・オーバーレイ用のPhoton合成（`watermark()`＋PNGデコード2回）を丸ごと1セット削除できる。削減効果が最も大きく確実
+2. カレンダー要素数（日付セル等）を削減してSatoriのレイアウト計算コストを削る: resvgのラスタライズ（解像度依存）が支配的コストである可能性が高く効果が不確実。カレンダー版は引き続き必要なため実装リスクの割に効果が薄い
+3. オーバーレイの出力解像度を下げてPhotonで拡大: ラスタライズコストは下がるが追加のリサイズで一部相殺し、カレンダーの文字視認性が落ちるリスクがある
+
+1を採用し、`compositeMonthlyWallpaper()`はSatori/resvgをカレンダー版の1回のみ呼び出す（従来の2回から半減）。カレンダーなし版は`noCalendarBaseBytes`をデコードしたPhoton画像に`draw_text_with_border(img, "© nyanmusu", x, y, fontSize)`を直接描画し（オーバーレイPNGの生成・合成が不要になる）、そのまま`get_bytes()`する。
+
+**署名の黒背景パネルは削除（2026-09・ユーザー指摘で判明した実装ミス）**: `_buildSignatureOnlyElement()`は当初から`backgroundColor: "rgba(0,0,0,0.35)"`の半透明黒背景パネルを描画していたが、これは最初から不要という指定だったにもかかわらず実装時に反映されていなかった（`.claude/bugs-history.md`の別機能・フロントエンドCanvas watermarkの黒背景仕様と混同したとみられる）。`_buildSignatureOnlyElement()`から背景パネルを削除し、白文字のみにした。この関数はカレンダー版の埋め込み署名（`_buildCalendarOverlayElement()`内、Satori継続使用）にも使われているため、この修正はカレンダー版・カレンダーなし版の両方に適用される。カレンダーなし版側はPhotonの`draw_text_with_border()`（縁取り文字、背景パネルなし）に置き換わるため、両者は異なる描画技術ながら「黒背景なし・縁取り/白文字で可読性を担保」という統一感のある見た目になる。
+
 - **投稿URLのDiscord通知記載（2026-09追加・PR #182に含む）**: 上記の実機検証を繰り返す過程で、投稿の成否確認・テスト投稿の手動削除のたびにログからURLを手動組み立てる手間が発生したため、`buildBlueskyPostUrl()`とMastodon Status APIの`url`フィールドを使い、Discord通知の成否行に投稿URLを直接記載するようにした（日次Bot・月替わり壁紙の両方に適用。詳細は「Discord通知」節の「投稿URLの記載」参照）
+
+**スマートフォン実機でのセーフエリア調整（2026-09・iPhone 17 Pro実機テストで発覚・Bug#38）**: 実際に投稿された壁紙画像をiPhone 17 Proの待受に設定したところ、左上の月名バッジ・下部のカレンダー帯・署名が、画面の曲面（ディスプレイ端の湾曲）やシステムUI（時計・ホームインジケーター等）に隠れて見切れることが判明した（ユーザーが実機で目視確認）。それまでの配置（`monthBadge`は`top: 56`・`calendarPanel`は`left/right: 40, bottom: 64`・署名は`left: 32, bottom: 32`）は、Cloudflare Workers上の画像処理として動作確認はできても、実際のスマートフォン端末の画面形状までは考慮していなかった。
+
+修正方針（Geminiとの壁打ちを経てユーザーが確定した数値仕様）: イラスト自体の構図（テイスト・フォント・解像度・被写体の位置）は変更せず、オーバーレイ要素（月名バッジ・カレンダー帯・署名）の配置のみを画面中央寄りに調整する。背景側の左右マージン（キャラクターの登場位置に影響する余白）はこの調整の対象外（ユーザーが明示的に許容）。
+
+- **上下セーフエリア**: 全高の約9%を上下それぞれの余白として確保する（`SAFE_AREA_RATIO = 0.09`・1080×1920基準で約173px）。`monthBadge`の`top`をこの値に、`calendarPanel`・署名の`bottom`基準をこの値に変更し、オーバーレイ全体をわずかに中央寄りにシフトする
+- **カレンダー帯の横幅・左右マージン**: カレンダーブロックの横幅を全幅の約75.5%に収め、左右に均等なマージンを確保して中央に配置する。ユーザーが提示した2つの数値（横幅75.5%・左右マージン各11%）はそのままでは合計97.5%になり厳密には矛盾するため、より安全側（マージンが広くなる側）の解釈を採用し、横幅75.5%を厳密値として左右マージンを逆算した（`CALENDAR_MARGIN_RATIO = 0.1225`・約132px、約12.25%）。指定の11%よりマージンが広がる方向の丸めなので、要求された「スマートフォンのバー等と干渉しない浮き」の意図には反しない
+- **署名の左端をカレンダー帯の左端に揃える**: 従来署名は`left: 32`とカレンダー帯の左端（旧`left: 40`）と微妙にずれていた。`CALENDAR_MARGIN_RATIO`を`calendarPanel`・署名で共有することで左端が自動的に揃うようにした
+- **月名バッジの位置は実機フィードバックの具体的な座標指定を優先する（2026-09追加）**: 当初`monthBadge`も`calendarPanel`と同じ`CALENDAR_MARGIN_RATIO`/`SAFE_AREA_RATIO`（左132px・上173px相当）を暫定的に適用していたが、ユーザーから「160px, 260pxの位置に置く」という具体的な座標指定を受けたため、`monthBadge`のみ`MONTH_BADGE_LEFT_RATIO`（160/1080）・`MONTH_BADGE_TOP_RATIO`（260/1920）という独立した比率定数に切り替えた。`calendarPanel`・署名の左端とは意図的に完全一致しない（バッジは実機の曲面・カメラアイランド等を避けるためカレンダー帯よりもやや内側・下に配置する方が安全という判断）
+- **カレンダー帯と署名の縦の余白**: 署名（コピーライト）を画面最下部のセーフエリア境界（`SAFE_AREA_RATIO`基準）に配置し、カレンダー帯はその上に既存デザインと同じ32pxの間隔を保って浮かせる（`calendarPanel`の`bottom`＝署名の`bottom` + 32px）。底面ギリギリに張り付かない設計は従来から踏襲済みだったため、セーフエリアの基準点を「画面下端」から「セーフエリア境界」に置き換えるだけで対応できた
+
+**実装箇所**: `worker/image-utils.js` `_buildSignatureOnlyElement()`・`_buildCalendarOverlayElement()`（`monthBadge`・`calendarPanel`）・`compositeMonthlyWallpaper()`内の`drawSignature()`（カレンダーなし版のPhoton直接描画、同じ比率を独立に計算）。3箇所とも同一の`SAFE_AREA_RATIO`・`CALENDAR_MARGIN_RATIO`定数（`width`/`height`引数から動的に計算する比率であり固定px値ではない）を参照するため、キャンバスサイズを変更しても比率は保たれる。
+
+**未検証（2026-09時点）**: この修正はローカルのユニットテスト（要素ツリー・Photon描画呼び出しの数値アサーション）でのみ検証済み。実際のiPhone/Android実機での見切れ解消は、次回`POST /monthly-wallpaper/regenerate`実行後にユーザーが目視確認する。
 
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
 
