@@ -5514,12 +5514,14 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
   assert("Satori/resvg描画・出力ともに540x960で行われる（デフォルト解像度）", renderCalls[0].options.width === 540 && renderCalls[0].options.height === 960);
   {
     // 2026-09追記: 署名PNGの可視テキストがカレンダーの可視テキストより左に寄って見える問題を修正。
-    // calendarPanelのボックス左端（calMargin）にそのままPNGを貼るのではなく、calendarPanelの
-    // スケールするpadding（width=540時14px）からPNG自体に焼き込まれた固定余白（9px）を差し引いた
-    // 分だけ右にずらすことで、可視テキストの開始位置をカレンダー・月名バッジと揃える
+    // 当初はpaddingの理論差分（約5px）で補正したが、実際の合成済み出力画像（540x960）を
+    // ユーザーがPaint.NETで実測したところ約22px、Pythonでの直接ピクセル解析でも21px
+    // （カレンダー"sun"の可視開始位置x=96、署名の旧可視開始位置x=75の差）とズレが大きく、
+    // 理論値がWorkSansフォント自体の左サイドベアリングを考慮できていなかったと判明した。
+    // 以降はpadding差の理論計算ではなく、実際の出力画像を直接計測して得た値を定数として使う
     const calMargin = Math.round(540 * 0.1225); // 66
-    const calendarPaddingScaled = Math.round(28 * (540 / 1080)); // 14
-    const expectedX = calMargin + calendarPaddingScaled - 9; // 71
+    const SIGNATURE_X_OFFSET_PX = 21; // 実機出力画像（width=540）の直接ピクセル計測値
+    const expectedX = calMargin + SIGNATURE_X_OFFSET_PX; // 87
     assert("カレンダー版署名のxがカレンダーの可視テキスト開始位置と揃う", Number(watermarkCalls[1].x) === expectedX);
     assert("カレンダーなし版署名のxがカレンダーの可視テキスト開始位置と揃う", Number(watermarkCalls[2].x) === expectedX);
   }
