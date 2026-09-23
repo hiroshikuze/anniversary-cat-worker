@@ -1082,11 +1082,25 @@ wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプ�
 - **2ラウンド目**: 修正後に再実行しても依然`composited: false`。再度`query-worker-logs.mjs`で確認したところ、今度は別のエラー`Already initialized. The initWasm() function can be used only once.`に変わっていた。上記「`ensureResvg()`はシングルフライトパターン」項に記載の並行呼び出し競合を特定・修正（Bug#36追記）。**この修正はPR #182として作成済みだが、本ドキュメント執筆時点で未マージ・未デプロイ**
 - **3ラウンド目**: PR #182マージ・デプロイ後に`composited: true`を確認（resvg関連の障害は解消）。ただしBluesky投稿の目視確認で新たに2件の見た目の問題が判明: (1) 月名バッジに月番号「10」が表示されていない、(2) カレンダーなし版で被写体が上寄りになり下に不自然な余白が残る。いずれも上記「月名バッジの構成」「カレンダーなし版の被写体センタリング」で修正済み
 - **4ラウンド目**: PR #183マージ・デプロイ後に`/monthly-wallpaper/regenerate`を再実行したところ`error 1102`（Cloudflare Workers強制終了・CPU/メモリ上限超過）が返りDiscord通知も届かなかった。`query-worker-logs.mjs`でログを確認すると`generate 完了`直後・`カレンダー合成失敗`警告すら出ないまま途切れており、JS例外ではなく基盤側の強制終了と判明。カレンダーなし版センタリング（3ラウンド目の修正）が追加した「検出領域をズームインして再フィット」処理（追加のLanczos3リサイズ）がCPU予算を超過させたと判断し、リサイズを伴わない軽量なシフト方式に設計変更した（Bug#37追記。詳細は上記「カレンダーなし版の被写体センタリング」の「設計変更」参照）
-- **5ラウンド目（未実施）**: 軽量化後の修正をデプロイ後、再度`/monthly-wallpaper/regenerate`を実行し、`error 1102`が再発しないこと・Discord通知が届くこと・月番号の表示・カレンダーなし版の被写体センタリング（効果は限定的な場合がある旨は許容）を確認する必要がある
+- **5ラウンド目**: PR #184マージ・デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を2回連続で手動実行。**1回目は`error 1102`が再発、2回目は`composited: true`で完走**（Bluesky/Mastodon投稿・Discord通知とも成功）。`query-worker-logs.mjs`で1回目のログを確認すると、`再センタリング判定完了`の直後で途切れておりオーバーレイ描画（`Promise.all([applyOverlay(カレンダー版), applyOverlay(カレンダーなし版)])`＝Satori×2＋resvg×2＋Photon合成×2）の区間で強制終了していたと判明。Bug#37追記のシフト方式への変更で以前より先まで進むようにはなったが、**真のCPUボトルネックはSatori/resvgのオーバーレイ描画そのもの**（未着手）であり、生成画像の内容による処理時間のばらつき次第で成否が分かれる不安定な状態が続いていた
+- **6ラウンド目（未実施）**: 下記「カレンダーなし版のSatori/resvg排除」の修正をデプロイ後、再度`/monthly-wallpaper/regenerate`を複数回実行し、`error 1102`の再現率が実際に下がったか確認する必要がある（完全に0%になる保証はない。カレンダー版のSatori/resvgは維持しているため）
 
 **CPU時間の計測追加（2026-09・Bug#37追記の再発防止・PR #184に含む）**: 軽量化の効果を推測ではなく実測で確認できるようにするため、`runMonthlyWallpaperPost()`の`compositeMonthlyWallpaperFn()`呼び出しを`recordCpuCheckpoint("monthly-wallpaper-composite", ..., env.RATE_KV)`で計測しKV集計する（`/cpu-usage`で確認可能。月次1回・手動再生成時のみの低頻度経路のためKV書き込み予算への影響は無視できる）。ただし**この計測値がそのまま信頼できるとは限らない**: `generate-autoCrop`の計測（上記「CPU計測は機能しないことが判明」参照）と同様、`compositeMonthlyWallpaper()`内部はPhoton・Satori・resvgいずれも同期的なWASM呼び出しでI/Oを挟まないため、`performance.now()`が計測区間内で一切進まず差分が0msになる可能性がある。この計測値がゼロや不自然に小さい値を示した場合でも「処理が軽い」と早合点せず、`compositeMonthlyWallpaper()`内部に追加した詳細な`console.log`（下記）とCloudflare側が記録する実タイムスタンプ（`query-worker-logs.mjs`で確認）を併用し、どのステップまで到達してから終了したかで実態を判断する。
 
 `recordCpuCheckpoint()`は`worker/index.js`で定義されており、`worker/image-utils.js`は`worker/index.js`にimportされる側（逆方向importは循環参照になる。`worker/r2-storage.js`と同じ制約）のため、`compositeMonthlyWallpaper()`内部には`recordCpuCheckpoint()`を直接呼ばず、素の`console.log()`（`[monthly-wallpaper-composite]`プレフィックス）を主要ステップ（開始・ベースクロップ完了・再センタリング検出/シフト判定・カレンダー版/カレンダーなし版オーバーレイ描画それぞれの完了）の直後に追加した。計測（`recordCpuCheckpoint`）は呼び出し元の`runMonthlyWallpaperPost()`（`worker/bot.js`、既に`recordCpuCheckpoint`をimport済み）側で全体時間のみラップする。
+
+**カレンダーなし版のSatori/resvg排除（2026-09・5ラウンド目で1102の再発を確認して追加対応）**: 5ラウンド目の実機検証で、シフト方式への軽量化後も`error 1102`が（毎回ではないが）再発することを確認した。`query-worker-logs.mjs`で失敗ログを見ると、`再センタリング判定完了`の直後・`オーバーレイ描画完了`の手前で途切れており、真のCPUボトルネックは`Promise.all([applyOverlay(カレンダー版), applyOverlay(カレンダーなし版)])`区間（Satori×2＋resvgラスタライズ×2＋Photon合成×2）にあると判明した。
+
+カレンダー版は日付ごとの色分け（日曜/祝日=赤・土曜=青）とカスタムフォントが必須のためSatori/resvgを維持するしかないが、**カレンダーなし版（「© nyanmusu」署名のみ）はSatoriの表現力を必要としない**。3案を比較した:
+
+1. **署名をPhotonの`draw_text_with_border()`に置き換える（採用）**: Satori render・resvgラスタライズ・オーバーレイ用のPhoton合成（`watermark()`＋PNGデコード2回）を丸ごと1セット削除できる。削減効果が最も大きく確実
+2. カレンダー要素数（日付セル等）を削減してSatoriのレイアウト計算コストを削る: resvgのラスタライズ（解像度依存）が支配的コストである可能性が高く効果が不確実。カレンダー版は引き続き必要なため実装リスクの割に効果が薄い
+3. オーバーレイの出力解像度を下げてPhotonで拡大: ラスタライズコストは下がるが追加のリサイズで一部相殺し、カレンダーの文字視認性が落ちるリスクがある
+
+1を採用し、`compositeMonthlyWallpaper()`はSatori/resvgをカレンダー版の1回のみ呼び出す（従来の2回から半減）。カレンダーなし版は`noCalendarBaseBytes`をデコードしたPhoton画像に`draw_text_with_border(img, "© nyanmusu", x, y, fontSize)`を直接描画し（オーバーレイPNGの生成・合成が不要になる）、そのまま`get_bytes()`する。
+
+**署名の黒背景パネルは削除（2026-09・ユーザー指摘で判明した実装ミス）**: `_buildSignatureOnlyElement()`は当初から`backgroundColor: "rgba(0,0,0,0.35)"`の半透明黒背景パネルを描画していたが、これは最初から不要という指定だったにもかかわらず実装時に反映されていなかった（`.claude/bugs-history.md`の別機能・フロントエンドCanvas watermarkの黒背景仕様と混同したとみられる）。`_buildSignatureOnlyElement()`から背景パネルを削除し、白文字のみにした。この関数はカレンダー版の埋め込み署名（`_buildCalendarOverlayElement()`内、Satori継続使用）にも使われているため、この修正はカレンダー版・カレンダーなし版の両方に適用される。カレンダーなし版側はPhotonの`draw_text_with_border()`（縁取り文字、背景パネルなし）に置き換わるため、両者は異なる描画技術ながら「黒背景なし・縁取り/白文字で可読性を担保」という統一感のある見た目になる。
+
 - **投稿URLのDiscord通知記載（2026-09追加・PR #182に含む）**: 上記の実機検証を繰り返す過程で、投稿の成否確認・テスト投稿の手動削除のたびにログからURLを手動組み立てる手間が発生したため、`buildBlueskyPostUrl()`とMastodon Status APIの`url`フィールドを使い、Discord通知の成否行に投稿URLを直接記載するようにした（日次Bot・月替わり壁紙の両方に適用。詳細は「Discord通知」節の「投稿URLの記載」参照）
 
 ### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）

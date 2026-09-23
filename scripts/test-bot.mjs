@@ -5418,6 +5418,9 @@ console.log("\n[_buildCalendarOverlayElement / _buildSignatureOnlyElement: 構�
   const sigOnly = _buildSignatureOnlyElement({ width: 1080, height: 1920 });
   assert("署名のみ要素もdivルート", sigOnly.type === "div");
   assert("署名テキストを含む", JSON.stringify(sigOnly).includes("nyanmusu"));
+  // ユーザー指摘（2026-09）: 署名テキストに黒背景パネルは不要という指定が実装に反映されて
+  // いなかった。半透明黒背景（backgroundColor）を持たないことを検証する
+  assert("署名要素に背景色（黒背景パネル）を持たない", !JSON.stringify(sigOnly).includes("backgroundColor"));
 }
 
 console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
@@ -5437,11 +5440,13 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
   const MockPhotonImage = {
     new_from_byteslice: () => makeMockPhotonImage(),
   };
+  const drawTextCalls = [];
   const mockFns = {
     resize: () => makeMockPhotonImage(1920, 960),
     crop: () => makeMockPhotonImage(1080, 1920),
     SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
     watermark: () => {},
+    draw_text_with_border: (img, text, x, y, fontSize) => { drawTextCalls.push({ text, x, y, fontSize }); },
   };
 
   const renderCalls = [];
@@ -5461,7 +5466,10 @@ console.log("\n[compositeMonthlyWallpaper: モック経由の合成]");
 
   assert("合成成功時はcomposited=true", result.composited === true);
   assert("カレンダーあり版・なし版の両方を返す", typeof result.calendarImageData === "string" && typeof result.noCalendarImageData === "string");
-  assert("オーバーレイ描画が2回（カレンダー版・署名版）呼ばれる", renderCalls.length === 2);
+  // Bug#37追記: カレンダーなし版のSatori/resvg呼び出しを廃止したため、Satori/resvg経由の
+  // renderElementToPngFn()はカレンダー版1回のみ呼ばれる（従来の2回から半減）
+  assert("Satori/resvg経由のオーバーレイ描画はカレンダー版1回のみ", renderCalls.length === 1);
+  assert("カレンダーなし版はdraw_text_with_border()で署名を直接描画する", drawTextCalls.length === 1 && drawTextCalls[0].text.includes("nyanmusu"));
 
   // 失敗時フォールバック
   const failResult = await compositeMonthlyWallpaper("YmFzZTY0", 2026, 10, {
@@ -5513,6 +5521,7 @@ console.log("\n[compositeMonthlyWallpaper: Bug#37 カレンダーなし版の被
       crop: () => { cropCalls++; return makeMockPhotonImage(1080, 1920); },
       SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
       watermark: () => {},
+      draw_text_with_border: () => {},
     };
     const result = await compositeMonthlyWallpaper("YmFzZTY0", 2026, 10, {
       ensurePhotonFn: async () => {},
@@ -5537,6 +5546,7 @@ console.log("\n[compositeMonthlyWallpaper: Bug#37 カレンダーなし版の被
       crop: () => { cropCalls++; return makeMockPhotonImage(1080, 1920); },
       SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
       watermark: () => {},
+      draw_text_with_border: () => {},
     };
     const result = await compositeMonthlyWallpaper("YmFzZTY0", 2026, 10, {
       ensurePhotonFn: async () => {},
@@ -5560,6 +5570,7 @@ console.log("\n[compositeMonthlyWallpaper: Bug#37 カレンダーなし版の被
       crop: () => makeMockPhotonImage(1080, 1920),
       SamplingFilter: { Lanczos3: "Lanczos3", Nearest: "Nearest" },
       watermark: () => {},
+      draw_text_with_border: () => {},
     };
     const result = await compositeMonthlyWallpaper("YmFzZTY0", 2026, 10, {
       ensurePhotonFn: async () => {},

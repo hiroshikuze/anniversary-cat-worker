@@ -24,7 +24,10 @@ export async function ensurePhoton() {
   const { default: photonWasm } = await import("@silvia-odwyer/photon/photon_rs_bg.wasm");
   mod.initSync({ module: photonWasm });
   _PhotonImage = mod.PhotonImage;
-  _photonFns   = { crop: mod.crop, resize: mod.resize, SamplingFilter: mod.SamplingFilter, watermark: mod.watermark };
+  _photonFns   = {
+    crop: mod.crop, resize: mod.resize, SamplingFilter: mod.SamplingFilter, watermark: mod.watermark,
+    draw_text_with_border: mod.draw_text_with_border,
+  };
   _photonReady = true;
 }
 
@@ -248,8 +251,6 @@ export function _buildSignatureOnlyElement(options = {}) {
         props: {
           style: {
             display: "flex", position: "absolute", left: 32, bottom: 32,
-            padding: "6px 14px", borderRadius: 8,
-            backgroundColor: "rgba(0,0,0,0.35)",
             color: "#ffffff", fontFamily: "WorkSans", fontSize: 26,
           },
           children: SIGNATURE_TEXT,
@@ -403,7 +404,7 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
   try {
     await ensurePhotonFn();
     const PhotonImage = getPhotonImageFn();
-    const { crop, resize, SamplingFilter, watermark } = getPhotonFnsFn();
+    const { crop, resize, SamplingFilter, watermark, draw_text_with_border: drawTextWithBorder } = getPhotonFnsFn();
 
     if (ensureFontsFn) await ensureFontsFn();
     const fonts = getFontsFn ? getFontsFn() : [];
@@ -465,7 +466,11 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
     }
     console.log(`[monthly-wallpaper-composite] 再センタリング判定完了 shifted=${noCalendarBaseBytes !== baseBytes}`);
 
-    async function applyOverlay(element, sourceBytes) {
+    // Bug#37追記: カレンダー版はSatori/resvgでの色分け・カスタムフォント描画が必須だが、
+    // カレンダーなし版（署名のみ）はSatoriの表現力を必要としないため、CPU削減のため
+    // Photonのdraw_text_with_border()（縁取り文字を直接画像へ焼き込む）に置き換えた。
+    // Satori render・resvgラスタライズ・オーバーレイ用のPhoton合成を1セット分削除できる
+    async function applyCalendarOverlay(element, sourceBytes) {
       const overlayPng = await renderElementToPngFn(element, { width, height, fonts });
       const overlayImg = PhotonImage.new_from_byteslice(overlayPng);
       const targetImg = PhotonImage.new_from_byteslice(sourceBytes);
@@ -478,14 +483,23 @@ export async function compositeMonthlyWallpaper(imageData, year, month, deps = {
       }
     }
 
-    const calendarElement = _buildCalendarOverlayElement(year, month, { width, height });
-    const signatureElement = _buildSignatureOnlyElement({ width, height });
+    function drawSignature(sourceBytes) {
+      const targetImg = PhotonImage.new_from_byteslice(sourceBytes);
+      try {
+        const fontSize = 26;
+        drawTextWithBorder(targetImg, SIGNATURE_TEXT, 32, height - 32 - fontSize, fontSize);
+        return uint8ArrayToBase64(targetImg.get_bytes());
+      } finally {
+        targetImg.free();
+      }
+    }
 
-    const [calendarImageData, noCalendarImageData] = await Promise.all([
-      applyOverlay(calendarElement, baseBytes),
-      applyOverlay(signatureElement, noCalendarBaseBytes),
-    ]);
-    console.log("[monthly-wallpaper-composite] オーバーレイ描画完了");
+    const calendarElement = _buildCalendarOverlayElement(year, month, { width, height });
+
+    const calendarImageData = await applyCalendarOverlay(calendarElement, baseBytes);
+    console.log("[monthly-wallpaper-composite] カレンダー版オーバーレイ描画完了");
+    const noCalendarImageData = drawSignature(noCalendarBaseBytes);
+    console.log("[monthly-wallpaper-composite] カレンダーなし版署名描画完了");
 
     srcImg.free();
     scaledImg.free();
