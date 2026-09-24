@@ -75,6 +75,7 @@ anniversary-cat-worker/
 | GET | `/sale-info` | 現在有効なSUZURIセール情報（認証なし・`{active:true,endUtcMs,discountYen,endDisplay}`または`{active:false}`・`Cache-Control: public, max-age=300`） |
 | POST | `/suzuri-create` | ウォーターマーク済み画像を受け取りSUZURI登録・R2メタ更新 |
 | POST | `/monthly-wallpaper/regenerate` | 月替わり壁紙の手動再生成（`X-Bypass-Token`ヘッダー必須。月末Cronと同じ`runMonthlyWallpaperPost()`を呼ぶ） |
+| POST | `/bot/manual-run` | Bot Cronの手動実行・テスト（`X-Bypass-Token`ヘッダー必須。`?dryRun=false`指定時のみ実投稿。詳細は「Bluesky Bot」の「手動実行エンドポイント」参照） |
 
 ### /proxy-imageのセキュリティ制約
 
@@ -773,6 +774,26 @@ Only the cat(s) described above should have a face, eyes, or expression. Do not 
 - **Mastodon設定エラー検出**: `MASTODON_INSTANCE_URL`が`https://`で始まらない場合は`throw new Error(...)`でPromise.allSettledに拒否を返し、Discordの`mastoLine`に`❌ Mastodon投稿失敗: 設定エラー`として表示する（旧: `return null`でスキップしていたが、Discordに何も出ず原因不明になるため変更）。投稿後にstatus=401/403が返った場合も「設定エラー（認証失敗）」として`console.error`に分類して出力する
 - **Mastodon未設定時**: `mastoLine`に`⏭️ Mastodon未設定・スキップ`を表示し、`console.log`でCloudflareログにも記録する（旧: Discord通知から行ごと省略していたため処理状態が不明だった）
 - **R2保存キーのスロット方式（`bot/YYYY-MM-DD-n`）**: 同日に複数回`runBot()`が実行された場合（意図的・偶発的を問わず）、既存のR2キーを上書きせず`bot/YYYY-MM-DD-2`、`bot/YYYY-MM-DD-3`…とスロットをずらして保存する。`findAvailableR2Id(bucket, jstDateISO)`がmeta.jsonの存在確認で次のスロットを決定する（最大`-9`まで、超過時は`-9`を上書き）。ギャラリー・RSSは`bot/YYYY-MM-DD`（1スロット目）のみ参照。2スロット目以降のBluesky共有URLは`?id=bot/YYYY-MM-DD-2`形式で有効。削除は`listExpiredIds()`がスロット単位で自然に処理する（変更不要）
+
+### `scheduled()`のCron明示チェック（2026-09追加・Bug#40）
+
+`worker/index.js`の`scheduled()`は、`"0 15 * * *"`・`"0 16 * * *"`のいずれにも一致しない`event.cron`をすべてBot Cron分岐（実投稿）に流す設計だった。この設計上、Cloudflareダッシュボードの「コード編集画面→HTTP→Scheduled→送信」で手動テストした際に想定と異なる`event.cron`値が渡ると、無条件に本番投稿が実行されてしまう問題があった（2026-09、実行者不明のまま本番投稿が2重発生。Cronイベントログ・監査ログのいずれにも記録が残らず原因特定不能だった。詳細は`.claude/bugs-history.md`のBug#40参照）。
+
+修正: Bot Cron分岐に入る条件を`event.cron === "0 22 * * 1-5"`の明示一致チェックに変更した。一致しない値（未知のcron・ダッシュボードでの誤操作等）の場合は投稿処理を実行せず`console.warn`でログのみ出力する。ただしこれは「ダッシュボードでダミーの/未知のcron値が送られた場合」のみを防ぐ多層防御であり、仮に正しい`"0 22 * * 1-5"`をダッシュボードから明示的に選んで送信された場合までは防げない。**本命の対策はダッシュボードのScheduled手動送信機能自体を使わない運用への切替**（下記「手動実行エンドポイント」参照）。
+
+### 手動実行エンドポイント（`POST /bot/manual-run`・2026-09追加・Bug#40）
+
+Cloudflareダッシュボードの手動Scheduled送信は、Cronイベントログにも監査ログにも記録が残らず「誰が・いつ発火させたか」を事後追跡できない（Bug#40で実際に発生し、実行者を特定できなかった）。この方法を廃止し、既存の`BYPASS_TOKEN`で保護されたHTTPエンドポイント経由に統一した（`/monthly-wallpaper/regenerate`と同じ設計パターン）。
+
+- `worker/index.js`: `POST /bot/manual-run`。`isBypassed(request, env)`で403チェック後、`runBot(env, handleResearch, handleGenerate, ctx, { dryRun })`を呼ぶ。`dryRun`はクエリパラメーター`?dryRun=false`のときのみ`false`（それ以外・省略時は`true`）。**安全側をデフォルトにする**ことで、誤って叩いても実投稿されない
+- `worker/bot.js`: `runBot(env, handleResearch, handleGenerate, ctx = null, deps = {})`に`deps.dryRun`（デフォルト`false`）を追加。`true`のとき以下をスキップする:
+  - R2保存（`saveToR2()`。`pageUrl`は`SITE_URL`のまま）
+  - Bluesky投稿（`createBlueskySession()`/`uploadBlob()`/`createPost()`）
+  - Mastodon投稿（`uploadMediaToMastodon()`/`postStatusToMastodon()`）
+  - セール告知リプライ
+  - `research`/`generate`（Gemini API呼び出し）は`dryRun`時も実行される（生成内容そのものの確認が目的のため）。Discord通知は`🧪 テスト実行（投稿は行われていません）`を明記したうえで、実際に投稿されるはずだった`buildPostText()`/`buildMastodonText()`の出力をプレビューとして送信する
+- 戻り値: `runMonthlyWallpaperPost()`と同じパターンで`{ dryRun, bskyOk, mastoOk, theme }`（またはエラー時`{ error }`）を返すよう`runBot()`をvoidから変更した
+- Cron本番実行（`scheduled()`からの呼び出し）は`deps`省略のため`dryRun: false`扱いで、従来と完全に同じ挙動（後方互換）
 
 ### 投稿テキスト形式
 

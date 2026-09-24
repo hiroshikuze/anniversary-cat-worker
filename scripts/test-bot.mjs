@@ -28,7 +28,7 @@ import {
 import { _setSaleForTest } from "../worker/sale.js";
 import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale } from "../worker/sale-check.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST, _isBotCronEvent } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 import { renderElementToPng, ensureResvg, _setSatoriForTest, _setResvgForTest } from "../worker/svg-render.js";
@@ -691,6 +691,160 @@ console.log("\n[runBot: Mastodon投稿]");
     const allBody = discordBodies.join("\n");
     assert("https://なしURL: Mastodon APIが呼ばれない", !discordBodies[0]?.includes("✅ Mastodon投稿完了"));
     assert("https://なしURL: Discord通知に❌Mastodonエラーが含まれる", allBody.includes("❌") && allBody.includes("Mastodon"));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// runBot: dryRunモード（2026-09追加・Bug#40・/bot/manual-run用）
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: dryRunモード]");
+{
+  const MASTO_INSTANCE = "https://mstdn-test.example";
+
+  const mockResearch = async () => ({
+    theme: "テスト記念日", description: "テスト説明文", sourceUrl: "https://example.com",
+  });
+  const mockGenerate = async () => ({
+    imageData: btoa("fake-image-data"), mimeType: "image/png", source: "gemini",
+  });
+
+  function makeJsonResponse(body, status = 200) {
+    return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body) };
+  }
+
+  function makeBskyMastoFetch() {
+    const calledUrls = [];
+    const mockFetch = async (url) => {
+      calledUrls.push(String(url));
+      if (url.includes("createSession"))    return makeJsonResponse({ accessJwt: "mock-jwt", did: "mock-did" });
+      if (url.includes("uploadBlob"))       return makeJsonResponse({ blob: { $type: "blob", ref: { $link: "r" }, mimeType: "image/png", size: 1 } });
+      if (url.includes("createRecord"))     return makeJsonResponse({ uri: "at://mock", cid: "cid" });
+      if (url.includes("/api/v2/media"))    return makeJsonResponse({ id: "media123" });
+      if (url.includes("/api/v1/statuses")) return makeJsonResponse({ id: "status456", url: `${MASTO_INSTANCE}/@user/456` });
+      return makeJsonResponse({}, 204); // Discord webhook
+    };
+    return { mockFetch, calledUrls };
+  }
+
+  function makeBucketMock() {
+    const puts = [];
+    return {
+      puts,
+      async get() { return null; }, // research-pool未使用・findAvailableR2Idはスロット計算のみ
+      async put(key, ...rest) { puts.push(key); },
+      async head() { return null; },
+    };
+  }
+
+  // ── 正常系: dryRun=true では Bluesky/Mastodon/R2 いずれも呼ばれない ──
+  {
+    const { mockFetch, calledUrls } = makeBskyMastoFetch();
+    const bucket = makeBucketMock();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch;
+    const result = await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: MASTO_INSTANCE, MASTODON_ACCESS_TOKEN: "masto-token",
+        IMAGE_BUCKET: bucket,
+      },
+      mockResearch, mockGenerate, null, { dryRun: true }
+    );
+    globalThis.fetch = origFetch;
+
+    assert("dryRun: Bluesky createSession が呼ばれない", !calledUrls.some(u => u.includes("createSession")));
+    assert("dryRun: Bluesky uploadBlob が呼ばれない",   !calledUrls.some(u => u.includes("uploadBlob")));
+    assert("dryRun: Bluesky createRecord が呼ばれない", !calledUrls.some(u => u.includes("createRecord")));
+    assert("dryRun: Mastodon /api/v2/media が呼ばれない",    !calledUrls.some(u => u.includes("/api/v2/media")));
+    assert("dryRun: Mastodon /api/v1/statuses が呼ばれない", !calledUrls.some(u => u.includes("/api/v1/statuses")));
+    assert("dryRun: R2 put が呼ばれない（保存スキップ）", bucket.puts.length === 0);
+    assert("dryRun: 戻り値 dryRun:true", result?.dryRun === true);
+  }
+
+  // ── 正常系: dryRun=true でも research/generate（Gemini呼び出し相当）は実行される ──
+  {
+    let researchCalled = false, generateCalled = false;
+    const research = async () => { researchCalled = true; return { theme: "テスト", description: "", sourceUrl: "" }; };
+    const generate = async () => { generateCalled = true; return { imageData: btoa("x"), mimeType: "image/png", source: "gemini" }; };
+    const { mockFetch } = makeBskyMastoFetch();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch;
+    await runBot(
+      { GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "" },
+      research, generate, null, { dryRun: true }
+    );
+    globalThis.fetch = origFetch;
+    assert("dryRun: handleResearch は実行される", researchCalled);
+    assert("dryRun: handleGenerate は実行される", generateCalled);
+  }
+
+  // ── 正常系: dryRun=true の Discord通知にテスト実行マーカーと投稿予定テキストが含まれる ──
+  {
+    const discordBodies = [];
+    const { mockFetch } = makeBskyMastoFetch();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("discord")) {
+        discordBodies.push(JSON.parse(opts?.body ?? "{}").content ?? "");
+        return makeJsonResponse({}, 204);
+      }
+      return mockFetch(url, opts);
+    };
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+      },
+      mockResearch, mockGenerate, null, { dryRun: true }
+    );
+    globalThis.fetch = origFetch;
+    const allBody = discordBodies.join("\n");
+    assert("dryRun: Discord通知にテスト実行マーカーが含まれる", allBody.includes("🧪") && allBody.includes("テスト実行"));
+    assert("dryRun: Discord通知に投稿予定のBlueskyテキストが含まれる", allBody.includes("テスト記念日"));
+    assert("dryRun: Discord通知に✅/❌の投稿成否表示が出ない", !allBody.includes("✅ Bluesky投稿完了") && !allBody.includes("❌ Bluesky投稿失敗"));
+  }
+
+  // ── 境界値: dryRun省略時は従来通り実投稿を試みる（後方互換） ──
+  {
+    const { mockFetch, calledUrls } = makeBskyMastoFetch();
+    const bucket = makeBucketMock();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch;
+    const result = await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        IMAGE_BUCKET: bucket,
+      },
+      mockResearch, mockGenerate
+      // deps省略
+    );
+    globalThis.fetch = origFetch;
+    assert("dryRun省略時: Bluesky createRecord が呼ばれる（本番同様）", calledUrls.some(u => u.includes("createRecord")));
+    assert("dryRun省略時: R2 put が呼ばれる（本番同様）", bucket.puts.length > 0);
+    assert("dryRun省略時: 戻り値 dryRun:false", result?.dryRun === false);
+  }
+
+  // ── エラー系: dryRun=true でもGemini生成自体が失敗すればDiscordにエラー通知される ──
+  {
+    const discordBodies = [];
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("discord")) {
+        discordBodies.push(JSON.parse(opts?.body ?? "{}").content ?? "");
+        return makeJsonResponse({}, 204);
+      }
+      return makeJsonResponse({}, 204);
+    };
+    await runBot(
+      { GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook" },
+      async () => { throw new Error("research 失敗テスト"); },
+      async () => ({}),
+      null, { dryRun: true }
+    );
+    globalThis.fetch = origFetch;
+    assert("dryRun: research失敗時もDiscordにエラー通知される", discordBodies.some(b => b.includes("エラー")));
   }
 }
 
@@ -5655,6 +5809,24 @@ console.log("\n[isLastDayOfMonthJST: 正常系・境界値]");
   assert("年末（12/31）もtrue", isLastDayOfMonthJST("2026-12-31") === true);
   assert("うるう年2月末（2028-02-29）はtrue", isLastDayOfMonthJST("2028-02-29") === true);
   assert("平年2月末（2026-02-28）はtrue", isLastDayOfMonthJST("2026-02-28") === true);
+}
+
+// ---------------------------------------------------------------------------
+// _isBotCronEvent（2026-09追加・Bug#40）
+// scheduled()のBot Cron分岐に入る条件を明示チェックする純粋関数。
+// "0 22 * * 1-5"以外（ダッシュボードの手動Scheduled送信で渡りうる未知の値・空文字含む）は
+// falseを返し、投稿をスキップさせる判定に使われる。
+// ---------------------------------------------------------------------------
+console.log("\n[_isBotCronEvent: 正常系・境界値・エラー系]");
+{
+  assert("正規のBot Cron文字列はtrue", _isBotCronEvent("0 22 * * 1-5") === true);
+  assert("リサーチプールCronはfalse", _isBotCronEvent("0 15 * * *") === false);
+  assert("セール検知Cronはfalse", _isBotCronEvent("0 16 * * *") === false);
+  assert("Bug#40で実際に観測された想定外の値（過去に使われていた独立Cron）はfalse", _isBotCronEvent("0 3 * * *") === false);
+  assert("空文字（ダッシュボード手動送信でありうる）はfalse", _isBotCronEvent("") === false);
+  assert("undefined（event.cronが存在しない呼び出し）はfalse", _isBotCronEvent(undefined) === false);
+  assert("null はfalse", _isBotCronEvent(null) === false);
+  assert("前後に空白が付いた同一文字列は一致しないためfalse（厳密一致）", _isBotCronEvent(" 0 22 * * 1-5") === false);
 }
 
 console.log("\n[_buildGeminiPrompt / _buildPollinationsPrompt: reserveCalendarSpace]");

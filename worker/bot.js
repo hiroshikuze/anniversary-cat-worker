@@ -655,7 +655,8 @@ export async function findAvailableR2Id(bucket, jstDateISO) {
  * @param {Function} handleResearch - index.js の handleResearch 関数
  * @param {Function} handleGenerate - index.js の handleGenerate 関数
  */
-export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
+export async function runBot(env, handleResearch, handleGenerate, ctx = null, deps = {}) {
+  const dryRun = deps.dryRun === true;
   // JST で日付文字列を生成（UTC+9）
   const jst        = new Date(Date.now() + 9 * 60 * 60 * 1000);
   const dateStr    = `${jst.getFullYear()}年${jst.getMonth() + 1}月${jst.getDate()}日`;
@@ -668,7 +669,7 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
     const msg = `${prefix} エラー: GEMINI_API_KEY が設定されていません`;
     console.error(msg);
     await notifyDiscord(env.DISCORD_WEBHOOK_URL, msg);
-    return;
+    return { error: msg, dryRun };
   }
 
   try {
@@ -729,7 +730,8 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
     // 最初にBlueskyリンクを踏んだユーザーのブラウザで高品質（2048px）登録を行う設計。
     let pageUrl = SITE_URL;
 
-    if (env.IMAGE_BUCKET) {
+    // dryRun時はR2保存をスキップする（テスト実行でスロット・ギャラリー枠を消費しないため）
+    if (env.IMAGE_BUCKET && !dryRun) {
       try {
         const meta = {
           theme:           research.theme,
@@ -791,61 +793,76 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
     // ── 5. Bluesky + Mastodon 並列投稿 ───────────────────────────────────
     // Bug#32: この区間はネットワーク待ちが支配的なため壁時計時間であり、
     // CPU時間そのものの近似値にはならない点に注意（参考値として記録）
-    const tPostStart = performance.now();
-    console.log(`${prefix} Bluesky + Mastodon 投稿 開始`);
-    const [bskyResult, mastoResult] = await Promise.allSettled([
-      // Bluesky（日本語のみ）
-      (async () => {
-        const { accessJwt, did } = await createBlueskySession(
-          env.BLUESKY_IDENTIFIER, env.BLUESKY_APP_PASSWORD
-        );
-        const blobRef = await uploadBlob(accessJwt, imageBytes, mimeType);
-        return createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl, themeTag, guestSnsTag);
-      })(),
-      // Mastodon（日英二言語・シークレット未設定時はスキップ）
-      (env.MASTODON_INSTANCE_URL && env.MASTODON_ACCESS_TOKEN)
-        ? (async () => {
-            if (!env.MASTODON_INSTANCE_URL.startsWith("https://")) {
-              // return nullではなくthrowしてDiscordのmastoLineにエラーを出す
-              throw new Error(`設定エラー: MASTODON_INSTANCE_URL が https:// で始まっていません`);
-            }
-            const mediaId = await uploadMediaToMastodon(
-              env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, imageBytes, mimeType, altText
-            );
-            return postStatusToMastodon(
-              env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, mastoText, mediaId
-            );
-          })()
-        : Promise.resolve(null),
-    ]);
-    await recordCpuCheckpoint("SNS投稿（壁時計時間・ネットワーク待ち含む）", performance.now() - tPostStart);
+    // Bug#40: dryRun時はBluesky/Mastodonへの実POSTを一切行わない（/bot/manual-run用）
+    let bskyResult, mastoResult;
+    if (dryRun) {
+      console.log(`${prefix} テスト実行のためBluesky/Mastodon投稿をスキップ`);
+      bskyResult  = { status: "fulfilled", value: null };
+      mastoResult = { status: "fulfilled", value: null };
+    } else {
+      const tPostStart = performance.now();
+      console.log(`${prefix} Bluesky + Mastodon 投稿 開始`);
+      [bskyResult, mastoResult] = await Promise.allSettled([
+        // Bluesky（日本語のみ）
+        (async () => {
+          const { accessJwt, did } = await createBlueskySession(
+            env.BLUESKY_IDENTIFIER, env.BLUESKY_APP_PASSWORD
+          );
+          const blobRef = await uploadBlob(accessJwt, imageBytes, mimeType);
+          return createPost(accessJwt, did, text, blobRef, mimeType, altText, pageUrl, themeTag, guestSnsTag);
+        })(),
+        // Mastodon（日英二言語・シークレット未設定時はスキップ）
+        (env.MASTODON_INSTANCE_URL && env.MASTODON_ACCESS_TOKEN)
+          ? (async () => {
+              if (!env.MASTODON_INSTANCE_URL.startsWith("https://")) {
+                // return nullではなくthrowしてDiscordのmastoLineにエラーを出す
+                throw new Error(`設定エラー: MASTODON_INSTANCE_URL が https:// で始まっていません`);
+              }
+              const mediaId = await uploadMediaToMastodon(
+                env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, imageBytes, mimeType, altText
+              );
+              return postStatusToMastodon(
+                env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, mastoText, mediaId
+              );
+            })()
+          : Promise.resolve(null),
+      ]);
+      await recordCpuCheckpoint("SNS投稿（壁時計時間・ネットワーク待ち含む）", performance.now() - tPostStart);
+    }
 
-    const bskyOk      = bskyResult.status === "fulfilled";
+    // dryRun時はbskyResult.value/mastoResult.valueが常にnullのため、bskyOk/mastoOkは
+    // 常にfalse・mastoSkippedはtrueになる（後段のbskyLine/mastoLine組み立てはdryRunを別途分岐する）
+    const bskyOk      = !dryRun && bskyResult.status === "fulfilled" && bskyResult.value !== null;
     const mastoSkipped = mastoResult.status === "fulfilled" && mastoResult.value === null;
-    const mastoOk      = mastoResult.status === "fulfilled" && mastoResult.value !== null;
+    const mastoOk      = !dryRun && mastoResult.status === "fulfilled" && mastoResult.value !== null;
 
-    if (bskyOk) {
+    if (dryRun) {
+      console.log(`${prefix} テスト実行のため投稿ログをスキップ`);
+    } else if (bskyOk) {
       console.log(`${prefix} Bluesky 投稿 完了 uri=${bskyResult.value?.uri ?? "(不明)"} identifier=${env.BLUESKY_IDENTIFIER}`);
     } else {
       console.error(`${prefix} Bluesky 投稿 失敗: ${bskyResult.reason?.message}`);
     }
-    if (mastoOk) {
-      console.log(`${prefix} Mastodon 投稿 完了 id=${mastoResult.value?.id ?? "(不明)"}`);
-    } else if (mastoSkipped) {
-      console.log(`${prefix} Mastodon 未設定・スキップ`);
-    } else {
-      const mastoErrMsg = mastoResult.reason?.message ?? "";
-      const isAuthError = /status=40[13]/.test(mastoErrMsg);
-      console.error(`${prefix} Mastodon 投稿 失敗: ${isAuthError ? "設定エラー（認証失敗）: " : ""}${mastoErrMsg}`);
+    if (!dryRun) {
+      if (mastoOk) {
+        console.log(`${prefix} Mastodon 投稿 完了 id=${mastoResult.value?.id ?? "(不明)"}`);
+      } else if (mastoSkipped) {
+        console.log(`${prefix} Mastodon 未設定・スキップ`);
+      } else {
+        const mastoErrMsg = mastoResult.reason?.message ?? "";
+        const isAuthError = /status=40[13]/.test(mastoErrMsg);
+        console.error(`${prefix} Mastodon 投稿 失敗: ${isAuthError ? "設定エラー（認証失敗）: " : ""}${mastoErrMsg}`);
+      }
     }
 
     // ── 5.5. セール告知リプライ（セール期間中のみ・本体投稿成功時にbest-effort） ──────
     // 本体投稿の成否とは独立したbest-effort。本体が失敗した媒体にはparent情報がなく
     // 物理的にリプライを送れないため、bskyOk/mastoOkそれぞれの成功時のみ実行する。
+    // dryRun時はbskyOk/mastoOkが常にfalseのため自動的にスキップされるが、意図を明示するため条件にも加える。
     let saleReplyBskyOk = null;
     let saleReplyMastoOk = null;
     const activeSale = getActiveSaleInfo();
-    if (activeSale) {
+    if (activeSale && !dryRun) {
       if (bskyOk) {
         try {
           const { accessJwt, did } = await createBlueskySession(env.BLUESKY_IDENTIFIER, env.BLUESKY_APP_PASSWORD);
@@ -876,14 +893,20 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
     // ── 6. Discord通知（成否によらず常に送信） ──────────────────────────
     try {
       const bskyPostUrl = bskyOk ? buildBlueskyPostUrl(bskyResult.value?.uri, env.BLUESKY_IDENTIFIER) : null;
-      const bskyLine  = bskyOk
-        ? `✅ Bluesky投稿完了 ${dateStr}${bskyPostUrl ? ` ${bskyPostUrl}` : ""}`
-        : `❌ Bluesky投稿失敗: ${bskyResult.reason?.message}`;
-      const mastoLine = mastoSkipped
-        ? "⏭️ Mastodon未設定・スキップ"
-        : mastoOk
-          ? `✅ Mastodon投稿完了${mastoResult.value?.url ? ` ${mastoResult.value.url}` : ""}`
-          : `❌ Mastodon投稿失敗: ${mastoResult.reason?.message}`;
+      // Bug#40: dryRun時は投稿していないため✅/❌ではなく専用の「テスト実行」表示にする
+      // （mastoSkippedと文言が混同しないよう、dryRunの判定をmastoSkippedより先に評価する）
+      const bskyLine  = dryRun
+        ? "⏭️ テスト実行のため投稿スキップ（実際には投稿されていません）"
+        : bskyOk
+          ? `✅ Bluesky投稿完了 ${dateStr}${bskyPostUrl ? ` ${bskyPostUrl}` : ""}`
+          : `❌ Bluesky投稿失敗: ${bskyResult.reason?.message}`;
+      const mastoLine = dryRun
+        ? "⏭️ テスト実行のため投稿スキップ（実際には投稿されていません）"
+        : mastoSkipped
+          ? "⏭️ Mastodon未設定・スキップ"
+          : mastoOk
+            ? `✅ Mastodon投稿完了${mastoResult.value?.url ? ` ${mastoResult.value.url}` : ""}`
+            : `❌ Mastodon投稿失敗: ${mastoResult.reason?.message}`;
 
       // Bug#32: research.kanjiCharはhandleResearch()経由ならnormalizeKanjiChar()で
       // 既に正規化済み（有効な漢字1文字 or "😺"）。季節補充フォールバック由来の場合のみ
@@ -894,6 +917,7 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
         ? `🛍️ セールリプライ: Bluesky${saleReplyBskyOk === null ? "-" : saleReplyBskyOk ? "✅" : "❌"} / Mastodon${saleReplyMastoOk === null ? "-" : saleReplyMastoOk ? "✅" : "❌"}`
         : null;
       const lines = [
+        dryRun ? "🧪 テスト実行（投稿は行われていません）" : null,
         bskyLine,
         mastoLine,
         saleReplyLine,
@@ -910,7 +934,7 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
         `🖼 ソース: ${generated.source}`,
         generated.prompt ? `\n📋 Geminiプロンプト${generated.source === "gemini" ? "（採用）" : ""}:\n${generated.prompt}` : null,
       ].filter(Boolean).join("\n");
-      await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, bskyOk ? "✅" : "❌");
+      await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, dryRun ? "🧪" : (bskyOk ? "✅" : "❌"));
       // 2通目: Pollinationsプロンプト + Bluesky投稿テキスト + Mastodonテキスト
       const msg2Lines = [bskyLine, mastoLine].filter(Boolean);
       if (generated.pollinationsPrompt) {
@@ -929,10 +953,12 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null) {
     // 比較することで、CPU時間予算に対してどのステップが支配的かを分析する
     await recordCpuCheckpoint("runBot合計（壁時計時間）", performance.now() - tRunBotStart);
 
+    return { dryRun, bskyOk, mastoOk, theme: research.theme };
   } catch (err) {
     const msg = `${prefix} エラー: ${err.message}`;
     console.error(msg);
     await notifyDiscord(env.DISCORD_WEBHOOK_URL, msg);
+    return { error: err.message, dryRun };
   }
 }
 

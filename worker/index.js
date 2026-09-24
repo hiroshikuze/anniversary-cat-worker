@@ -312,6 +312,14 @@ export function isLastDayOfMonthJST(dateStr) {
   return nextDay.getUTCMonth() !== m - 1;
 }
 
+// Bug#40: scheduled()のBot Cron分岐（本番投稿）に入ってよいevent.cron値かどうかを
+// 判定する純粋関数。"0 22 * * 1-5"との厳密一致のみを許可する（空白混入・大文字小文字等は
+// 意図的に許容しない）。ダッシュボードの手動Scheduled送信で渡りうる未知の値・空文字・
+// undefined/nullをすべて弾く多層防御として使う（本命の対策はPOST /bot/manual-runへの統一）
+export function _isBotCronEvent(cron) {
+  return cron === "0 22 * * 1-5";
+}
+
 // ---------------------------------------------------------------------------
 // 事前リサーチプール ― SEASONAL_FLOWERS / getSeasonalFlower / filterAndDedupePool
 // ---------------------------------------------------------------------------
@@ -1373,6 +1381,16 @@ export default {
       return;
     }
 
+    // Bug#40: event.cronが上記のいずれにも一致しない値（ダッシュボードの手動Scheduled送信で
+    // 渡りうる未知の値・空文字等）の場合、本番投稿を伴うBot Cron分岐には入らせない。
+    // Cronイベントログ・監査ログのいずれにも記録が残らない手動送信で想定外の本番投稿が
+    // 発生した事故（Bug#40）を受けての多層防御。手動テスト・リカバリーは
+    // POST /bot/manual-run（BYPASS_TOKEN保護）を使う（.claude/rules/testing.md参照）
+    if (!_isBotCronEvent(event.cron)) {
+      console.warn(`[scheduled] 未知のcron値のため投稿をスキップ: event.cron=${event.cron}`);
+      return;
+    }
+
     // Bot Cron（月〜金）+ 期限切れエントリのクリーンアップ
     ctx.waitUntil((async () => {
       if (env.IMAGE_BUCKET) {
@@ -1676,6 +1694,22 @@ ${itemsXml}
         return Response.json(wpResult, { headers: corsH });
       } catch (e) {
         console.error(`[monthly-wallpaper] 手動再生成失敗: ${e.message}`);
+        return Response.json({ error: e.message }, { status: 500, headers: corsH });
+      }
+    }
+
+    // POST: Bot Cronの手動実行・テスト（Bug#40。ダッシュボードのScheduled手動送信の代替）。
+    // デフォルトはdryRun=true（安全側）。実投稿したい場合のみ ?dryRun=false を明示する。
+    if (request.method === "POST" && url.pathname === "/bot/manual-run") {
+      if (!isBypassed(request, env)) {
+        return Response.json({ error: "X-Bypass-Tokenが必要です" }, { status: 403, headers: corsH });
+      }
+      const dryRun = url.searchParams.get("dryRun") !== "false";
+      try {
+        const result = await runBot(env, handleResearch, handleGenerate, ctx, { dryRun });
+        return Response.json(result, { headers: corsH });
+      } catch (e) {
+        console.error(`[bot manual-run] 失敗: ${e.message}`);
         return Response.json({ error: e.message }, { status: 500, headers: corsH });
       }
     }
