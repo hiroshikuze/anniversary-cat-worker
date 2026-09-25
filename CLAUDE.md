@@ -180,6 +180,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | resvgのWASM（約2.4MB）はPhotonと同じ「ビルド時ESM静的import」でバンドルする（R2への実行時fetchはしない） | 2026-09: 当初はスクリプトサイズ上限（gzip後3MB）を懸念しR2に配置して実行時`fetch()`する設計にしたが、Cloudflare Workersは実行時の動的WASMコンパイルをセキュリティ上禁止しており（`WebAssembly.instantiate(): Wasm code generation disallowed by embedder`）、本番で実際に失敗した（Bug#36）。静的import（`WebAssembly.Module`としてビルド時にプリコンパイルされ、実行時は`instantiate(module, imports)`のみ）に切り替えて解消。実測: Photon+Satori+Yoga+resvg+フォント込みでgzip後約2.05MB（Workers Free 3MB上限内）で懸念していたサイズ問題も実際には発生しなかった |
 | 月替わり壁紙の手動再生成エンドポイントは既存`BYPASS_TOKEN`を流用する（新規シークレットを作らない） | 用途が増えることの留意点はあるが、月次1機能のために管理対象シークレットを増やすコストの方が大きいと判断（ユーザー承認済み） |
 | 月替わり壁紙の「対象月」はJST基準で「今日」が属する月の**翌月**（`resolveTargetYearMonth()`） | 月末Cronで「今月末に来月分を配る」設計のため。翌月にせず当月のままにすると、月末に生成した壁紙がその月の残り1日分しか使えなくなる |
+| Bot Cronの手動テスト・リカバリーはCloudflareダッシュボードの「HTTP→Scheduled→送信」を使わず、`POST /bot/manual-run`（`X-Bypass-Token`保護・デフォルトdryRun=true）を使う | ダッシュボードの手動Scheduled送信は監査ログ・Cronイベントログのいずれにも記録が残らず、2026-09に実行者不明のまま想定外の本番投稿が発生した（Bug#40）。詳細は`.claude/rules/testing.md`の「Botの手動テスト・手動復旧」参照 |
 
 ---
 
@@ -201,6 +202,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | 漢字一字の背面印刷（`/research`の`kanjiChar`→Canvas生成→Tシャツ`sub_materials`） | `worker/index.js` `normalizeKanjiChar()` / `frontend/index.html` `generateKanjiTexture()` | 稼働中 |
 | Bluesky Bot投稿（毎平日7:00 JST・2026-05-01より） | `worker/bot.js` `runBot()` | 稼働中 |
 | Mastodon Bot投稿（Blueskyと同時・Promise.allSettled・シークレット未設定時はスキップ・設定エラー検出） | `worker/bot.js` `runBot()` | 稼働中 |
+| Bot Cronの手動実行・テストエンドポイント（`X-Bypass-Token`保護・デフォルトdryRun=trueで投稿なしプレビュー・`?dryRun=false`で本番投稿。ダッシュボードのScheduled手動送信〔記録が残らず実行者不明の事故＝Bug#40〕の代替） | `worker/index.js` `POST /bot/manual-run` `worker/index.js` `_isBotCronEvent()` `worker/bot.js` `runBot()`の`deps.dryRun` | 稼働中 |
 | ゲストキャラクター（10%確率・8種・ゲスト外見/性格をDiscord通知に含む） | `worker/index.js` `pickGuestAnimal()` | 稼働中 |
 | Bot投稿完了のDiscord通知（テーマ・プロンプト全文・画像ソース・毛柄・性格・感情・食べ物アクション・ゲスト・投稿URL含む・2通構成） | `worker/bot.js` `notifyDiscord()` `buildBlueskyPostUrl()` | 稼働中 |
 | SUZURIグッズ登録（4商品: Tシャツ・ステッカー・缶バッジ・アクキー） | `worker/suzuri.js` | 稼働中 |

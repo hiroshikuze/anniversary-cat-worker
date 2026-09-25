@@ -22,6 +22,7 @@
 - **原因**: Cloudflare Workersの公式仕様として「Cron Triggerはbest-effort（保証なし）」。Cronが発火しなかった場合は`runBot()`に到達しないためDiscord通知も出ない。Cloudflareステータスページに障害表示もなく、コードのバグでもない
 - **対処**: Cloudflareダッシュボード → コードを編集する → Scheduled → 送信で手動発火。翌日以降は自動回復
 - **教訓**: Cron未発火はコードバグと区別するため、まずCloudflareのトリガーイベント履歴（設定タブ）を確認する。エントリ自体が存在しない場合はインフラ側の問題
+- **（2026-09追記・Bug#40）**: 上記「対処」のダッシュボードからのScheduled手動送信は**この記録以降に廃止**した。監査ログ・Cronイベントログのいずれにも記録が残らず、実際に実行者不明のまま想定外の本番投稿が発生する事故を起こしたため（詳細は`.claude/bugs-history.md`のBug#40参照）。Bot Cron未発火時の手動復旧は代わりに`POST /bot/manual-run?dryRun=false`（`X-Bypass-Token`保護。`.claude/rules/testing.md`参照）を使うこと
 
 ### 2026-04 | fal.ai AuraSRアップスケールがタイムアウトし続ける → ctx.waitUntil()で解決
 

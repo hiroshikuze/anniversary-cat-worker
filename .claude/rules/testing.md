@@ -102,30 +102,39 @@
 
 ### 手動復旧（プールを後から生成する場合）
 
-Bot Cronと同じ手順で Scheduled を送信するだけでよい（下記「Botの手動テスト」参照）。
+Cloudflareダッシュボードのコード編集画面から「HTTP」→「Scheduled」に切り替えて「送信」する（**この用途に限り使用可**。下記「Botの手動テスト・手動復旧」で廃止したのはBot Cron分岐に流れ込む想定外の値のケースで、`event.cron === "0 15 * * *"`に正しく一致する場合は投稿を伴わないため引き続き問題ない）。
 
 - `event.cron === "0 15 * * *"` の分岐が発火し、当日の `research-pool/YYYY-MM-DD.json` をR2に保存する
 - 既存プールがある場合は「既存プールあり・スキップ」ログを出して冪等に終了する
 - 手動発火はBluesky投稿を行わないため、**投稿の手動削除は不要**
 
-## Botの手動テスト（本番発火）
+## Botの手動テスト・手動復旧（`POST /bot/manual-run`・2026-09追加・Bug#40）
 
-Cloudflareダッシュボードは日本語UIの場合、英語UIとナビゲーションが異なる。
+**Cloudflareダッシュボードのコード編集画面から「HTTP」→「Scheduled」に切り替えて「送信」する方法は使わない。** この方法は`scheduled()`を直接呼び出すため監査ログ（Audit Log）に一切記録が残らず、かつCloudflare Cronイベントログにも記録されない。2026-09にこの方法（または同等の手段）によるものとみられる想定外の本番投稿が発生し、実行者を特定できなかった（詳細は`.claude/bugs-history.md`のBug#40参照）。
 
-### 手順（日本語UI）
+代わりに`BYPASS_TOKEN`で保護された`POST /bot/manual-run`エンドポイントを使う。これは通常のHTTPリクエストとして`fetch()`ハンドラーを経由するため、少なくともWorkers Logsに記録が残り、`BYPASS_TOKEN`を知らない第三者は実行できない。
 
-1. `wrangler secret list`で必要なシークレットが揃っているか確認
-2. Workers & Pages → `anniversary-cat-worker` → **「コードを編集する」**ボタンをクリック
-3. エディタ右上の「HTTP」プルダウンを**「Scheduled」**に切り替える
-4. **「送信」**ボタンをクリック（Cron Triggerが即時発火）
-5. Workers & Pages → `anniversary-cat-worker` → **設定タブ** → **トリガーイベント**で実行履歴を確認
-6. ログ確認: 左サイドバー **「分析とログ」** → **「ログ」** → Begin log stream
-7. 確認後、Blueskyアプリ（`@nyanmusu.bsky.social`）で投稿を手動削除
+### 手順
 
-### 実行履歴の確認場所
+```bash
+# デフォルト: dryRun=true（投稿・R2保存を行わず、Discordに投稿予定内容のプレビューのみ送信）
+curl -X POST https://anniversary-cat-worker.hiroshikuze.workers.dev/bot/manual-run \
+  -H "X-Bypass-Token: <BYPASS_TOKENの値>"
+
+# 本番投稿を伴う手動発火（Cron未発火時の当日分リカバリー等、意図的に投稿したい場合のみ）
+curl -X POST "https://anniversary-cat-worker.hiroshikuze.workers.dev/bot/manual-run?dryRun=false" \
+  -H "X-Bypass-Token: <BYPASS_TOKENの値>"
+```
+
+- `dryRun=true`（デフォルト・省略可）: `handleResearch()`/`handleGenerate()`は実際に呼ばれる（Gemini APIクォータを消費する）が、Bluesky/Mastodonへの投稿・R2への保存は行わない。Discordに「🧪 テスト実行（投稿は行われていません）」を明記したうえで、実際に投稿されるはずだったテキスト（`buildPostText()`/`buildMastodonText()`の出力）をプレビューとして送信する。**投稿の手動削除は不要**
+- `?dryRun=false`: `runBot()`本来の処理（本番Cronと完全に同一）を実行する。Bluesky/Mastodonに実際に投稿されるため、確認後は投稿の手動削除が必要（従来のダッシュボード手順と同じ）
+- レスポンスは`runMonthlyWallpaperPost()`と同じパターンのJSON（`{ dryRun, bskyOk, mastoOk, theme }`または`{ error }`）
+- 実行結果はCloudflareダッシュボードの「分析とログ」→「ログ」（Begin log stream）、または`query-worker-logs.mjs`（`--grep "[bot]"`）で確認できる
+
+### Cronイベント履歴の確認（実際のCron Triggerの発火状況を見たい場合）
 
 - 設定タブ → **トリガーイベント** → Cronイベント一覧（実行時刻・CPU時間・ステータス表示）
-- 「成功」が表示されればCron自体は正常動作
+- 「成功」が表示されればCron自体は正常動作。ただし`POST /bot/manual-run`経由の実行はここには表示されない（Cronスケジューラーを経由しないHTTPリクエストのため）
 
 ## フロントエンド機能存在チェック（CI）
 

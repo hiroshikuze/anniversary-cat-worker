@@ -595,7 +595,7 @@ Cloudflare WorkersのCronは「ベストエフォート」配信であり、ま�
 ##### 課題
 
 - Bot CronとリサーチプールCronが1日1回しか発火しない設計のため、未発火の場合はその日のBluesky投稿が欠ける
-- 現在は手動でCloudflareダッシュボードから「Scheduled」送信することで代替できるが、毎回人的対応が必要
+- 現在は`POST /bot/manual-run?dryRun=false`（`X-Bypass-Token`保護）で代替できるが、毎回人的対応が必要（2026-09追記・Bug#40: 従来案内していたCloudflareダッシュボードからの「Scheduled」手動送信は、監査ログ・Cronイベントログいずれにも記録が残らず実行者を特定できない事故を起こしたため廃止し、このエンドポイントに統一した。詳細は`.claude/rules/testing.md`の「Botの手動テスト・手動復旧」参照）
 
 ##### 提案する解決策（案A: バックアップCron追加）
 
