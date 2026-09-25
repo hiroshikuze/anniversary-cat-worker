@@ -260,7 +260,7 @@ export function _setSaleForTest(sale) { ... } // テスト用
 
 `.claude/future-ideas.md`に記載していた「suzuri.jpはWAFでWebFetchを403で弾く」は、Claude CodeのWebFetchツールに対する制約であり、Cloudflare Worker自身の`fetch()`が同様にブロックされるかは別問題として未検証だった。実装前にBashの`curl`から`https://suzuri.jp/media/category/news/`へ直接アクセスしたところ200 OKで取得でき、実際のHTML内に`journal_ninnin-sale_202608`（現行セールの記事URL）が一覧の最上部（＝新着順で先頭）に含まれることを確認した。
 
-ただしこれはこのセッションのサンドボックス環境からの疎通確認であり、**Cloudflare Workersのエッジネットワークからの`fetch()`が同様に成功するかは、実際にデプロイしてCronを発火させるまで確定しない**（WAFがCloudflare WorkersのIPレンジを特別扱いしている可能性は理論上残る）。そのため`checkForNewSale()`は取得失敗時にDiscordへ「⚠️ SUZURIセールチェック失敗（ニュース一覧取得エラー）」を通知する設計にしており、初回のCron発火（または`testing.md`の「Botの手動テスト」と同じ手順での手動Scheduled発火）で疎通の成否がDiscord通知として可視化される。ブロックされていた場合はこの通知が「自動検知不可・手動確認が必要」のシグナルとして機能する。
+ただしこれはこのセッションのサンドボックス環境からの疎通確認であり、**Cloudflare Workersのエッジネットワークからの`fetch()`が同様に成功するかは、実際にデプロイしてCronを発火させるまで確定しない**（WAFがCloudflare WorkersのIPレンジを特別扱いしている可能性は理論上残る）。そのため`checkForNewSale()`は取得失敗時にDiscordへ「⚠️ SUZURIセールチェック失敗（ニュース一覧取得エラー）」を通知する設計にしており、初回のCron発火（またはダッシュボードから`event.cron === "0 16 * * *"`に一致する手動Scheduled発火。`"0 16 * * *"`は明示的に一致する値のため投稿を伴わず、`testing.md`のBug#40対応後も引き続き使用可）で疎通の成否がDiscord通知として可視化される。ブロックされていた場合はこの通知が「自動検知不可・手動確認が必要」のシグナルとして機能する。
 
 ### Cronトリガー
 
