@@ -6,7 +6,8 @@ preview_urls = false
 [triggers]
 # "0 15 * * *"   → 毎日 0:00 JST  リサーチプール生成（翌日分の記念日候補をR2に保存）+
 #                                月替わり壁紙（2026-09追加・月末のみ発火・bot.js runMonthlyWallpaperPost()）
-# "0 16 * * *"   → 毎日 1:00 JST  SUZURIセール自動検知（2026-08追加・sale-check.js）
+# "0 16 * * *"   → 毎日 1:00 JST  SUZURIセール自動検知（2026-08追加・sale-check.js）+
+#                                期限切れR2/SUZURIエントリのクリーンアップ（2026-09移設・下記参照）
 # "0 22 * * 1-5" → 月〜金 7:00 JST  Bluesky 営業 Bot（2026-05-01より）
 # Cloudflare Workers の曜日指定は 1=日曜日 のため、1-5=日〜木UTC=月〜金JST
 # 2026-08-06: Aug 4 22:00 UTC以降Cronイベントが1件も記録されなくなったため、
@@ -14,6 +15,13 @@ preview_urls = false
 # 2026-09: 月替わり壁紙は当初独立Cron"0 3 * * *"を追加予定だったが、Cloudflareアカウント全体の
 # Cron Trigger上限（Workers Free: 5本/アカウント。他プロジェクトyobiko/yobiko-stagingで既に2本
 # 使用中のため4本目のデプロイが上限超過エラーで失敗）に抵触したため、既存"0 15 * * *"に統合した
+# 2026-09: 期限切れエントリのクリーンアップは当初Bot Cron（"0 22 * * 1-5"）の一部だったが、
+# cleanup（期限切れ141件処理時はサブリクエスト282件以上・長い逐次実行）とBotの画像生成
+# （generate()、Gemini1本+Pollinations4本の計5本を同時fetch）が同一event・同一サブリクエスト
+# 予算を共有していたことがBot投稿失敗（GeminiとPollinations両方がタイムアウト）の一因と
+# 判明したため、"0 16 * * *"（SUZURIセール検知。大半の日は軽量に即returnするため安全に同居できる）
+# へ移設した。"0 15 * * *"は月末に月替わり壁紙（Satori/resvg/PhotonでCPU予算が極めて逼迫する
+# 処理・過去にerror 1102を繰り返した経緯あり）が同居するため移設先の候補から除外した
 crons = ["0 15 * * *", "0 16 * * *", "0 22 * * 1-5"]
 
 [vars]

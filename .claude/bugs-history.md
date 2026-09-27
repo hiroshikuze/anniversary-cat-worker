@@ -474,4 +474,15 @@
 - **教訓**: Cloudflareダッシュボードの「Scheduledテスト送信」のような、本番相当の副作用を持つが記録が残らない操作をドキュメント化された正規の運用手順として使い続けると、事故発生時に原因追跡が不可能になる。副作用のある手動操作は、状態を持つ永続フラグではなく「シークレットで保護されたHTTPエンドポイント＋呼び出しごとに渡すパラメーター」の形にし、かつデフォルトを安全側（投稿しない）にしておくことで、誤操作の実害と事後追跡不能の両方を同時に防げる
 - **実機検証の結果（2026-09・PR #193マージ・デプロイ後）**: ユーザーが`POST /bot/manual-run`（`X-Bypass-Token`ヘッダー付き・`dryRun`省略）を実行。レスポンスは`{"dryRun":true,"bskyOk":false,"mastoOk":false,"theme":"女性ドライバーの日"}`で、Bluesky/Mastodonへの実投稿・R2保存が行われていないことを確認。Discord通知（2通）にも`🧪 テスト実行（投稿は行われていません）`・`⏭️ テスト実行のため投稿スキップ`が表示され、2通目に転載用プレビューテキスト（Bluesky/Mastodon分）が正しく含まれていた。想定通りの安全側動作を実機で確認でき、**本Bugはクローズ**
 
+### 41. 期限切れエントリのクリーンアップとBot投稿generate()が同一Cron・同一サブリクエスト予算を共有し、GeminiとPollinations両方が同時タイムアウトして投稿失敗（2026-09）
+
+- **症状**: Discordに`❌ にゃんバーサリーBot [bot] 2026年9月28日 エラー: 画像生成に失敗しました（The operation was aborted due to timeout / All promises were rejected）`が届いた。その日のBluesky/Mastodon投稿が1回スキップされた
+- **調査**: `query-worker-logs.mjs`で該当reqIdの全ログを相関させたところ、`generate 開始`の直前に`[cleanup] 141件削除完了`（期限切れR2/SUZURIエントリの一括削除）が完了しており、その直後に開始した`handleGenerate()`の2フェーズ方式（Gemini1本+Pollinations4本の計5本を同時fetch）がGemini・Pollinations**両方とも**タイムアウトで失敗していた。個別のHTTPステータス（404/429等）は一切記録されておらず、純粋なタイムアウトだった。無関係な2つの外部サービスが偶然同時にタイムアウトしたとは考えにくく、共通原因を疑った
+- **原因**: Cloudflare Workersの公式ドキュメント（[Limits](https://developers.cloudflare.com/workers/platform/limits/)）で確認したところ、「サブリクエスト」は`fetch()`だけでなくR2/KV/D1等のバインディング呼び出しも含めてカウントされる。cleanupは期限切れ1件につき「R2メタ取得(1)→SUZURI API DELETE(materialId数分)→R2オブジェクト削除(1)」を逐次実行しており、141件処理時は最低でも282件以上のサブリクエストが発生する計算になる。この処理が`worker/index.js`の`scheduled()`で`runBot()`と同一の`ctx.waitUntil()`内に直列で書かれており、同一Cron実行（同一event）・同一サブリクエスト予算をBot投稿の`generate()`と共有していた
+- **検討して却下した修正案**: cleanupと`runBot()`を同一Cron内で別々の`ctx.waitUntil()`に分離する案 → サブリクエスト予算はevent単位で共有されるため根本解決にならず、並行実行にすると「cleanup 1本+generate() 5本＝同時6本」でCloudflareの同時接続数上限（6）に新たに抵触するリスクを生むため却下
+- **修正**: cleanupループを`cleanupExpiredEntries(env, deps)`として独立関数化し、Bot Cron（`"0 22 * * 1-5"`）から完全に削除。`"0 16 * * *"`（SUZURIセール検知Cron。`checkForNewSale()`が大半の日はKV比較のみで即returnする軽量設計のため安全に同居できる）へ移設した。月末に`runMonthlyWallpaperPost()`（Satori/resvg/PhotonでCPU予算が極めて逼迫し`error 1102`を繰り返した実績あり・Bug#36〜39参照）が同居する`"0 15 * * *"`は移設先の候補から明確に除外した。新規Cron Triggerの追加はなし（既存`crons`配列は変更なし・Bug#35の教訓を踏まえ確認済み）
+- **副次効果**: 従来cleanupはBot Cronの一部だったため平日のみの実行だったが、`"0 16 * * *"`は毎日発火するため週末に期限切れになったエントリも即日処理されるようになった
+- **場所**: `worker/index.js`（`cleanupExpiredEntries()`新設・`scheduled()`の`"0 16 * * *"`/`"0 22 * * 1-5"`分岐）、`wrangler.toml`（`[triggers]`コメント更新）、`.claude/rules/architecture.md`（「期限切れR2/SUZURIエントリのクリーンアップ」節新設）
+- **教訓**: 同一Cron実行（同一`scheduled()`呼び出し）の中で複数の重い処理を直列に並べると、前段の処理がサブリクエスト予算・実行時間を消費し、後段の処理（とくに複数の外部APIを同時fetchする処理）が原因不明のタイムアウトを起こすことがある。「無関係な2つの外部サービスが偶然同時に失敗した」ように見える場合、まず疑うべきは外部サービス側ではなく、同一Worker実行内で共有されているリソース（サブリクエスト予算・同時接続数上限）である
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
