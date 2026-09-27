@@ -18,7 +18,8 @@ anniversary-cat-worker/
 │   ├── future-ideas.md               ← 将来拡張アイデア（都度参照・自動ロードなし）
 │   ├── settings.json                 ← PostToolUseフック（Markdownスペース検証）
 │   ├── archive/
-│   │   └── revision_log_2026-03.md   ← アーカイブ済みの旧revision_log
+│   │   ├── revision_log_2026-03.md   ← アーカイブ済みの旧revision_log（2026-03分）
+│   │   └── revision_log_2026-04-07.md ← アーカイブ済みの旧revision_log（2026-04〜2026-07分・2026-09追加）
 │   └── rules/                        ← 以下は毎セッション自動ロード
 │       ├── coding.md                 ← コーディング規約・Markdown執筆ルール
 │       ├── testing.md                ← テスト方針・診断手順
