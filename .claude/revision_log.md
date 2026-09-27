@@ -8,6 +8,17 @@
 
 [2026-03のミスパターン](archive/revision_log_2026-03.md)も参照すること
 
+### 2026-09 | SUZURIセール自動検知Cronのニュース一覧取得タイムアウト（監視中・様子見）
+
+- **状況**: Discordに`⚠️ SUZURIセールチェック失敗（ニュース一覧取得エラー）: The operation was aborted due to timeout`が届いた
+- **原因**: `checkForNewSale()`（`worker/sale-check.js`）が`NEWS_URL`（`https://suzuri.jp/media/category/news/`）を`fetchWithRetry(..., { signal: AbortSignal.timeout(10_000) })`で取得した際、10秒以内にレスポンスが返らずタイムアウトした。`fetchWithRetry()`は`AbortError`をリトライ対象外としている（`worker/http-utils.js`）ため、これは複数回リトライした末の失敗ではなく単発の10秒タイムアウト
+- **判断**: コードのバグではなくsuzuri.jp側の応答遅延と推測（Worker自身の`fetch()`がsuzuri.jpに到達すること自体は2026-08に実機で確認済み。`.claude/rules/architecture.md`の「SUZURIセール自動検知Cron」参照）。KVの`sale-check:last-notified`は更新されないため翌日Cron（`0 16 * * *`）で自動再試行される設計であり、ユーザーの判断で今回は様子見（対策なし）とした
+- **エスカレーション基準（今後同種の通知を見た際の判断材料）**: 単発なら記録のみで様子見継続でよい。ただし以下のいずれかに該当したら「suzuri.jp側の恒常的な遅延・ブロック」を疑い対策を検討する
+  - 同一週内に2回以上同じ通知が発生した
+  - 3日以上連続でセール検知が機能しない（`extractLatestSaleArticleUrl()`起因の記事URL不一致ではなく、毎回この取得タイムアウトで止まっている）
+  - `query-worker-logs.mjs`（`--grep "sale-check"`）で確認して、取得自体が毎回10秒張り付いている（＝応答が遅い）のか、それとも接続自体が拒否されている（WAF等）のかで対策が変わる: 前者ならタイムアウト値の延長（現状10秒）、後者はsuzuri.jp側のブロック解除待ちか代替手段（RSS等）の検討が必要
+- **教訓**: このCronの通知は自己修復的設計（KV未更新→翌日再試行）のため、単発の失敗通知自体は緊急対応不要。ただし「様子見」判断をしたことと、それをいつ見直すべきかの基準をログに残しておかないと、再発時に毎回ゼロから原因調査することになる
+
 ### 2026-04 | 複数エージェントによる引数順ずれ（createSuzuriProducts）
 
 - **状況**: 別エージェントが`createSuzuriProducts()`に`backTexture`引数を5番目に追加。rebase後、私の呼び出し箇所2か所（`resume-hires`・centerグループ）で`description`が`backTexture`に、`r2Id`が`description`にずれた
