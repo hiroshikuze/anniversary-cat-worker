@@ -10,11 +10,11 @@
  */
 
 let _currentSale = {
-  id:          "ninnin-sale-2026-08",
-  startUtcMs:  Date.UTC(2026, 7, 28, 3, 0),
-  endUtcMs:    Date.UTC(2026, 8, 3, 14, 59),
-  discountYen: 800,
-  endDisplay:  { month: 9, day: 3, weekdayJa: "木" },
+  id:          "autumn-big-sale-2026-09",
+  startUtcMs:  Date.UTC(2026, 8, 25, 3, 0),
+  endUtcMs:    Date.UTC(2026, 9, 4, 14, 59),
+  discountYen: 1000,
+  endDisplay:  { month: 10, day: 4, weekdayJa: "日" },
   url:         "https://suzuri.jp/nyanmusu",
 }; // セールがない期間は null に書き換える
 
