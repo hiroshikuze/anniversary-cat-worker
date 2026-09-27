@@ -28,7 +28,7 @@ import {
 import { _setSaleForTest } from "../worker/sale.js";
 import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale } from "../worker/sale-check.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST, _isBotCronEvent } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST, _isBotCronEvent, cleanupExpiredEntries } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 import { renderElementToPng, ensureResvg, _setSatoriForTest, _setResvgForTest } from "../worker/svg-render.js";
@@ -5827,6 +5827,88 @@ console.log("\n[_isBotCronEvent: 正常系・境界値・エラー系]");
   assert("undefined（event.cronが存在しない呼び出し）はfalse", _isBotCronEvent(undefined) === false);
   assert("null はfalse", _isBotCronEvent(null) === false);
   assert("前後に空白が付いた同一文字列は一致しないためfalse（厳密一致）", _isBotCronEvent(" 0 22 * * 1-5") === false);
+}
+
+// ---------------------------------------------------------------------------
+// cleanupExpiredEntries（2026-09追加・Bot Cronからの障害を受け"0 16 * * *"へ移設）
+// 期限切れR2/SUZURIエントリの削除処理。テスト用にdeps
+// （listExpiredIdsFn/getMetaFromR2Fn/deleteSuzuriMaterialFn/deleteFromR2Fn）を注入する。
+// ---------------------------------------------------------------------------
+console.log("\n[cleanupExpiredEntries]");
+
+{
+  // 正常系: 期限切れ2件・SUZURI_API_KEYありでmaterialIdsも削除する
+  const deletedMaterials = [];
+  const deletedR2Ids = [];
+  const listExpiredIdsFn = async () => ["bot/2026-09-01", "user/abc"];
+  const getMetaFromR2Fn = async (bucket, id) =>
+    (id === "bot/2026-09-01" ? { materialIds: [1, 2] } : { materialIds: [3] });
+  const deleteSuzuriMaterialFn = async (materialId) => { deletedMaterials.push(materialId); };
+  const deleteFromR2Fn = async (bucket, id) => { deletedR2Ids.push(id); };
+  await cleanupExpiredEntries({ IMAGE_BUCKET: {}, SUZURI_API_KEY: "key" }, {
+    listExpiredIdsFn, getMetaFromR2Fn, deleteSuzuriMaterialFn, deleteFromR2Fn,
+  });
+  assert("正常系: 全materialIdsが削除される", JSON.stringify(deletedMaterials) === JSON.stringify([1, 2, 3]));
+  assert("正常系: 全R2 idが削除される", JSON.stringify(deletedR2Ids) === JSON.stringify(["bot/2026-09-01", "user/abc"]));
+}
+
+{
+  // SUZURI_API_KEY未設定時はSUZURIマテリアル削除をスキップしR2削除のみ行う
+  const deletedMaterials = [];
+  const deletedR2Ids = [];
+  const listExpiredIdsFn = async () => ["bot/2026-09-01"];
+  const getMetaFromR2Fn = async () => { throw new Error("呼ばれてはいけない"); };
+  const deleteSuzuriMaterialFn = async (materialId) => { deletedMaterials.push(materialId); };
+  const deleteFromR2Fn = async (bucket, id) => { deletedR2Ids.push(id); };
+  await cleanupExpiredEntries({ IMAGE_BUCKET: {} }, {
+    listExpiredIdsFn, getMetaFromR2Fn, deleteSuzuriMaterialFn, deleteFromR2Fn,
+  });
+  assert("SUZURI_API_KEY未設定: getMetaFromR2は呼ばれない", deletedMaterials.length === 0);
+  assert("SUZURI_API_KEY未設定: R2削除は行われる", JSON.stringify(deletedR2Ids) === JSON.stringify(["bot/2026-09-01"]));
+}
+
+{
+  // 1件のSUZURIマテリアル削除が失敗しても、残りの処理・R2削除は継続する
+  const deletedMaterials = [];
+  const deletedR2Ids = [];
+  const listExpiredIdsFn = async () => ["bot/2026-09-01"];
+  const getMetaFromR2Fn = async () => ({ materialIds: [1, 2] });
+  const deleteSuzuriMaterialFn = async (materialId) => {
+    if (materialId === 1) throw new Error("SUZURI削除失敗: status=500");
+    deletedMaterials.push(materialId);
+  };
+  const deleteFromR2Fn = async (bucket, id) => { deletedR2Ids.push(id); };
+  await cleanupExpiredEntries({ IMAGE_BUCKET: {}, SUZURI_API_KEY: "key" }, {
+    listExpiredIdsFn, getMetaFromR2Fn, deleteSuzuriMaterialFn, deleteFromR2Fn,
+  });
+  assert("1件失敗しても他のmaterialId削除は続行", JSON.stringify(deletedMaterials) === JSON.stringify([2]));
+  assert("1件失敗してもR2削除は続行", JSON.stringify(deletedR2Ids) === JSON.stringify(["bot/2026-09-01"]));
+}
+
+{
+  // IMAGE_BUCKET未設定時は即座に何もせず終了（例外を投げない）
+  let listCalled = false;
+  const listExpiredIdsFn = async () => { listCalled = true; return []; };
+  let threw = false;
+  try {
+    await cleanupExpiredEntries({}, { listExpiredIdsFn });
+  } catch {
+    threw = true;
+  }
+  assert("IMAGE_BUCKET未設定: listExpiredIdsは呼ばれない", listCalled === false);
+  assert("IMAGE_BUCKET未設定: 例外を投げない", threw === false);
+}
+
+{
+  // listExpiredIds自体が失敗してもcleanupExpiredEntries全体は例外を投げない
+  const listExpiredIdsFn = async () => { throw new Error("R2一覧取得失敗"); };
+  let threw = false;
+  try {
+    await cleanupExpiredEntries({ IMAGE_BUCKET: {} }, { listExpiredIdsFn });
+  } catch {
+    threw = true;
+  }
+  assert("listExpiredIds失敗時も例外を投げない", threw === false);
 }
 
 console.log("\n[_buildGeminiPrompt / _buildPollinationsPrompt: reserveCalendarSpace]");

@@ -267,6 +267,19 @@ export function _setSaleForTest(sale) { ... } // テスト用
 
 `wrangler.toml`の`crons`に`"0 16 * * *"`（1:00 JST）を追加。既存の`"0 15 * * *"`（リサーチプール生成）の直後、Bot Cron（`"0 22 * * 1-5"`）とは独立した`scheduled()`invocationとして実行される（同一invocation内で実行されるBot Cronの負荷とは合算されない）。
 
+### 期限切れR2/SUZURIエントリのクリーンアップ（2026-09移設）
+
+`cleanupExpiredEntries(env, ctx)`（`worker/index.js`）を`checkForNewSale()`と同じ`"0 16 * * *"`分岐に`ctx.waitUntil()`として同居させている。当初はBot Cron（`"0 22 * * 1-5"`）の一部として、`runBot()`の直前に逐次実行していた。
+
+**移設した理由（2026-09・実障害）**: cleanupは期限切れ1件につき「R2メタ取得(1) → SUZURI API DELETE(materialId数分) → R2オブジェクト削除(1)」を行う。Cloudflare Workersの「サブリクエスト」はfetch()だけでなくR2/KV等のバインディング呼び出しも含めてカウントされ、削除件数が多い日（実測141件）は最低でも282件以上のサブリクエストが発生する計算になる。これが`runBot()`の`handleGenerate()`（Gemini1本+Pollinations4本の計5本を同時fetch）と同一Cron・同一event・同一サブリクエスト予算を共有していたため、cleanupの逐次実行（1件ずつawait）で長時間・大量の外部通信を終えた直後に`generate()`が開始する構造になっており、実際にGeminiとPollinations両方が同時にタイムアウトする障害（`[generate] ALL SOURCES FAILED`）が発生した。
+
+**検討した代替案とその却下理由**:
+
+- 同一Cron内でcleanupと`runBot()`を別々の`ctx.waitUntil()`に分離する案 → サブリクエスト予算はevent単位で共有されるため根本解決にならない。さらに並行実行にすると「cleanup 1本+generate() 5本＝同時6本」でCloudflareの同時接続数上限（6）にちょうど当たる新たなリスクを生むため却下
+- `"0 15 * * *"`（リサーチプール生成Cron）へ移設する案 → 月末は同じCron内で`runMonthlyWallpaperPost()`（Satori/resvg/PhotonによるCPU予算が極めて逼迫する処理、過去に`error 1102`を繰り返し発生させた経緯あり。詳細は「月替わり壁紙プレゼント機能」参照）が動くため、月末に限ってcleanupが同じ問題を再発させるリスクがあり却下
+
+`"0 16 * * *"`は`checkForNewSale()`が大半の日はKV比較のみで即returnする軽量な設計のため、cleanupと安全に同居できる。移設に伴い、cleanupの実行頻度が実質的に改善する副次効果もある（従来はBot Cronの一部だったため平日のみの実行だったが、`"0 16 * * *"`は毎日発火するため週末に期限切れになったエントリも即日処理される）。
+
 ### 処理フロー（`checkForNewSale(env, ctx, notifyFn)`）
 
 1. ニュース一覧を`fetchWithRetry()`で取得。失敗時はDiscordに手動確認要の通知を送って終了（KVは更新しない＝翌日また自然にリトライされる）

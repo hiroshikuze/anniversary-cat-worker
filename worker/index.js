@@ -320,6 +320,45 @@ export function _isBotCronEvent(cron) {
   return cron === "0 22 * * 1-5";
 }
 
+// 期限切れR2/SUZURIエントリのクリーンアップ（2026-09・"0 16 * * *"へ移設。詳細はarchitecture.md
+// 「期限切れR2/SUZURIエントリのクリーンアップ」参照）。当初はBot Cron（"0 22 * * 1-5"）の一部
+// だったが、削除件数が多い日（実測141件）はサブリクエストを大量消費し、直後に開始する
+// runBot()のgenerate()（Gemini+Pollinations計5本の同時fetch）と同一event・同一サブリクエスト
+// 予算を共有していたためBot投稿失敗の一因になった。deps引数はテスト用
+// （_pollFalAndGetTexture()・_updateMetaOrRollback()と同じ「依存関数を引数で受け取る」パターン）
+export async function cleanupExpiredEntries(env, deps = {}) {
+  const {
+    listExpiredIdsFn      = listExpiredIds,
+    getMetaFromR2Fn        = getMetaFromR2,
+    deleteSuzuriMaterialFn = deleteSuzuriMaterial,
+    deleteFromR2Fn          = deleteFromR2,
+  } = deps;
+  if (!env.IMAGE_BUCKET) return;
+  try {
+    const expiredIds = await listExpiredIdsFn(env.IMAGE_BUCKET);
+    for (const id of expiredIds) {
+      if (env.SUZURI_API_KEY) {
+        const meta = await getMetaFromR2Fn(env.IMAGE_BUCKET, id);
+        for (const materialId of collectMaterialIds(meta)) {
+          try {
+            await deleteSuzuriMaterialFn(materialId, env);
+            console.log(`[cleanup] SUZURI material=${materialId} 削除完了`);
+          } catch (e) {
+            console.warn(`[cleanup] SUZURI material=${materialId} 削除失敗: ${e.message}`);
+          }
+        }
+      }
+      await deleteFromR2Fn(env.IMAGE_BUCKET, id);
+      console.log(`[cleanup] R2 id=${id} 削除完了`);
+    }
+    if (expiredIds.length > 0) {
+      console.log(`[cleanup] ${expiredIds.length}件削除完了`);
+    }
+  } catch (e) {
+    console.error(`[cleanup] エラー: ${e.message}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 事前リサーチプール ― SEASONAL_FLOWERS / getSeasonalFlower / filterAndDedupePool
 // ---------------------------------------------------------------------------
@@ -1378,6 +1417,7 @@ export default {
 
     if (event.cron === "0 16 * * *") {
       ctx.waitUntil(checkForNewSale(env, ctx, notifyDiscord));
+      ctx.waitUntil(cleanupExpiredEntries(env));
       return;
     }
 
@@ -1391,35 +1431,9 @@ export default {
       return;
     }
 
-    // Bot Cron（月〜金）+ 期限切れエントリのクリーンアップ
-    ctx.waitUntil((async () => {
-      if (env.IMAGE_BUCKET) {
-        try {
-          const expiredIds = await listExpiredIds(env.IMAGE_BUCKET);
-          for (const id of expiredIds) {
-            if (env.SUZURI_API_KEY) {
-              const meta = await getMetaFromR2(env.IMAGE_BUCKET, id);
-              for (const materialId of collectMaterialIds(meta)) {
-                try {
-                  await deleteSuzuriMaterial(materialId, env);
-                  console.log(`[cleanup] SUZURI material=${materialId} 削除完了`);
-                } catch (e) {
-                  console.warn(`[cleanup] SUZURI material=${materialId} 削除失敗: ${e.message}`);
-                }
-              }
-            }
-            await deleteFromR2(env.IMAGE_BUCKET, id);
-            console.log(`[cleanup] R2 id=${id} 削除完了`);
-          }
-          if (expiredIds.length > 0) {
-            console.log(`[cleanup] ${expiredIds.length}件削除完了`);
-          }
-        } catch (e) {
-          console.error(`[cleanup] エラー: ${e.message}`);
-        }
-      }
-      await runBot(env, handleResearch, handleGenerate, ctx);
-    })());
+    // Bot Cron（月〜金）。期限切れエントリのクリーンアップは"0 16 * * *"へ移設済み
+    // （2026-09・cleanup+generate()の同一event内サブリクエスト予算競合によるBot投稿失敗を受けて）
+    ctx.waitUntil(runBot(env, handleResearch, handleGenerate, ctx));
   },
 
   async fetch(request, env, ctx) {
