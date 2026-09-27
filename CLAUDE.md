@@ -181,6 +181,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | 月替わり壁紙の手動再生成エンドポイントは既存`BYPASS_TOKEN`を流用する（新規シークレットを作らない） | 用途が増えることの留意点はあるが、月次1機能のために管理対象シークレットを増やすコストの方が大きいと判断（ユーザー承認済み） |
 | 月替わり壁紙の「対象月」はJST基準で「今日」が属する月の**翌月**（`resolveTargetYearMonth()`） | 月末Cronで「今月末に来月分を配る」設計のため。翌月にせず当月のままにすると、月末に生成した壁紙がその月の残り1日分しか使えなくなる |
 | Bot Cronの手動テスト・リカバリーはCloudflareダッシュボードの「HTTP→Scheduled→送信」を使わず、`POST /bot/manual-run`（`X-Bypass-Token`保護・デフォルトdryRun=true）を使う | ダッシュボードの手動Scheduled送信は監査ログ・Cronイベントログのいずれにも記録が残らず、2026-09に実行者不明のまま想定外の本番投稿が発生した（Bug#40）。詳細は`.claude/rules/testing.md`の「Botの手動テスト・手動復旧」参照 |
+| 期限切れR2/SUZURIエントリのクリーンアップ（`cleanupExpiredEntries()`）はBot Cron（`0 22 * * 1-5`）ではなく`0 16 * * *`（SUZURIセール検知Cron）で実行する | cleanupは削除件数が多い日（実測141件）はサブリクエストを282件以上消費する。Bot Cronに同居させるとBotの`generate()`（Gemini+Pollinations計5本の同時fetch）とサブリクエスト予算・実行時間を奪い合い、両方が同時にタイムアウトしてBot投稿が失敗した（Bug#41）。月末に`runMonthlyWallpaperPost()`（CPU予算が逼迫・`error 1102`の実績あり）が動く`0 15 * * *`にも置かない。詳細は`.claude/rules/architecture.md`の「期限切れR2/SUZURIエントリのクリーンアップ」参照 |
 
 ---
 
