@@ -472,5 +472,6 @@
   2. ダッシュボードの手動Scheduled送信という運用そのものを廃止し、`BYPASS_TOKEN`で保護された`POST /bot/manual-run`エンドポイントに統一した。`runBot()`に`deps.dryRun`（デフォルト`false`・エンドポイント経由時のみクエリパラメーターでデフォルト`true`＝安全側）を追加し、`true`時はGemini生成は行うがBluesky/Mastodon投稿・R2保存をスキップしてDiscordにプレビューのみ送信する。この方式なら少なくともWorkers Logsに記録が残り、`BYPASS_TOKEN`を知らない第三者は実行できない
 - **場所**: `worker/index.js`（`scheduled()`・`POST /bot/manual-run`新設）、`worker/bot.js`（`runBot()`の`deps.dryRun`対応）、`.claude/rules/testing.md`（「Botの手動テスト」手順の全面差し替え）
 - **教訓**: Cloudflareダッシュボードの「Scheduledテスト送信」のような、本番相当の副作用を持つが記録が残らない操作をドキュメント化された正規の運用手順として使い続けると、事故発生時に原因追跡が不可能になる。副作用のある手動操作は、状態を持つ永続フラグではなく「シークレットで保護されたHTTPエンドポイント＋呼び出しごとに渡すパラメーター」の形にし、かつデフォルトを安全側（投稿しない）にしておくことで、誤操作の実害と事後追跡不能の両方を同時に防げる
+- **実機検証の結果（2026-09・PR #193マージ・デプロイ後）**: ユーザーが`POST /bot/manual-run`（`X-Bypass-Token`ヘッダー付き・`dryRun`省略）を実行。レスポンスは`{"dryRun":true,"bskyOk":false,"mastoOk":false,"theme":"女性ドライバーの日"}`で、Bluesky/Mastodonへの実投稿・R2保存が行われていないことを確認。Discord通知（2通）にも`🧪 テスト実行（投稿は行われていません）`・`⏭️ テスト実行のため投稿スキップ`が表示され、2通目に転載用プレビューテキスト（Bluesky/Mastodon分）が正しく含まれていた。想定通りの安全側動作を実機で確認でき、**本Bugはクローズ**
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
