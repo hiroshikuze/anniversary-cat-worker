@@ -1568,6 +1568,15 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 - 完成版を`compose-aistudio.mjs`として保存（投稿画像とバイト単位で同一の出力を再現確認済み）。JPEG（約300KB）に変換してユーザーがBluesky・Mastodonに手動投稿した。手順・設定・投稿文は`.claude/prototypes/sale-banner/README.md`参照
 - **反響の確認**: セール終了翌日（2026-10-05）に、Bluesky（`public.api.bsky.app`の`getAuthorFeed`・`nyanmusu.bsky.social`）とMastodon（`mastodon.social/@nyanmusu`）の公開APIで、この投稿のいいね・リポスト（ブースト）・返信を確認する。同じ週の通常のBot投稿の反響と比べ、告知バナーに効果があったかを判断する材料にする
 
+**Bluesky・Mastodonへの自動投稿とDiscord送信（2026-09-29・実運用で成功）**:
+
+- ユーザーの希望で、告知の投稿を手動からGitHub Actions経由の自動投稿に切り替えた（`.github/workflows/sale-announcement.yml`＋`scripts/post-sale-announcement.mjs`）。Discordには「両SNSの成否（投稿URL付き）」「X・Instagram等への転載用の本文（ハッシュタグ5つまで）」「Mastodon用の本文」「共通の代替テキスト」を送る
+- 実投稿: Bluesky `https://bsky.app/profile/nyanmusu.bsky.social/post/3mwnyup3ahd2n`、Mastodon `https://mastodon.social/@nyanmusu/117354716984838537`（いずれも2026-09-29 23:07 JST。公開APIで1件ずつ投稿されたことを確認）
+- 途中で起きたこと:
+  - GitHub Actionsに`MASTODON_*`が未登録だった（Workerにのみ登録）。ユーザーが登録したが、`MASTODON_INSTANCE_URL`の値の誤り（最初は接続不可、次は`/@nyanmusu`付きでHTMLが返る）でHealth Checkが2回失敗し、`https://mastodon.social`に直して通過した
+  - 本番の1回目のpushで、お試し用フォルダから本番用フォルダへのファイルの入れ直しをgitが「名前の変更」と判定し、「追加」だけを探すワークフローが投稿を飛ばした。`git diff --no-renames`で修正し、やり直して投稿できた
+- 手順全体（誰が何をするか）は`.claude/prototypes/sale-banner/README.md`の「手順」にまとめた。次回はそこから始める
+
 **Geminiの配置情報をそのまま使えなかった点**（パターン1のSatori合成時に手動で補正した）:
 
 - 見出し「SUZURI 秋のビッグセール 開催中！」を1行・58pxで指定してきたが、1080px幅に収まらないため「開催中！」を右下に分けた
@@ -1598,4 +1607,4 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 
 ### 次のアクション
 
-次回セッション冒頭で、このセクションを読んでからA・B/Cどちらから再開するかユーザーに確認する。Aは技術設計がほぼ固まっているため実装に進みやすい。Cは2026-09-29にAI Studio版を実投稿済み。2026-10-05に反響を確認し、結果をこの節に追記する。
+次回セッション冒頭で、このセクションを読んでからA・B/Cどちらから再開するかユーザーに確認する。Aは技術設計がほぼ固まっているため実装に進みやすい。Cは2026-09-29にAI Studio版を自動投稿の仕組みで実投稿済み。2026-10-05に反響を確認し、結果をこの節に追記する（Claude Code Remoteの`send_later`で予約済み）。次のセールでは`.claude/prototypes/sale-banner/README.md`の「手順」から始める。

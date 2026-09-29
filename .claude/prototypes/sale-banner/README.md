@@ -14,38 +14,57 @@ SUZURIセール時にSNSへ載せる告知画像を、Geminiの絵とSatoriの�
 
 素材（背景・グッズ画像・フォント約12MB）はコミットしない。毎回`fetch-assets.sh`で取得する。
 
-## 手順
+## 手順（次回はこの順で進める・2026-09-29に一通り成功した流れ）
 
-1. 対象セールの内容を確認する。**どの商品が対象で、いくら引きか**をSUZURIのセール記事で必ず確かめる（2026-09に4商品すべてを載せてしまい、実際はTシャツとステッカーのみだった）
-2. ユーザーがGoogle AI Studioで次の2つを用意する（下記「Google AI Studioでの作り方」「Geminiへの指示文」参照）
-   - 完成図の草案
-   - 同じ会話で続けて、草案から文字と商品を消した背景
+ユーザーから「セール告知を作って」と頼まれたら、この順で進める。**太字**はユーザーにお願いする作業。
 
-   配置情報（JSON）は頼まなくてよい（書式が当てにならず、Claudeが草案の画像を直接見て合わせるほうが確実だったため。下記「配置情報（JSON）の信頼度」参照）
-3. 素材を集める
+| # | 作業 | 担当 | 目安 |
+| --- | --- | --- | --- |
+| 1 | セール記事で**対象商品と値引き額**を確かめる（`curl https://suzuri.jp/media/category/news/`から記事URLを探し、本文を取得。このショップの4商品のうちどれが対象か） | Claude | 数分 |
+| 2 | イラストに使うBot作品（`bot/YYYY-MM-DD`）を決め、草案用の指示文を渡す（下記「Geminiへの指示文」の「AI Studio用」を、セール名・期間・対象商品に書き換える） | Claude | - |
+| 3 | **Google AI Studioで草案を作り、同じ会話で背景を作り、2枚をチャットに貼る**（設定は下記「Google AI Studioでの作り方」） | ユーザー | 数分 |
+| 4 | `fetch-assets.sh`で素材を集め、`compose-aistudio.mjs`をコピーして座標・文言・色を今回の草案に合わせて書き換え、合成してチャットに見せる。直しの指示はここで繰り返す（1回数秒） | Claude | 数往復 |
+| 5 | JPEGに変換し、投稿文（Bluesky・Mastodon・X等用）と代替テキストを用意する（下記「投稿文の例」） | Claude | - |
+| 6 | `tmp-sale-announcement/<日付-内容>/`に`DRY_RUN`付きで置いてpush（お試し実行）→ Discordにプレビューが届く | Claude | 1分 |
+| 7 | **Discordのプレビューを確認し「投稿して」と伝える** | ユーザー | - |
+| 8 | お試し用フォルダを消し、`DRY_RUN`なしの新しいフォルダを追加してpush → Bluesky・Mastodonに投稿され、Discordに結果とX等用の本文が届く。公開APIで1件ずつ投稿されたか確認し、フォルダを削除する | Claude | 1分 |
+| 9 | **DiscordからX・Instagram等へ手動で転載する** | ユーザー | - |
+| 10 | セール終了の翌日に反響（いいね・リポスト）を確認する予約を入れる（Claude Code Remoteの`send_later`。確認内容は`.claude/future-ideas.md`の「C.」参照） | Claude | - |
 
-   ```bash
-   npm ci   # 初回のみ（@cf-wasm/satori・@resvg/resvg-wasmを使う）
-   bash .claude/prototypes/sale-banner/fetch-assets.sh <作業ディレクトリ> bot/YYYY-MM-DD
-   cp <Geminiの背景画像> <作業ディレクトリ>/bg.jpg
-   ```
+### 各ステップの補足
 
-   背景がWebP形式で届いた場合は、PillowでJPEGに変換する（`pip install pillow`後、`Image.open("bg.webp").convert("RGB").save("bg.jpg", quality=95)`）。resvgはWebPを読めない
+- **素材の取得（手順4）**
 
-4. `compose-aistudio.mjs`（または`compose.mjs`・`compose-pattern2.mjs`）の座標・文言・色を、今回の草案とセール内容に合わせて書き換える（下記「書き換える箇所」参照）。**文字の色・縁取り・アーチの有無は、配置情報（JSON）ではなくGeminiの草案の画像をClaudeが直接見て合わせる**（下記「配置情報（JSON）の信頼度」参照）
-5. 実行して`<作業ディレクトリ>/banner.png`を確認し、チャットでユーザーに見せる
+  ```bash
+  npm ci   # 初回のみ（@cf-wasm/satori・@resvg/resvg-wasmを使う）
+  bash .claude/prototypes/sale-banner/fetch-assets.sh <作業ディレクトリ> bot/YYYY-MM-DD
+  cp <Geminiの背景画像> <作業ディレクトリ>/bg.jpg
+  node .claude/prototypes/sale-banner/compose-aistudio.mjs <作業ディレクトリ>   # → <作業ディレクトリ>/banner.png
+  ```
 
-   ```bash
-   node .claude/prototypes/sale-banner/compose.mjs <作業ディレクトリ>
-   ```
-
-6. 投稿用にJPEGへ変換する（PNGは約1.3MBで、Blueskyの上限1MBを超える。`quality=92`で約300KBになった）
-7. 投稿文・代替テキストを用意する（下記「投稿文の例」参照）
-8. Bluesky・Mastodonへの投稿と、X・Instagram等への転載用テキストのDiscord送信は、GitHub Actions（`sale-announcement.yml`）で行う。`tmp-sale-announcement/<日付-内容>/`に`banner.jpg`・`bluesky.txt`・`mastodon.txt`・`x.txt`・`alt.txt`を置き、まず`DRY_RUN`付きでお試し実行してプレビューを確認してから本番を投稿する。終わったらフォルダを削除する（詳細は`.claude/rules/git-workflow.md`の「SNSセール告知の自動投稿とDiscord送信」）
-
-作業ディレクトリはClaude Codeセッションのスクラッチパッドを使う。1回の合成は数秒で終わるため、配置の微調整はここで何度でも繰り返す。
+  作業ディレクトリはClaude Codeセッションのスクラッチパッドを使う。背景がWebP形式で届いた場合は、PillowでJPEGに変換する（`pip install pillow`後、`Image.open("bg.webp").convert("RGB").save("bg.jpg", quality=95)`）。resvgはWebPを読めない
+- **書式の合わせ方（手順4）**: 文字の色・縁取り・アーチの有無は、Geminiの草案の画像をClaudeが直接見て合わせる（配置情報のJSONは頼まない。下記「配置情報（JSON）の信頼度」参照）
+- **背景が期待どおりでない場合（手順4）**: 描き直されて文字の余白がない、不要な小物がある、などは合成側で直せる（下記「Google AI Studioでの作り方」の「背景は同じ会話で頼んでも描き直された」「不要な小物の手動消去」参照）
+- **JPEG変換（手順5）**: PNGは約1.3MBでBlueskyの上限1MBを超える。`quality=92`で約300KBになった
+- **投稿の仕組み（手順6〜8）**: `.github/workflows/sale-announcement.yml`＋`scripts/post-sale-announcement.mjs`。フォルダ構成・検証ルール・注意点は`.claude/rules/git-workflow.md`の「SNSセール告知の自動投稿とDiscord送信」参照。**同じファイルを別フォルダへ入れ直しても「追加」として検出される**（`--no-renames`対応済み）
+- **必要なシークレット**: GitHub Actionsに`BLUESKY_*`・`MASTODON_*`・`DISCORD_WEBHOOK_URL`が登録済み（2026-09-29時点）。Health CheckのMastodon認証が失敗していたら、`MASTODON_INSTANCE_URL`が`https://mastodon.social`（パスなし）になっているか確認してもらう
 
 ## 書き換える箇所
+
+**`compose-aistudio.mjs`（次回の土台）で書き換える箇所**:
+
+| 箇所 | 2026-09-29の値 | 書き換えの目安 |
+| --- | --- | --- |
+| `PANEL` | `#EFC69E` | 背景のパネル色。Pillowで背景の数か所を実測して決める |
+| `cover` | パネル内側（x100〜930・y110〜910、1024px基準）を単色で塗る | 背景の場面が文字の余白を占めていなければ、`cover`と`scene`は外して背景をそのまま使う |
+| `scene`（`crop()`）・`SC` | 場面（x95〜925・y135〜905）を66%に縮小して下寄せ | 背景の場面の位置に合わせる |
+| `title` | SUZURI／秋のビッグセール＋開催中！ | セール名 |
+| `discountParts` | 最大・1,000・円OFF | 割引額 |
+| `deadline` | 10/4（日）23:59まで | `worker/sale.js`の`endDisplay`と一致させる |
+| `products` | Tシャツ1,000円OFF（オレンジの台座）・ステッカー100円OFF（緑の台座） | **セール対象の商品だけ**。背景が中間色なら台座は不要 |
+| `notice`・`shop` | 限定デザインは14日間だけ！・ショップ名とURL | 帯の文言 |
+
+**`compose.mjs`（パターン1の試作）で書き換える箇所**:
 
 | 箇所 | 2026-09の値 | 書き換えの目安 |
 | --- | --- | --- |
@@ -156,6 +175,39 @@ Please create 4 separate promotional images for a social media post (Bluesky / M
 ```
 
 **注意**: 2026-09はこの指示文の`Products`に4商品すべてを書いてしまった（実際の対象はTシャツとステッカーのみ）。次回は対象商品だけを書く。
+
+### AI Studio用（2026-09-29に使用・パターン1の方向性）
+
+草案用。`Text that must appear exactly`・`Products`をセールごとに書き換え、**対象商品だけ**を書く。Botのイラストと、`fetch-assets.sh`で取った実物のグッズ画像（対象商品のみ）を添付する。
+
+```text
+Create a square (1:1) promotional image for a social media post announcing a SUZURI sale for my cat illustration goods shop "にゃんバーサリー".
+
+Style: pop & energetic, festive, stops the scroll. Soft kawaii watercolor cat character (use the attached illustration as the character and art reference). Autumn touches are welcome.
+
+Text that must appear exactly (Japanese, no other text):
+- SUZURI 秋のビッグセール 開催中！
+- 最大1,000円OFF
+- 10/4（日）23:59まで
+- 限定デザインは14日間だけ！
+- にゃんバーサリー　suzuri.jp/nyanmusu
+
+Products: show ONLY these two items, using the attached product photos as they are (do not redesign them, do not add any other products):
+- T-shirt (1,000円OFF)
+- Sticker (100円OFF)
+Give the two products plenty of space so they are large and clearly visible.
+
+Quality bar: as cute and polished as popular character-goods brands' sale posts (e.g. mofusand). Playful, characterful Japanese typography. Strong contrast so the discount is readable at smartphone thumbnail size.
+```
+
+背景用（同じ会話で続けて。Temperatureを0.5前後に下げてから送る）。2026-09は描き直されて文字の余白がなくなったため、次回は末尾の1文（余白の指定）を足して試す（未検証）。
+
+```text
+Edit the image you just made. Remove ALL text and ALL product items (the T-shirt, the sticker, price tags, ribbons and banners that contain text).
+Keep everything else exactly as it is, in the same position and size: the cat character, confetti, leaves, decorations and background.
+Fill the removed areas naturally with the surrounding background. Do not redraw or rearrange the scene. Do not add anything new.
+Keep the upper half and the left and right sides clear enough to place large text and product photos later.
+```
 
 ### 2. 文字と商品を消した背景
 
