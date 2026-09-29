@@ -1,0 +1,66 @@
+name: Sale Announcement
+
+# tmp-sale-announcement/<日付-内容>/ に新しく追加されたSNSセール告知を、
+# Bluesky・Mastodonへ投稿し、結果と転載用テキストをDiscordへ送る。
+# フォルダに DRY_RUN があれば投稿せずDiscordにプレビューだけ送る。
+# 詳細は .claude/rules/git-workflow.md の「SNSセール告知の自動投稿とDiscord送信」。
+# pushしたブランチ上のこのファイルで動くため、mainへのマージを待たずに使える。
+
+on:
+  push:
+    branches: ["claude/**"]
+    paths: ["tmp-sale-announcement/**"]
+
+concurrency:
+  group: sale-announcement
+  cancel-in-progress: false
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install dependencies
+        run: npm ci
+      - name: Find newly added announcement folders
+        id: find
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          # ブランチの初回pushは BEFORE が 0000... になるため、デフォルトブランチとの差分で代用する
+          if [ -z "${BEFORE//0/}" ]; then
+            BASE=$(git merge-base "origin/${DEFAULT_BRANCH}" "$AFTER")
+          else
+            BASE="$BEFORE"
+          fi
+          # このpushで新しく追加されたファイルを含むフォルダだけ（削除・変更だけでは動かない）
+          DIRS=$(git diff --name-only --diff-filter=A "$BASE" "$AFTER" -- tmp-sale-announcement/ \
+            | awk -F/ 'NF>=3 {print $1"/"$2}' | sort -u | tr '\n' ' ')
+          echo "dirs=${DIRS}" >> "$GITHUB_OUTPUT"
+          echo "対象: ${DIRS:-なし}"
+      - name: Post and notify
+        if: steps.find.outputs.dirs != ''
+        env:
+          DIRS: ${{ steps.find.outputs.dirs }}
+          BLUESKY_IDENTIFIER: ${{ secrets.BLUESKY_IDENTIFIER }}
+          BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+          MASTODON_INSTANCE_URL: ${{ secrets.MASTODON_INSTANCE_URL }}
+          MASTODON_ACCESS_TOKEN: ${{ secrets.MASTODON_ACCESS_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          set -uo pipefail
+          status=0
+          for dir in $DIRS; do
+            [ -d "$dir" ] || continue
+            echo "== $dir"
+            node scripts/post-sale-announcement.mjs "$dir" || status=1
+          done
+          exit $status

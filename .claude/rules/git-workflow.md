@@ -22,15 +22,29 @@
 
 **CI上のNode.jsバージョン（2026-07更新）**: `deploy-worker.yml`・`health-check.yml`ともに`24`（Active LTS。EOL 2028-04-30）を明示的にpinしている。Cloudflare Worker本体（`workerd`ランタイム）はNode.jsを使わないため、Node.jsが関与するのはCIのビルド・テストツール実行のみ。以前は`22`（Maintenance LTS・EOL 2027-04-30）を使用していたが、Active LTSへの更新に伴い変更した。次回確認時は[nodejs/release](https://github.com/nodejs/release#release-schedule)で最新スケジュールを確認すること。
 
-## Discordへの転載用テキスト送信（`discord-outbox.yml`・2026-09追加）
+## SNSセール告知の自動投稿とDiscord送信（`sale-announcement.yml`・2026-09追加）
 
-Claude Codeのクラウドセッションには`DISCORD_WEBHOOK_URL`がないため、SNSセール告知の画像・転載用文面をDiscordへ送るときはGitHub Actions経由で送る。
+SUZURIセール告知の画像を、GitHub ActionsからBluesky・Mastodonへ自動投稿し、結果と転載用テキストをDiscordへ送る。Claude Codeのクラウドセッションには各SNS・Discordの認証情報がないため、Actionsのシークレット経由で行う。毎朝のBot投稿（Cloudflare Worker）とは別の仕組み。
 
-- **作業用フォルダ**: `tmp-discord-outbox/<日付-内容>/`（例: `tmp-discord-outbox/2026-09-29-autumn-sale/`）。リポジトリは公開されているため、一時ファイルであることが名前でわかるフォルダにする。ルートの`tmp/`は`.gitignore`対象でコミットできないため別名にしている
-- **置くもの**: 文面を`01-*.txt`・`02-*.txt`…の連番テキストで1通ずつ（Discordの上限で1通2,000字まで）、画像を1枚（`.jpg`/`.png`）。画像は1通目に添付される
-- **起動条件**: `claude/`で始まるブランチへのpushで、`tmp-discord-outbox/`の下に**新しく追加された**フォルダだけを送る（ファイルの削除・変更では送らない）。pushしたブランチ上のワークフローで動くため、`main`へのマージを待たずに使える
-- **送信先**: 登録済みのActionsシークレット`DISCORD_WEBHOOK_URL`（Bot通知と同じチャンネル）
-- **送信後**: 届いたことを確認したら、次のコミットでフォルダを削除する（作業用の一時ファイルを`main`に残さない）
+- **作業用フォルダ**: `tmp-sale-announcement/<日付-内容>/`（例: `tmp-sale-announcement/2026-09-29-autumn-sale/`）。リポジトリは公開されているため、一時ファイルであることが名前でわかるフォルダにする。ルートの`tmp/`は`.gitignore`対象でコミットできないため別名にしている
+- **置くもの**（ファイル名固定）:
+
+  | ファイル | 内容 | 投稿前の検証 |
+  | --- | --- | --- |
+  | `banner.jpg`（または`.png`） | 告知画像 | 976,000バイト以下（Blueskyの上限） |
+  | `bluesky.txt` | Bluesky用の本文 | 300文字（grapheme）以下 |
+  | `mastodon.txt` | Mastodon用の本文 | 500文字以下 |
+  | `x.txt` | X・Instagram等への転載用の本文 | Xの加重文字数（日本語は2、URLは23）280以下・ハッシュタグ5つ以下（Instagramの上限） |
+  | `alt.txt` | 代替テキスト（Bluesky・Mastodon共通） | 1,500文字以下（Mastodonの上限） |
+  | `DRY_RUN`（任意・中身は空でよい） | あればお試し実行 | - |
+
+- **お試し実行（`DRY_RUN`あり）**: SNSへは投稿せず、Discordに「🧪 テスト実行（投稿は行われていません）」と明記したプレビューだけを送る。最初は必ずお試し実行で内容を確認し、問題なければ`DRY_RUN`を消した**新しいフォルダ**を追加して本番の投稿をする（Botの`POST /bot/manual-run`と同じく安全側をデフォルトにする考え方。Bug#40参照）
+- **検証に失敗した場合**: どのSNSにも投稿せず、Discordに理由を送ってワークフローを失敗させる
+- **Discordに送る内容**: 1通目に画像＋各SNSの成否（成功時は投稿URL、失敗時はエラー、Mastodon未設定時はスキップ）、続けてX等用の本文・Mastodon用の本文・代替テキストを1通ずつ（Discordの上限で1通2,000字まで）
+- **起動条件**: `claude/`で始まるブランチへのpushで、`tmp-sale-announcement/`の下に**新しく追加されたファイル**を含むフォルダだけを処理する（ファイルの削除・変更だけでは動かないため、再pushで二重投稿は起きない）。pushしたブランチ上のワークフローで動くため、`main`へのマージを待たずに使える
+- **使うシークレット**: `BLUESKY_IDENTIFIER`・`BLUESKY_APP_PASSWORD`・`MASTODON_INSTANCE_URL`（`https://mastodon.social`のようにサーバーの住所だけ。`/@nyanmusu`等のパスを付けるとAPIではなくプロフィールページが返る）・`MASTODON_ACCESS_TOKEN`・`DISCORD_WEBHOOK_URL`
+- **送信後**: 結果を確認したら、次のコミットでフォルダを削除する（作業用の一時ファイルを`main`に残さない）
+- **実装**: `scripts/post-sale-announcement.mjs`（検証・投稿・Discord送信）。Bluesky・Mastodonへの投稿は`worker/bot.js`の既存ヘルパー（`createBlueskySession()`・`uploadBlob()`・`uploadMediaToMastodon()`・`postStatusToMastodon()`・`buildBlueskyPostUrl()`）を再利用する
 
 ## 初回セットアップ（デプロイ）
 
@@ -74,7 +88,7 @@ Cron Trigger（`0 15 * * *`・`0 16 * * *`・`0 22 * * 1-5`）は`wrangler.toml`
 - `DISCORD_WEBHOOK_URL`
 - `GEMINI_API_KEY`
 - `SUZURI_API_KEY`
-- `MASTODON_INSTANCE_URL`（任意・設定時はhealth-check.jsがMastodon認証も検証する）
+- `MASTODON_INSTANCE_URL`（任意・設定時はhealth-check.jsがMastodon認証も検証する。セール告知の自動投稿にも使う。2026-09-29登録。値は`https://mastodon.social`のようにサーバーの住所だけにする）
 - `MASTODON_ACCESS_TOKEN`（任意・同上）
 - `WORKER_URL`（任意・`https://anniversary-cat-worker.hiroshikuze.workers.dev`・設定時はhealth-check.jsがWorker E2Eチェック〔/research・/generate・/usage〕を実行する）
 - `BYPASS_TOKEN`（任意・`WORKER_URL`と併用・レート制限をスキップしてE2Eテストを実行）
