@@ -11,7 +11,8 @@ anniversary-cat-worker/
 │   ├── health-check.yml              ← push時: ユニットテスト + E2Eチェック
 │   ├── deploy-worker.yml             ← main push時: Cloudflare Workersデプロイ
 │   ├── deploy-pages.yml              ← main push時: GitHub Pagesデプロイ
-│   └── query-worker-logs.yml         ← workflow_dispatch: Cloudflare Workers Logsのキーワード検索（2026-08追加）
+│   ├── query-worker-logs.yml         ← workflow_dispatch: Cloudflare Workers Logsのキーワード検索（2026-08追加）
+│   └── discord-outbox.yml            ← claude/**へのpush: tmp-discord-outbox/の画像・文面をDiscordへ送信（2026-09追加）
 ├── .claude/
 │   ├── revision_log.md               ← ミスパターン記録（毎セッション冒頭で読む）
 │   ├── bugs-history.md               ← バグ履歴 Bug#1〜（都度参照・自動ロードなし）

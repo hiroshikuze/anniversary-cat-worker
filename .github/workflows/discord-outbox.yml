@@ -1,0 +1,70 @@
+name: Discord Outbox
+
+# tmp-discord-outbox/<日付-内容>/ に新しく追加された画像・文面をDiscordへ送る。
+# Claude Codeのクラウドセッションには DISCORD_WEBHOOK_URL がないため、SNSセール告知の
+# 転載用テキスト等をこのワークフロー経由で送る（詳細は .claude/rules/git-workflow.md の
+# 「Discordへの転載用テキスト送信」）。pushしたブランチ上のこのファイルで動くため、
+# mainへのマージを待たずに使える。
+
+on:
+  push:
+    branches: ["claude/**"]
+    paths: ["tmp-discord-outbox/**"]
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Send new outbox folders to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DISCORD_WEBHOOK_URL}" ]; then
+            echo "::error::DISCORD_WEBHOOK_URL が未設定です"; exit 1
+          fi
+
+          # このpushで新しく追加されたファイルがあるフォルダだけを対象にする（削除・変更では送らない）。
+          # ブランチの初回pushは BEFORE が 0000... になるため、デフォルトブランチとの差分で代用する
+          if [ -z "${BEFORE//0/}" ]; then
+            BASE=$(git merge-base "origin/${{ github.event.repository.default_branch }}" "$AFTER")
+          else
+            BASE="$BEFORE"
+          fi
+          DIRS=$(git diff --name-only --diff-filter=A "$BASE" "$AFTER" -- tmp-discord-outbox/ \
+            | awk -F/ 'NF>=3 {print $1"/"$2}' | sort -u)
+          if [ -z "$DIRS" ]; then
+            echo "新しく追加されたフォルダはありません"; exit 0
+          fi
+
+          for dir in $DIRS; do
+            [ -d "$dir" ] || continue
+            echo "== $dir"
+            image=$(find "$dir" -maxdepth 1 -type f \( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' \) | sort | head -n 1)
+            first=1
+            for txt in $(find "$dir" -maxdepth 1 -type f -name '*.txt' | sort); do
+              chars=$(wc -m < "$txt")
+              if [ "$chars" -gt 2000 ]; then
+                echo "::error::$txt は ${chars} 字で、Discordの上限（2,000字）を超えています"; exit 1
+              fi
+              payload=$(jq -Rs '{content: .}' < "$txt")
+              if [ "$first" = 1 ] && [ -n "$image" ]; then
+                status=$(curl -sS -o /tmp/resp.txt -w '%{http_code}' --max-time 30 \
+                  -F "payload_json=${payload}" -F "files[0]=@${image}" "$DISCORD_WEBHOOK_URL")
+              else
+                status=$(curl -sS -o /tmp/resp.txt -w '%{http_code}' --max-time 30 \
+                  -H 'Content-Type: application/json' -d "$payload" "$DISCORD_WEBHOOK_URL")
+              fi
+              if [ "$status" -ge 300 ]; then
+                echo "::error::$txt の送信に失敗: status=$status body=$(head -c 200 /tmp/resp.txt)"; exit 1
+              fi
+              echo "送信: $txt (status=$status)"
+              first=0
+              sleep 1   # Discord Webhookのレート制限を避ける
+            done
+          done

@@ -22,6 +22,16 @@
 
 **CI上のNode.jsバージョン（2026-07更新）**: `deploy-worker.yml`・`health-check.yml`ともに`24`（Active LTS。EOL 2028-04-30）を明示的にpinしている。Cloudflare Worker本体（`workerd`ランタイム）はNode.jsを使わないため、Node.jsが関与するのはCIのビルド・テストツール実行のみ。以前は`22`（Maintenance LTS・EOL 2027-04-30）を使用していたが、Active LTSへの更新に伴い変更した。次回確認時は[nodejs/release](https://github.com/nodejs/release#release-schedule)で最新スケジュールを確認すること。
 
+## Discordへの転載用テキスト送信（`discord-outbox.yml`・2026-09追加）
+
+Claude Codeのクラウドセッションには`DISCORD_WEBHOOK_URL`がないため、SNSセール告知の画像・転載用文面をDiscordへ送るときはGitHub Actions経由で送る。
+
+- **作業用フォルダ**: `tmp-discord-outbox/<日付-内容>/`（例: `tmp-discord-outbox/2026-09-29-autumn-sale/`）。リポジトリは公開されているため、一時ファイルであることが名前でわかるフォルダにする。ルートの`tmp/`は`.gitignore`対象でコミットできないため別名にしている
+- **置くもの**: 文面を`01-*.txt`・`02-*.txt`…の連番テキストで1通ずつ（Discordの上限で1通2,000字まで）、画像を1枚（`.jpg`/`.png`）。画像は1通目に添付される
+- **起動条件**: `claude/`で始まるブランチへのpushで、`tmp-discord-outbox/`の下に**新しく追加された**フォルダだけを送る（ファイルの削除・変更では送らない）。pushしたブランチ上のワークフローで動くため、`main`へのマージを待たずに使える
+- **送信先**: 登録済みのActionsシークレット`DISCORD_WEBHOOK_URL`（Bot通知と同じチャンネル）
+- **送信後**: 届いたことを確認したら、次のコミットでフォルダを削除する（作業用の一時ファイルを`main`に残さない）
+
 ## 初回セットアップ（デプロイ）
 
 ```bash

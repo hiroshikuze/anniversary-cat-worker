@@ -41,6 +41,7 @@ SUZURIセール時にSNSへ載せる告知画像を、Geminiの絵とSatoriの�
 
 6. 投稿用にJPEGへ変換する（PNGは約1.3MBで、Blueskyの上限1MBを超える。`quality=92`で約300KBになった）
 7. 投稿文・代替テキストを用意する（下記「投稿文の例」参照）
+8. X・Instagram等への手動転載用に、画像と文面をDiscordへ送る。`tmp-discord-outbox/<日付-内容>/`に画像と`01-*.txt`…の文面を置いてpushすると、GitHub Actions（`discord-outbox.yml`）が送る。届いたらフォルダを削除する（詳細は`.claude/rules/git-workflow.md`の「Discordへの転載用テキスト送信」）
 
 作業ディレクトリはClaude Codeセッションのスクラッチパッドを使う。1回の合成は数秒で終わるため、配置の微調整はここで何度でも繰り返す。
 
