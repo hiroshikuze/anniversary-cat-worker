@@ -1574,7 +1574,7 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 - 実投稿: Bluesky `https://bsky.app/profile/nyanmusu.bsky.social/post/3mwnyup3ahd2n`、Mastodon `https://mastodon.social/@nyanmusu/117354716984838537`（いずれも2026-09-29 23:07 JST。公開APIで1件ずつ投稿されたことを確認）
 - ユーザーによる手動転載（2026-09-29、Discordの転載用テキストを使用）:
   - X: `https://x.com/hiroshikuze/status/2104949230502809603`（ユーザー個人のアカウント）
-  - Instagram: 未記録（ユーザーから共有されたURLがXと同じだったため、正しいURLを確認中）
+  - Instagram: `https://www.instagram.com/p/Dd4B_mpvpzb/`
   - Facebook: `https://www.facebook.com/share/p/19dQHjSkjS/`
   - mixi2: `https://mixi.social/@nyanmusu/posts/939f5f0a-44dc-4b58-8043-73e88afc61c0`
   - Discord（自動投稿の結果・転載用テキストの通知。ユーザーの非公開サーバー内のため、閲覧にはそのサーバーへの参加が必要）: `https://discordapp.com/channels/1390567808148045907/1480490867600134164/1554513631847125075`
