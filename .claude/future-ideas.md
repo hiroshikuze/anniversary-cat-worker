@@ -1578,7 +1578,9 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 - Tシャツの値札が「1,000」の左下に少し重なっている
 - 対象商品・値引き額をどこから取るか。`checkForNewSale()`がすでに商品ごとの`included`/`discountYen`を抽出しているので、人間が確認して`worker/sale.js`へ反映した値をバナーでも使う案が有力（Aの自動反映ルールと関係する）
 - パターン2（秋の季節感）は未試作
-- 試作スクリプトはスクラッチパッドにあり、コミットしていない。再現に必要な技法は上記「Satoriで再現できた表現」に記録した。フォントはGoogle Fontsの`MochiyPopOne-Regular.ttf`・`ZenMaruGothic-Bold.ttf`/`Black.ttf`（`https://raw.githubusercontent.com/google/fonts/main/ofl/`から取得できた）
+- Geminiへの指示文のうち「文字と商品を消す」「配置情報をJSONで出す」の2つは、ユーザーが実際に入力した文面が記録されていない（`.claude/prototypes/sale-banner/README.md`にClaudeの再構成案を置いた）
+
+**試作一式の保存先**: `.claude/prototypes/sale-banner/`（合成スクリプト`compose.mjs`・素材取得`fetch-assets.sh`・手順とGeminiへの指示文`README.md`）。本番コードではない。新しい作業ディレクトリで`fetch-assets.sh`→`compose.mjs`を実行し、ユーザー評価済みの画像とバイト単位で同一の出力が再現できることを確認済み（2026-09-29）。素材（背景・グッズ画像・フォント約12MB）はコミットしていない。
 
 ### 次のアクション
 

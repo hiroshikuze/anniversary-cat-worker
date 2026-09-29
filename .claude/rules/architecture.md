@@ -17,6 +17,8 @@ anniversary-cat-worker/
 │   ├── bugs-history.md               ← バグ履歴 Bug#1〜（都度参照・自動ロードなし）
 │   ├── future-ideas.md               ← 将来拡張アイデア（都度参照・自動ロードなし）
 │   ├── settings.json                 ← PostToolUseフック（Markdownスペース検証）
+│   ├── prototypes/
+│   │   └── sale-banner/              ← SNSセール告知バナーの試作一式（本番コードではない・2026-09追加）
 │   ├── archive/
 │   │   ├── revision_log_2026-03.md   ← アーカイブ済みの旧revision_log（2026-03分）
 │   │   └── revision_log_2026-04-07.md ← アーカイブ済みの旧revision_log（2026-04〜2026-07分・2026-09追加）
