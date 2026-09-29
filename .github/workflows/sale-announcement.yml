@@ -41,8 +41,9 @@ jobs:
           else
             BASE="$BEFORE"
           fi
-          # このpushで新しく追加されたファイルを含むフォルダだけ（削除・変更だけでは動かない）
-          DIRS=$(git diff --name-only --diff-filter=A "$BASE" "$AFTER" -- tmp-sale-announcement/ \
+          # このpushで新しく追加されたファイルを含むフォルダだけ（削除・変更だけでは動かない）。
+          # 別フォルダへの入れ直しを「名前の変更」と判定させないよう --no-renames を付ける
+          DIRS=$(git diff --no-renames --name-only --diff-filter=A "$BASE" "$AFTER" -- tmp-sale-announcement/ \
             | awk -F/ 'NF>=3 {print $1"/"$2}' | sort -u | tr '\n' ' ')
           echo "dirs=${DIRS}" >> "$GITHUB_OUTPUT"
           echo "対象: ${DIRS:-なし}"

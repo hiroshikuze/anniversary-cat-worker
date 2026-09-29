@@ -41,7 +41,7 @@ SUZURIセール告知の画像を、GitHub ActionsからBluesky・Mastodonへ自
 - **お試し実行（`DRY_RUN`あり）**: SNSへは投稿せず、Discordに「🧪 テスト実行（投稿は行われていません）」と明記したプレビューだけを送る。最初は必ずお試し実行で内容を確認し、問題なければ`DRY_RUN`を消した**新しいフォルダ**を追加して本番の投稿をする（Botの`POST /bot/manual-run`と同じく安全側をデフォルトにする考え方。Bug#40参照）
 - **検証に失敗した場合**: どのSNSにも投稿せず、Discordに理由を送ってワークフローを失敗させる
 - **Discordに送る内容**: 1通目に画像＋各SNSの成否（成功時は投稿URL、失敗時はエラー、Mastodon未設定時はスキップ）、続けてX等用の本文・Mastodon用の本文・代替テキストを1通ずつ（Discordの上限で1通2,000字まで）
-- **起動条件**: `claude/`で始まるブランチへのpushで、`tmp-sale-announcement/`の下に**新しく追加されたファイル**を含むフォルダだけを処理する（ファイルの削除・変更だけでは動かないため、再pushで二重投稿は起きない）。pushしたブランチ上のワークフローで動くため、`main`へのマージを待たずに使える
+- **起動条件**: `claude/`で始まるブランチへのpushで、`tmp-sale-announcement/`の下に**新しく追加されたファイル**を含むフォルダだけを処理する（ファイルの削除・変更だけでは動かないため、再pushで二重投稿は起きない）。同じ内容のファイルを別フォルダへ入れ直した場合、gitは標準で「名前の変更」と判定し「追加」に数えないため、差分は`git diff --no-renames`で取る（2026-09-29、お試し用フォルダから本番用フォルダへファイルを入れ直したところ、名前の変更と判定されて本番の投稿が飛ばされた）。pushしたブランチ上のワークフローで動くため、`main`へのマージを待たずに使える
 - **使うシークレット**: `BLUESKY_IDENTIFIER`・`BLUESKY_APP_PASSWORD`・`MASTODON_INSTANCE_URL`（`https://mastodon.social`のようにサーバーの住所だけ。`/@nyanmusu`等のパスを付けるとAPIではなくプロフィールページが返る）・`MASTODON_ACCESS_TOKEN`・`DISCORD_WEBHOOK_URL`
 - **送信後**: 結果を確認したら、次のコミットでフォルダを削除する（作業用の一時ファイルを`main`に残さない）
 - **実装**: `scripts/post-sale-announcement.mjs`（検証・投稿・Discord送信）。Bluesky・Mastodonへの投稿は`worker/bot.js`の既存ヘルパー（`createBlueskySession()`・`uploadBlob()`・`uploadMediaToMastodon()`・`postStatusToMastodon()`・`buildBlueskyPostUrl()`）を再利用する
