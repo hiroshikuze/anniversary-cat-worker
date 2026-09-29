@@ -261,4 +261,4 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 - テスト方針・診断手順 → `.claude/rules/testing.md`
 - Gitワークフロー・デプロイ手順 → `.claude/rules/git-workflow.md`
 - システム設計・API仕様・将来拡張・過去バグ詳細 → `.claude/rules/architecture.md`
-- SNS用のSUZURIセール告知（画像作成・Bluesky/Mastodonへの投稿・Discordへの転載用テキスト送信）を頼まれたとき → まず`.claude/prototypes/sale-banner/README.md`の「手順」を読み、その順で進める（2026-09-29に一通り成功した流れ。経緯は`.claude/future-ideas.md`の「C. Gemini×Satori分業方式」、投稿の仕組みは`.claude/rules/git-workflow.md`の「SNSセール告知の自動投稿とDiscord送信」）
+- SNS用のSUZURIセール告知（画像作成・Bluesky/Mastodonへの投稿・Discordへの転載用テキスト送信）を頼まれたとき → まずスキル`sale-announcement`（`.claude/skills/sale-announcement/SKILL.md`）の「手順」を読み、その順で進める（2026-09-29に一通り成功した流れ。経緯は`.claude/future-ideas.md`の「C. Gemini×Satori分業方式」、投稿の仕組みは`.claude/rules/git-workflow.md`の「SNSセール告知の自動投稿とDiscord送信」）

@@ -144,7 +144,7 @@
 - **教訓**:
   - 告知・宣伝物は公開されるため、**載せる事実（対象商品・値引き額・締切）と、投稿先の制約（文字数・ハッシュタグ数・画像サイズ）を、素材を作る前に一次情報で確認する**。記憶の中の制約値は変わっていることがある
   - 「追加のみで起動」のような条件を持つ仕組みは、ユニットテストだけでなく**実際に使う操作の順番（今回は「お試し→本番」）で起動条件を試してから**本番に進む。ローカルで`git diff`の出力を確かめるだけでも防げた
-  - 手順と注意点は`.claude/prototypes/sale-banner/README.md`の「手順」、`.claude/rules/git-workflow.md`の「SNSセール告知の自動投稿とDiscord送信」に反映済み
+  - 手順と注意点はスキル`sale-announcement`（`.claude/skills/sale-announcement/SKILL.md`）の「手順」、`.claude/rules/git-workflow.md`の「SNSセール告知の自動投稿とDiscord送信」に反映済み
 
 ### YYYY-MM | タイトル
 - **状況**: 何をしようとしていたか

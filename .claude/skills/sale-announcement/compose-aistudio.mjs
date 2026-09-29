@@ -2,9 +2,9 @@
 // 2026-09-29に実際にBluesky/Mastodonへ投稿した版をそのまま保存したもの。座標・文言はこのときの値。
 // Geminiの背景で猫の場面が画面いっぱいに描かれ文字の余白がなかったため、
 // パネルを塗り直し → 場面だけを切り出して縮小・下寄せ → 空いた上半分に文字・左右に実物グッズ、と組み直している。
-// 使い方は同じディレクトリのREADME.mdを参照（compose.mjsと同じ）。
+// 使い方は同じディレクトリのSKILL.md・reference.mdを参照。
 //
-//   node .claude/prototypes/sale-banner/compose-aistudio.mjs <作業ディレクトリ>
+//   node .claude/skills/sale-announcement/compose-aistudio.mjs <作業ディレクトリ>
 //
 // 作業ディレクトリに必要なもの: bg.jpg（1024×1024・硬貨を消し済み）・t-shirt.png・sticker.png・fonts/*.ttf。
 // 出力は<作業ディレクトリ>/banner.png（Blueskyの上限1MBを超えるため、投稿時はJPEGに変換する）。

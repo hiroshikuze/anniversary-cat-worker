@@ -1558,14 +1558,14 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 - Geminiの背景は草案（クリーム色の紙＋下半分の木の棚）と構図が異なり、画面全体が木の板の背景に描き直されていた。「消して」と頼んでも描き直されることがある
 - 木の板が中間色のため、白いTシャツ・ステッカーは台座なしで目立った
 - 初回は配置情報（JSON）の書式どおりに作ったところ、見出しが草案と違って見えるとユーザーから指摘があった。JSONは「白文字＋焦げ茶の縁取り」だったが、草案は逆の「焦げ茶の文字＋白の縁取り」で、アーチ配置・「最大」の縦書き・「円／OFF」の縦積みもJSONに含まれていなかった。Claudeが草案の画像を直接見て書式を合わせ直し（フォントも草案に近い極太の丸ゴシック＝Zen丸ゴシック Blackに統一）、草案にかなり近づいた
-- 教訓: **配置情報（JSON）の書式情報（色・縁取りの向き・アーチ等）は当てにならない。位置の目安にとどめ、書式はClaudeが草案の画像を見て合わせる**。信頼度の一覧は`.claude/prototypes/sale-banner/README.md`の「配置情報（JSON）の信頼度」参照
+- 教訓: **配置情報（JSON）の書式情報（色・縁取りの向き・アーチ等）は当てにならない。位置の目安にとどめ、書式はClaudeが草案の画像を見て合わせる**。信頼度の一覧は`.claude/skills/sale-announcement/reference.md`の「配置情報（JSON）の信頼度」参照
 
 **Google AI Studio版の作成と実投稿（2026-09-29）**:
 
 - ユーザーの判断で、パターン1の方向性をGoogle AI Studio（Nano Banana＝`gemini-2.5-flash-image`＋APIキー）で作り直した。AI Studioの画像生成モデルはすべて有料で、Playgroundで使うにはGoogle AI PlanかAPIキーが必要だった
 - 配置情報（JSON）は頼まず、草案と背景の2枚だけを用意してもらった。グッズは草案に使われたイラスト（`bot/2026-09-29`招き猫の日）の実物画像を`fetch-assets.sh`で取得した
 - 背景は同じ会話で編集を頼んでも描き直され、文字の余白がなかったため、場面を切り出して縮小・下寄せする組み直しを合成側で行った。右下の硬貨1枚はユーザーの判断で手作業で消した
-- 完成版を`compose-aistudio.mjs`として保存（投稿画像とバイト単位で同一の出力を再現確認済み）。JPEG（約300KB）に変換してユーザーがBluesky・Mastodonに手動投稿した。手順・設定・投稿文は`.claude/prototypes/sale-banner/README.md`参照
+- 完成版を`compose-aistudio.mjs`として保存（投稿画像とバイト単位で同一の出力を再現確認済み）。JPEG（約300KB）に変換してユーザーがBluesky・Mastodonに手動投稿した。手順・設定・投稿文は`.claude/skills/sale-announcement/`参照
 - **反響の確認**: セール終了翌日（2026-10-05）に、Bluesky（`public.api.bsky.app`の`getAuthorFeed`・`nyanmusu.bsky.social`）とMastodon（`mastodon.social/@nyanmusu`）の公開APIで、この投稿のいいね・リポスト（ブースト）・返信を確認する。同じ週の通常のBot投稿の反響と比べ、告知バナーに効果があったかを判断する材料にする
 
 **Bluesky・Mastodonへの自動投稿とDiscord送信（2026-09-29・実運用で成功）**:
@@ -1582,7 +1582,7 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 - 途中で起きたこと:
   - GitHub Actionsに`MASTODON_*`が未登録だった（Workerにのみ登録）。ユーザーが登録したが、`MASTODON_INSTANCE_URL`の値の誤り（最初は接続不可、次は`/@nyanmusu`付きでHTMLが返る）でHealth Checkが2回失敗し、`https://mastodon.social`に直して通過した
   - 本番の1回目のpushで、お試し用フォルダから本番用フォルダへのファイルの入れ直しをgitが「名前の変更」と判定し、「追加」だけを探すワークフローが投稿を飛ばした。`git diff --no-renames`で修正し、やり直して投稿できた
-- 手順全体（誰が何をするか）は`.claude/prototypes/sale-banner/README.md`の「手順」にまとめた。次回はそこから始める
+- 手順全体（誰が何をするか）はスキル`sale-announcement`（`.claude/skills/sale-announcement/SKILL.md`）の「手順」にまとめた。次回はそこから始める
 
 **Geminiの配置情報をそのまま使えなかった点**（パターン1のSatori合成時に手動で補正した）:
 
@@ -1608,10 +1608,10 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 - 台座の下側がオレンジの帯に隠れる。要素の重なり順が指定どおりにならない原因は未調査
 - Tシャツの値札が「1,000」の左下に少し重なっている
 - 対象商品・値引き額をどこから取るか。`checkForNewSale()`がすでに商品ごとの`included`/`discountYen`を抽出しているので、人間が確認して`worker/sale.js`へ反映した値をバナーでも使う案が有力（Aの自動反映ルールと関係する）
-- Geminiへの指示文のうち「文字と商品を消す」「配置情報をJSONで出す」の2つは、ユーザーが実際に入力した文面が記録されていない（`.claude/prototypes/sale-banner/README.md`にClaudeの再構成案を置いた）
+- Geminiへの指示文のうち「文字と商品を消す」「配置情報をJSONで出す」の2つは、ユーザーが実際に入力した文面が記録されていない（`.claude/skills/sale-announcement/`にClaudeの再構成案を置いた）
 
-**試作一式の保存先**: `.claude/prototypes/sale-banner/`（合成スクリプト`compose-aistudio.mjs`〔実投稿版〕・`compose.mjs`〔パターン1〕・`compose-pattern2.mjs`〔パターン2〕・素材取得`fetch-assets.sh`・手順とGeminiへの指示文`README.md`）。本番コードではない。新しい作業ディレクトリで`fetch-assets.sh`→`compose.mjs`を実行し、ユーザー評価済みの画像とバイト単位で同一の出力が再現できることを確認済み（2026-09-29）。素材（背景・グッズ画像・フォント約12MB）はコミットしていない。
+**スキル一式の保存先**（2026-09-29に`.claude/prototypes/sale-banner/`から移動し、正式なスキル`sale-announcement`にした）: `.claude/skills/sale-announcement/`（合成スクリプト`compose-aistudio.mjs`〔実投稿版〕・`compose.mjs`〔パターン1〕・`compose-pattern2.mjs`〔パターン2〕・素材取得`fetch-assets.sh`・手順`SKILL.md`・参考情報`reference.md`・Geminiへの指示文`prompts.md`）。本番コードではない。新しい作業ディレクトリで`fetch-assets.sh`→`compose.mjs`を実行し、ユーザー評価済みの画像とバイト単位で同一の出力が再現できることを確認済み（2026-09-29）。素材（背景・グッズ画像・フォント約12MB）はコミットしていない。
 
 ### 次のアクション
 
-次回セッション冒頭で、このセクションを読んでからA・B/Cどちらから再開するかユーザーに確認する。Aは技術設計がほぼ固まっているため実装に進みやすい。Cは2026-09-29にAI Studio版を自動投稿の仕組みで実投稿済み。2026-10-05に反響を確認し、結果をこの節に追記する（Claude Code Remoteの`send_later`で予約済み）。次のセールでは`.claude/prototypes/sale-banner/README.md`の「手順」から始める。
+次回セッション冒頭で、このセクションを読んでからA・B/Cどちらから再開するかユーザーに確認する。Aは技術設計がほぼ固まっているため実装に進みやすい。Cは2026-09-29にAI Studio版を自動投稿の仕組みで実投稿済み。2026-10-05に反響を確認し、結果をこの節に追記する（Claude Code Remoteの`send_later`で予約済み）。次のセールではスキル`sale-announcement`（`.claude/skills/sale-announcement/SKILL.md`）の「手順」から始める。

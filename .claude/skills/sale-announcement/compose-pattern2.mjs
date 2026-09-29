@@ -1,9 +1,9 @@
 // SNSセール告知バナーの試作スクリプト・パターン2（秋の季節感）（本番コードではない・参考資料）
 // Geminiの背景（木の板）に、Geminiの草案の画像を直接見て書式を寄せた文字と、実物グッズを合成する。
 // 2026-09「秋のビッグセール」パターン2の最終版をそのまま保存したもの。座標・文言はこのときの値。
-// 使い方は同じディレクトリのREADME.mdを参照（compose.mjsと同じ）。
+// 使い方は同じディレクトリのSKILL.md・reference.mdを参照。
 //
-//   node .claude/prototypes/sale-banner/compose-pattern2.mjs <作業ディレクトリ>
+//   node .claude/skills/sale-announcement/compose-pattern2.mjs <作業ディレクトリ>
 //
 // 作業ディレクトリに必要なもの: bg.jpg・t-shirt.png・sticker.png・fonts/*.ttf。出力は<作業ディレクトリ>/banner.png。
 import { readFileSync, writeFileSync } from "node:fs";

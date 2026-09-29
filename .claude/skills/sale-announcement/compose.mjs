@@ -1,9 +1,9 @@
 // SNSセール告知バナーの試作スクリプト（本番コードではない・参考資料）
 // Gemini背景 + Geminiの配置情報(JSON)を手で読み取った値 → Satoriで文字・実物グッズを合成する。
 // 2026-09「秋のビッグセール」パターン1の試作をそのまま保存したもの。座標・文言はこのときの値。
-// 使い方は同じディレクトリのREADME.mdを参照。
+// 使い方は同じディレクトリのSKILL.md・reference.mdを参照。
 //
-//   node .claude/prototypes/sale-banner/compose.mjs <作業ディレクトリ>
+//   node .claude/skills/sale-announcement/compose.mjs <作業ディレクトリ>
 //
 // 作業ディレクトリに必要なもの: bg.jpg（Geminiの背景）・t-shirt.png・sticker.png・fonts/*.ttf
 // （fetch-assets.shで取得できる）。出力は<作業ディレクトリ>/banner.png。

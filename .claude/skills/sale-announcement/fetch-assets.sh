@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SNSセール告知バナー試作用の素材を作業ディレクトリに集める（本番コードではない）
-#   bash .claude/prototypes/sale-banner/fetch-assets.sh <作業ディレクトリ> <Bot作品ID 例: bot/2026-09-25>
+#   bash .claude/skills/sale-announcement/fetch-assets.sh <作業ディレクトリ> <Bot作品ID 例: bot/2026-09-25>
 # 取得するもの: フォント3種（Google Fonts・OFL）・そのBot作品のSUZURIグッズ画像4種
 # Geminiの背景（bg.jpg）は取得しない。手動で作業ディレクトリに置くこと。
 set -euo pipefail
