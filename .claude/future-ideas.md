@@ -1577,6 +1577,7 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
   - Instagram: 未記録（ユーザーから共有されたURLがXと同じだったため、正しいURLを確認中）
   - Facebook: `https://www.facebook.com/share/p/19dQHjSkjS/`
   - mixi2: `https://mixi.social/@nyanmusu/posts/939f5f0a-44dc-4b58-8043-73e88afc61c0`
+  - Discord（自動投稿の結果・転載用テキストの通知。ユーザーの非公開サーバー内のため、閲覧にはそのサーバーへの参加が必要）: `https://discordapp.com/channels/1390567808148045907/1480490867600134164/1554513631847125075`
   - 反響の確認方法: Bluesky・Mastodonは公開APIで取得できる。X・Instagram・Facebookは認証や有料APIが必要で、Claude Codeからは取得できないため、ユーザーに各アプリの数字（いいね・リポスト等）を教えてもらう。mixi2の公開APIの有無は未確認
 - 途中で起きたこと:
   - GitHub Actionsに`MASTODON_*`が未登録だった（Workerにのみ登録）。ユーザーが登録したが、`MASTODON_INSTANCE_URL`の値の誤り（最初は接続不可、次は`/@nyanmusu`付きでHTMLが返る）でHealth Checkが2回失敗し、`https://mastodon.social`に直して通過した
