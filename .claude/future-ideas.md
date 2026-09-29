@@ -1572,6 +1572,12 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 
 - ユーザーの希望で、告知の投稿を手動からGitHub Actions経由の自動投稿に切り替えた（`.github/workflows/sale-announcement.yml`＋`scripts/post-sale-announcement.mjs`）。Discordには「両SNSの成否（投稿URL付き）」「X・Instagram等への転載用の本文（ハッシュタグ5つまで）」「Mastodon用の本文」「共通の代替テキスト」を送る
 - 実投稿: Bluesky `https://bsky.app/profile/nyanmusu.bsky.social/post/3mwnyup3ahd2n`、Mastodon `https://mastodon.social/@nyanmusu/117354716984838537`（いずれも2026-09-29 23:07 JST。公開APIで1件ずつ投稿されたことを確認）
+- ユーザーによる手動転載（2026-09-29、Discordの転載用テキストを使用）:
+  - X: `https://x.com/hiroshikuze/status/2104949230502809603`（ユーザー個人のアカウント）
+  - Instagram: 未記録（ユーザーから共有されたURLがXと同じだったため、正しいURLを確認中）
+  - Facebook: `https://www.facebook.com/share/p/19dQHjSkjS/`
+  - mixi2: `https://mixi.social/@nyanmusu/posts/939f5f0a-44dc-4b58-8043-73e88afc61c0`
+  - 反響の確認方法: Bluesky・Mastodonは公開APIで取得できる。X・Instagram・Facebookは認証や有料APIが必要で、Claude Codeからは取得できないため、ユーザーに各アプリの数字（いいね・リポスト等）を教えてもらう。mixi2の公開APIの有無は未確認
 - 途中で起きたこと:
   - GitHub Actionsに`MASTODON_*`が未登録だった（Workerにのみ登録）。ユーザーが登録したが、`MASTODON_INSTANCE_URL`の値の誤り（最初は接続不可、次は`/@nyanmusu`付きでHTMLが返る）でHealth Checkが2回失敗し、`https://mastodon.social`に直して通過した
   - 本番の1回目のpushで、お試し用フォルダから本番用フォルダへのファイルの入れ直しをgitが「名前の変更」と判定し、「追加」だけを探すワークフローが投稿を飛ばした。`git diff --no-renames`で修正し、やり直して投稿できた
