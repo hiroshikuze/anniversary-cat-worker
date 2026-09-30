@@ -11,12 +11,15 @@ anniversary-cat-worker/
 │   ├── health-check.yml              ← push時: ユニットテスト + E2Eチェック
 │   ├── deploy-worker.yml             ← main push時: Cloudflare Workersデプロイ
 │   ├── deploy-pages.yml              ← main push時: GitHub Pagesデプロイ
-│   └── query-worker-logs.yml         ← workflow_dispatch: Cloudflare Workers Logsのキーワード検索（2026-08追加）
+│   ├── query-worker-logs.yml         ← workflow_dispatch: Cloudflare Workers Logsのキーワード検索（2026-08追加）
+│   └── sale-announcement.yml         ← claude/**へのpush: tmp-sale-announcement/の告知をBluesky・Mastodonへ投稿しDiscordへ送信（2026-09追加）
 ├── .claude/
 │   ├── revision_log.md               ← ミスパターン記録（毎セッション冒頭で読む）
 │   ├── bugs-history.md               ← バグ履歴 Bug#1〜（都度参照・自動ロードなし）
 │   ├── future-ideas.md               ← 将来拡張アイデア（都度参照・自動ロードなし）
 │   ├── settings.json                 ← PostToolUseフック（Markdownスペース検証）
+│   ├── skills/
+│   │   └── sale-announcement/        ← スキル: SNSセール告知の作成・投稿手順と合成スクリプト（`/sale-announcement`・2026-09追加）
 │   ├── archive/
 │   │   ├── revision_log_2026-03.md   ← アーカイブ済みの旧revision_log（2026-03分）
 │   │   └── revision_log_2026-04-07.md ← アーカイブ済みの旧revision_log（2026-04〜2026-07分・2026-09追加）
@@ -53,7 +56,9 @@ anniversary-cat-worker/
     ├── test-pool-30days.mjs          ← 事前リサーチプール方式シミュレーション（GEMINI_API_KEY必要）
     ├── generate-kana-translations.mjs ← translations.kanaブランチのruby HTML一括生成（kuroshiro使用・一回限りユーティリティ）
     ├── preview-kana.mjs              ← かなモードのrubyふりがなをブラウザでプレビュー（引数: theme description）
-    └── query-worker-logs.mjs         ← Cloudflare Workers Logsのキーワード検索（CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID必要・2026-08追加）
+    ├── query-worker-logs.mjs         ← Cloudflare Workers Logsのキーワード検索（CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID必要・2026-08追加）
+    ├── post-sale-announcement.mjs    ← SNSセール告知の検証・Bluesky/Mastodon投稿・Discord送信（sale-announcement.ymlから実行・2026-09追加）
+    └── test-post-sale-announcement.mjs ← 上記の純粋関数のユニットテスト（外部API不要）← npm test（2026-09追加）
 ```
 
 ---

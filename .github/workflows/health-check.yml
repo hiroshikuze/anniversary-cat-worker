@@ -22,6 +22,8 @@ jobs:
         run: node scripts/test-suzuri.mjs
       - name: Run sale unit tests
         run: node scripts/test-sale.mjs
+      - name: Run sale announcement unit tests
+        run: node scripts/test-post-sale-announcement.mjs
       - name: Frontend feature presence check
         run: |
           check() { grep -q "$1" frontend/index.html || { echo "❌ Missing: $1"; exit 1; }; }
