@@ -132,6 +132,8 @@ anniversary-cat-worker/
 
 右グループ（t-shirt/sticker）・中央グループ（can-badge/acrylic-keychain）はそれぞれ独立して`createSuzuriProducts()`を呼ぶため、`POST /api/v1/materials`が**2回**実行され、SUZURI側には別々の`materialId`を持つ2つのマテリアルが作成される。R2メタの`materialIds`（配列）は両方の呼び出し結果を`updateMetaInR2()`で蓄積し（`products`と同じupsertパターン）、14日後のクリーンアップ（`scheduled()`）が配列内の全IDを削除する。`/resume-hires/:id`（安全網エンドポイント）が右グループを再実行した場合も同様に`materialIds`へ追記する。
 
+**Tシャツ背面画像は3つ目のマテリアルになる（2026-10判明・Bug#42）:** 右グループのTシャツに`sub_materials`（背面印刷の漢字テクスチャ）を渡すと、SUZURI側でタイトルなし・非公開（`title: null`・`published: false`）の**別マテリアル**が自動作成される（実測: 豆腐の日のTシャツ商品の背面画像URLがメインとは別の素材ID`21066962`を参照していた）。このIDは`POST /materials`のレスポンスから取得していないため`materialIds`に記録されず、上記の14日後クリーンアップから漏れて蓄積していた（2026-10時点で142件）。後述の「Tシャツ背面画像マテリアルの一括削除」で毎日掃除する。
+
 **`updateMetaInR2()`の並行書き込み耐性（2026-09追加・Bug#34）:** 右グループ（`ctx.waitUntil()`内で15〜20秒後）・中央グループ（同期）・`/resume-hires`はいずれも同一`r2Id`のmeta.jsonへ独立したタイミングで書き込む。かつては単純な`get→JSでマージ→put`だったため、書き込みが競合すると後勝ちが先勝ちの結果を黙って上書きするロストアップデートが発生し、実際に本番でマテリアルIDが`materialIds`配列から消失する事故が起きた（詳細は`.claude/bugs-history.md`のBug#34参照）。現在はR2の条件付きPUT（`onlyIf: { etagMatches: obj.etag }`）による楽観的並行性制御+有界リトライ（`maxRetries=5`）で、複数の書き込みが競合しても全て失われずマージされることを保証している。
 
 **`updateMetaInR2()`最終失敗時のSUZURIマテリアル削除ロールバック（`_updateMetaOrRollback()`・2026-09追加）:** 上記のCAS+リトライを`maxRetries`回試しても最終的に`updateMetaInR2()`が失敗した場合（etag競合が解消しない・R2側の障害等）、`createSuzuriProducts()`はすでに成功済み（課金対象の商品ページがSUZURI上に存在）だがR2メタには一切記録されない「孤立マテリアル」が残ってしまう。この孤立は`scripts/audit-suzuri-materials.mjs`では検出できない（同スクリプトは販売期間が過ぎた期限切れマテリアルのみを対象とし、今日登録されたばかりの孤立は対象外）ため、次に共有ページが訪問されるたびにR2側が「未登録」と誤認して再登録が走り、孤立が際限なく増え続けるリスクがある（実際に2026-09に1日で8件の孤立マテリアルが発生する事故が起きた。詳細は`.claude/bugs-history.md`のBug#34参照）。
@@ -284,6 +286,20 @@ export function _setSaleForTest(sale) { ... } // テスト用
 - `"0 15 * * *"`（リサーチプール生成Cron）へ移設する案 → 月末は同じCron内で`runMonthlyWallpaperPost()`（Satori/resvg/PhotonによるCPU予算が極めて逼迫する処理、過去に`error 1102`を繰り返し発生させた経緯あり。詳細は「月替わり壁紙プレゼント機能」参照）が動くため、月末に限ってcleanupが同じ問題を再発させるリスクがあり却下
 
 `"0 16 * * *"`は`checkForNewSale()`が大半の日はKV比較のみで即returnする軽量な設計のため、cleanupと安全に同居できる。移設に伴い、cleanupの実行頻度が実質的に改善する副次効果もある（従来はBot Cronの一部だったため平日のみの実行だったが、`"0 16 * * *"`は毎日発火するため週末に期限切れになったエントリも即日処理される）。
+
+### Tシャツ背面画像マテリアルの一括削除（`cleanupOrphanBackTextureMaterials()`・2026-10追加・Bug#42）
+
+Tシャツの`sub_materials`がSUZURI側に作る背面画像マテリアル（「/suzuri-createエンドポイント仕様」参照）は`materialIds`に記録されないため、`cleanupExpiredEntries()`の末尾で別途削除する。
+
+- **方式**: `GET /api/v1/materials`で自アカウントの素材一覧を取得し、以下をすべて満たすものを削除する（判定は`worker/suzuri.js`の純粋関数`isOrphanBackTextureMaterial(mat, nowMs)`）
+  - `user.name`が`SUZURI_USER_NAME`（`"nyanmusu"`）と一致する（一覧APIが他ユーザーの素材を返した場合の誤削除防止）
+  - `title`が空（`null`・空文字）
+  - `published`が`false`
+  - `uploadedAt`から`ORPHAN_BACK_TEXTURE_MIN_AGE_MS`（15日）以上経過している（販売期間14日＋1日の余裕。販売中のTシャツの背面画像を消さないため）
+- **採用理由**: `POST /materials`のレスポンスに背面素材のIDが含まれるかは未確認で、レスポンス形式に依存せず、過去の取りこぼしも拾える方式を選んだ（比較した案: レスポンスからIDを取得して`materialIds`に記録する案／メイン素材と作成時刻が近い素材を探す案）。このアカウントでタイトルなし素材を作るのは背面画像のみのため、判定条件での誤削除リスクは低い
+- **サブリクエスト上限への配慮（Bug#41）**: 一覧取得は最大`maxPages=2`ページ（1ページ50件・新しい順）、削除は1回あたり最大`maxDeletes=10`件に制限する。定常状態では毎日1件程度の削除になる
+- **未検証の前提**: `GET /api/v1/materials`（`user_id`指定なし）が認証ユーザー自身の素材を新しい順に返すことを前提にしている（`scripts/audit-suzuri-materials.mjs`も同じ前提）。他ユーザーの素材が返る場合は`user.name`の一致判定で何も削除されず安全側に倒れる。初回Cron発火後に`query-worker-logs.mjs --grep "cleanup-backtexture"`で取得件数・削除件数を確認する
+- 失敗（一覧取得・個別削除）は`console.warn`のみで、`cleanupExpiredEntries()`本体（R2/メイン素材の削除）には影響させない
 
 ### 処理フロー（`checkForNewSale(env, ctx, notifyFn)`）
 

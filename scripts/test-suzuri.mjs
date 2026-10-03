@@ -13,6 +13,10 @@ import {
   createSuzuriProducts,
   deleteSuzuriMaterial,
   SUZURI_ITEM_IDS,
+  listSuzuriMaterials,
+  isOrphanBackTextureMaterial,
+  SUZURI_USER_NAME,
+  ORPHAN_BACK_TEXTURE_MIN_AGE_MS,
 } from "../worker/suzuri.js";
 
 let passed = 0;
@@ -208,6 +212,73 @@ console.log("\n[deleteSuzuriMaterial: APIエラー]");
     () => deleteSuzuriMaterial(99999, { SUZURI_API_KEY: "test-key" })
   );
 
+  globalThis.fetch = origFetch;
+}
+
+// ---------------------------------------------------------------------------
+// isOrphanBackTextureMaterial - Tシャツ背面画像マテリアルの判定（Bug#42）
+// ---------------------------------------------------------------------------
+console.log("\n[isOrphanBackTextureMaterial]");
+{
+  const nowMs = Date.UTC(2026, 9, 3, 0, 0, 0);
+  const DAY = 24 * 60 * 60 * 1000;
+  const iso = ms => new Date(ms).toISOString();
+  const base = {
+    title: null,
+    published: false,
+    uploadedAt: iso(nowMs - 16 * DAY),
+    user: { name: SUZURI_USER_NAME },
+  };
+  assert("15日の閾値定数が15日である", ORPHAN_BACK_TEXTURE_MIN_AGE_MS === 15 * DAY);
+  assert("正常系: 自アカウント・タイトルなし・非公開・16日経過はtrue", isOrphanBackTextureMaterial(base, nowMs) === true);
+  assert("タイトルが空文字でもtrue", isOrphanBackTextureMaterial({ ...base, title: "" }, nowMs) === true);
+  assert("境界値: ちょうど15日経過はtrue", isOrphanBackTextureMaterial({ ...base, uploadedAt: iso(nowMs - 15 * DAY) }, nowMs) === true);
+  assert("境界値: 15日未満（販売中のTシャツが参照中の可能性）はfalse", isOrphanBackTextureMaterial({ ...base, uploadedAt: iso(nowMs - 15 * DAY + 1000) }, nowMs) === false);
+  assert("タイトル付き（メイン素材）はfalse", isOrphanBackTextureMaterial({ ...base, title: "豆腐の日と水彩画にゃんこ" }, nowMs) === false);
+  assert("公開中はfalse", isOrphanBackTextureMaterial({ ...base, published: true }, nowMs) === false);
+  assert("他ユーザーの素材はfalse", isOrphanBackTextureMaterial({ ...base, user: { name: "someone-else" } }, nowMs) === false);
+  assert("userなしはfalse", isOrphanBackTextureMaterial({ ...base, user: undefined }, nowMs) === false);
+  assert("uploadedAtが不正な日付はfalse", isOrphanBackTextureMaterial({ ...base, uploadedAt: "invalid" }, nowMs) === false);
+  assert("uploadedAtなしはfalse", isOrphanBackTextureMaterial({ ...base, uploadedAt: undefined }, nowMs) === false);
+  assert("null入力はfalse", isOrphanBackTextureMaterial(null, nowMs) === false);
+}
+
+// ---------------------------------------------------------------------------
+// listSuzuriMaterials - GET /api/v1/materials（Bug#42）
+// ---------------------------------------------------------------------------
+console.log("\n[listSuzuriMaterials]");
+{
+  const origFetch = globalThis.fetch;
+  let calledUrl = "";
+  let calledAuth = "";
+  globalThis.fetch = async (url, opts) => {
+    calledUrl = url;
+    calledAuth = opts?.headers?.Authorization ?? "";
+    return { ok: true, status: 200, text: async () => JSON.stringify({ materials: [{ id: 1 }, { id: 2 }], meta: { hasNext: false } }) };
+  };
+  const list = await listSuzuriMaterials({ SUZURI_API_KEY: "test-key" }, 50, 50);
+  assert("正常系: materials配列を返す", Array.isArray(list) && list.length === 2 && list[0].id === 1);
+  assert("limit・offsetがクエリに含まれる", calledUrl.includes("limit=50") && calledUrl.includes("offset=50"));
+  assert("Bearer認証ヘッダーが付く", calledAuth === "Bearer test-key");
+  globalThis.fetch = origFetch;
+}
+{
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify([{ id: 9 }]) });
+  const list = await listSuzuriMaterials({ SUZURI_API_KEY: "test-key" });
+  assert("レスポンスが配列そのものでも受け付ける", list.length === 1 && list[0].id === 9);
+  globalThis.fetch = origFetch;
+}
+{
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 401, text: async () => JSON.stringify({ message: "Unauthorized" }) });
+  await assertThrows("APIエラー（401）時は例外を投げる", () => listSuzuriMaterials({ SUZURI_API_KEY: "bad" }));
+  globalThis.fetch = origFetch;
+}
+{
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 400, text: async () => "<html>Bad Request</html>" });
+  await assertThrows("非JSONレスポンス時は例外を投げる", () => listSuzuriMaterials({ SUZURI_API_KEY: "test-key" }));
   globalThis.fetch = origFetch;
 }
 

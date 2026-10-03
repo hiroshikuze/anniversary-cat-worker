@@ -221,6 +221,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | テキストモデルのコスト最適化スコアリング・切替Discord通知（lite優先・低バージョン優先・`RATE_KV`） | `worker/index.js` `_selectFromCandidates()` `selectBestModel()` | 稼働中 |
 | Gemini APIトークン使用量の日次KV集計・`/usage`エンドポイント | `worker/index.js` | 稼働中 |
 | R2ストレージ（14日保持・Cron起動時クリーンアップ） | `worker/r2-storage.js` | 稼働中 |
+| Tシャツ背面画像SUZURIマテリアルの毎日の一括削除（`sub_materials`が別素材として作られ`materialIds`から漏れるため・Bug#42） | `worker/index.js` `cleanupOrphanBackTextureMaterials()` `worker/suzuri.js` `isOrphanBackTextureMaterial()` | 実装済み・初回Cron発火での動作確認待ち |
 | レート制限（`/generate`: IP 3回/日・グローバル 50回/日） | `worker/index.js` `checkRateLimit()` | 稼働中 |
 | かなモード（JP/かな/EN 3択・ruby furigana・Gemini生成`themeKana`/`descriptionKana`・日付`formatDateKana()`でふりがな） | `frontend/index.html` `translations.kana`/`setLang()`/`formatDateKana()` / `worker/index.js` `handleResearch()` | 稼働中 |
 | Bluesky/Mastodon投稿CTA行のローテーション（`CTA_VARIANTS`重み付き5パターン・毎回同一文言の反復を回避） | `worker/bot.js` `pickCta()` | 稼働中 |

@@ -486,4 +486,12 @@
 - **教訓**: 同一Cron実行（同一`scheduled()`呼び出し）の中で複数の重い処理を直列に並べると、前段の処理がサブリクエスト予算・実行時間を消費し、後段の処理（とくに複数の外部APIを同時fetchする処理）が原因不明のタイムアウトを起こすことがある。「無関係な2つの外部サービスが偶然同時に失敗した」ように見える場合、まず疑うべきは外部サービス側ではなく、同一Worker実行内で共有されているリソース（サブリクエスト予算・同時接続数上限）である
 - **実機検証の結果（2026-09・クローズ）**: PR #197マージ・デプロイ後、9/27分は`POST /bot/manual-run?dryRun=false`による手動リカバリーが成功。翌9/28朝は通常のBot Cron（`0 22 * * 1-5`）が正常に投稿を完了し、cleanup移設後にGemini/Pollinations同時タイムアウトが再発しないことを実機で確認できた。**本Bugはクローズ**
 
+### 42. Tシャツ背面画像のSUZURIマテリアルが14日後の自動削除から漏れ、142件蓄積していた（2026-10）
+
+- **症状**: SUZURI MCPで素材一覧を棚卸ししたところ、タイトルなし・非公開・2000×2000の素材が2026-04-19以降ほぼ毎日1件ずつ残り続けていた（142件）。あわせて、説明文なしの旧形式の公開素材（2026-03-29〜04-17・33件）と、R2メタに記録されなかった期限切れ素材（Bug#34の時期・5件）も残っていた
+- **原因**: Tシャツの背面印刷（`sub_materials`）にテクスチャを渡すと、SUZURI側で別のマテリアルが自動作成される（豆腐の日のTシャツ商品の背面画像URLが、メイン素材`21066961`とは別の素材`21066962`を参照していることをMCPの`get_product`で確認）。`createSuzuriProducts()`はメインの`data.material.id`しか返さず、R2メタの`materialIds`にも記録されないため、`cleanupExpiredEntries()`の削除対象に入っていなかった。説明文がないため`scripts/audit-suzuri-materials.mjs`でも「判定不可」扱いで削除されなかった
+- **対応**: 既存の残存分180件はSUZURI MCPの`delete_material`で手動削除（販売中のTシャツが参照する9/21以降の背面素材11件は除外）。再発防止として`cleanupOrphanBackTextureMaterials()`を新設し、`cleanupExpiredEntries()`の末尾で「自アカウント・タイトルなし・非公開・15日以上経過」の素材を毎日削除する。棚卸しスクリプトも同じ判定（`isOrphanBackTextureMaterial()`）で削除対象に含める。詳細は`.claude/rules/architecture.md`の「Tシャツ背面画像マテリアルの一括削除」参照
+- **場所**: `worker/suzuri.js`（`listSuzuriMaterials()`・`isOrphanBackTextureMaterial()`新設）、`worker/index.js`（`cleanupOrphanBackTextureMaterials()`新設）、`scripts/audit-suzuri-materials.mjs`
+- **教訓**: 外部APIに「付属データ」（今回は`sub_materials`）を渡す機能を追加した際、それが外部サービス側で独立したリソースとして作られるかどうかを確認しないと、削除・課金・上限の管理から漏れる。作成系APIを使う機能を追加したら、実際に作られたリソースをSUZURI MCP等で一覧確認する
+
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
