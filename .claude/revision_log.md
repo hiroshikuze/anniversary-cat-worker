@@ -13,6 +13,19 @@
 - [2026-03のミスパターン](archive/revision_log_2026-03.md)も参照すること
 - [2026-04〜2026-07のミスパターン](archive/revision_log_2026-04-07.md)も参照すること
 
+### 2026-10 | 古いローカル`main`からブランチを切ったため、無関係なワークフロー変更を含むとしてpushを拒否された
+
+- **状況**: Bug#42の修正ブランチを、`git fetch`せずにローカルの`main`から作成してpushしたところ、`refusing to allow a Personal Access Token to create or update workflow .github/workflows/health-check.yml without workflow scope`で拒否された
+- **原因**: ローカルの`main`がリモートより10コミット古く、その間に`origin/main`で`.github/workflows/`（`health-check.yml`・`sale-announcement.yml`）が変更されていた。今回のコミット自体はワークフローに触れていなかったが、古い分岐元のブランチはGitHub側からワークフローを変更するものとして扱われた
+- **対応**: `git fetch origin`→`git rebase origin/main`で最新に載せ直し、`npm test`を再実行してからpushした
+- **教訓**: 作業ブランチは必ず`git fetch origin`のあと`origin/main`から作る（例: `git fetch origin && git checkout -b claude/xxx origin/main`）。セッション開始時の`gitStatus`はローカルの状態であり、リモートとの差は分からない。pushが`workflow scope`で拒否されたら、まず分岐元が古くないかを`git log --oneline HEAD..origin/main`で確認する
+
+### 2026-10 | SUZURIの作成系APIで実際に何が作られたかを確認せず、背面画像の素材が約5か月蓄積していた（Bug#42）
+
+- **状況・原因・対応**: `.claude/bugs-history.md`のBug#42参照
+- **教訓**: 外部サービスにリソースを作る機能（SUZURIの`sub_materials`等）を追加したら、実装直後に実際に作られたリソースを一覧で確認する。SUZURIは2026-10からSUZURI MCP（`list_materials`・`get_product`等）で直接確認できる。素材一覧の取得には`user_id: 2655861`（アカウント名`nyanmusu`）を指定する
+- **SUZURI MCPの接続トラブル（2026-10）**: サーバー移行後は「コネクタを削除して`https://mcp.suzuri.jp/mcp`で追加し直す」必要があった（`claude mcp remove suzuri -s user`→`claude mcp add --transport http -s user suzuri https://mcp.suzuri.jp/mcp`→`/mcp`から認証）。認証画面でCloudflareに「時計が合っていない」と弾かれた原因はWSLの時計ずれ（約3日20時間遅れ）で、Windows側のPowerShellで`wsl -u root hwclock -s`を実行して直した（`!`経由の`sudo`はパスワード入力ができないため使えない）
+
 ### 2026-09 | ユーザーが伝えたセール検知結果（Discord通知転載）がどのセッションにも記録されず`_currentSale`反映が9日近く漏れた
 
 - **状況**: `checkForNewSale()`Cronは2026-09-19頃に「秋のBIGセール」を正常に検知し、Discordに`🏷️ SUZURIセール候補を検知しました`（セール名・期間・商品別割引・元記事URLを含む詳細通知）を送信していた。ユーザーはこの通知を見て把握しており、当時のセッションに伝えていたと認識していたが、`worker/sale.js`の`_currentSale`は2026-09-27時点でも8月の旧セール（ニンニンSALE・9/3終了）のままだった
