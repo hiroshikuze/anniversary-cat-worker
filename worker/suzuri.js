@@ -198,6 +198,63 @@ export async function createSuzuriProducts(imageUrl, theme, env, slugFilter = nu
 }
 
 /**
+ * このBotが使うSUZURIアカウント名（ショップURL https://suzuri.jp/nyanmusu と同じ）。
+ * 素材一覧が他ユーザーの素材を返した場合に誤削除しないための照合に使う。
+ */
+export const SUZURI_USER_NAME = "nyanmusu";
+
+/**
+ * Tシャツ背面画像マテリアルを削除してよい経過時間（販売期間14日＋余裕1日）。
+ * これより新しい背面素材は販売中のTシャツが参照している可能性がある。
+ */
+export const ORPHAN_BACK_TEXTURE_MIN_AGE_MS = 15 * 24 * 60 * 60 * 1000;
+
+/**
+ * Tシャツの sub_materials（背面印刷）がSUZURI側に自動作成する別マテリアルかどうかを判定する（Bug#42）。
+ * このマテリアルはR2メタの materialIds に記録されないため、14日後の自動削除から漏れる。
+ * 判定: 自アカウント・タイトルなし・非公開・作成から15日以上経過
+ *
+ * @param {object} mat   - GET /api/v1/materials の要素
+ * @param {number} nowMs - 現在時刻（テスト用）
+ * @returns {boolean}
+ */
+export function isOrphanBackTextureMaterial(mat, nowMs = Date.now()) {
+  if (!mat || mat.user?.name !== SUZURI_USER_NAME) return false;
+  if (mat.title) return false;
+  if (mat.published !== false) return false;
+  const uploadedMs = Date.parse(mat.uploadedAt ?? "");
+  if (Number.isNaN(uploadedMs)) return false;
+  return nowMs - uploadedMs >= ORPHAN_BACK_TEXTURE_MIN_AGE_MS;
+}
+
+/**
+ * 認証ユーザーのSUZURIマテリアル一覧を1ページ分取得する（新しい順）。
+ * limit は1〜50のみ許可（100は400エラー。suzuri-api-reference.md参照）。
+ *
+ * @param {object} env    - SUZURI_API_KEY を含む環境変数
+ * @param {number} offset
+ * @param {number} limit
+ * @returns {Promise<Array<object>>}
+ * @throws {Error} APIエラー時
+ */
+export async function listSuzuriMaterials(env, offset = 0, limit = 50) {
+  // GETのため冪等。一時的な5xx・ネットワーク例外はリトライする
+  const res = await fetchWithRetry(`${SUZURI_API_BASE}/materials?limit=${limit}&offset=${offset}`, {
+    headers: { "Authorization": `Bearer ${env.SUZURI_API_KEY}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  const resText = await res.text();
+  let data;
+  try { data = JSON.parse(resText); } catch {
+    throw new Error(`[SUZURI] 非JSONレスポンス: status=${res.status} body=${resText.slice(0, 120)}`);
+  }
+  if (!res.ok) {
+    throw new Error(`[SUZURI] マテリアル一覧取得失敗: status=${res.status} message=${data.message ?? JSON.stringify(data)}`);
+  }
+  return Array.isArray(data) ? data : (data.materials ?? []);
+}
+
+/**
  * SUZURIマテリアルを削除する。
  * 7日経過した古い商品のクリーンアップや、テスト後の削除に使用する。
  *

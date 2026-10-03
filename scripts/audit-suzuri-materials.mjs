@@ -6,6 +6,7 @@
  * R2に保存されず、14日後の自動クリーンアップから漏れて孤立マテリアルが
  * 残り続けていた）。本スクリプトはSUZURI側に実在する全マテリアルを一覧し、
  * descriptionに埋め込まれた販売期限表記から削除対象を判定する。
+ * Tシャツ背面画像のマテリアル（Bug#42・説明文なし）はisOrphanBackTextureMaterial()で判定する。
  *
  * 実行前に環境変数を設定すること:
  *   export SUZURI_API_KEY=<SUZURIのAPIキー>
@@ -19,6 +20,8 @@
  * 注意: --delete オプションを付けると実際にSUZURIのマテリアルが削除される。
  *       事前に一覧をよく確認すること。
  */
+
+import { isOrphanBackTextureMaterial } from "../worker/suzuri.js";
 
 const SUZURI_API_BASE = "https://suzuri.jp/api/v1";
 
@@ -116,6 +119,11 @@ async function main() {
   const undeterminable = [];
 
   for (const mat of materials) {
+    // Tシャツ背面画像のマテリアル（Bug#42）は期限表記がないため、別の判定で削除対象に含める
+    if (isOrphanBackTextureMaterial(mat, now.getTime())) {
+      expired.push({ ...mat, _expiry: null });
+      continue;
+    }
     const expiry = parseExpiryDate(mat.description ?? "", now);
     if (expiry === null) {
       undeterminable.push(mat);
@@ -126,7 +134,8 @@ async function main() {
 
   console.log(`\n--- 削除対象（期限切れ）: ${expired.length}件 ---`);
   for (const mat of expired) {
-    console.log(`  id=${mat.id}  期限=${mat._expiry.toISOString().slice(0, 10)}  title="${mat.title ?? ""}"`);
+    const label = mat._expiry ? `期限=${mat._expiry.toISOString().slice(0, 10)}` : `背面画像（作成=${(mat.uploadedAt ?? "").slice(0, 10)}）`;
+    console.log(`  id=${mat.id}  ${label}  title="${mat.title ?? ""}"`);
   }
 
   console.log(`\n--- 判定不可（手動確認が必要・削除対象には含めない）: ${undeterminable.length}件 ---`);

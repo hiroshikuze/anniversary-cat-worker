@@ -28,7 +28,7 @@ import {
 import { _setSaleForTest } from "../worker/sale.js";
 import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale } from "../worker/sale-check.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST, _isBotCronEvent, cleanupExpiredEntries } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST, _isBotCronEvent, cleanupExpiredEntries, cleanupOrphanBackTextureMaterials } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 import { renderElementToPng, ensureResvg, _setSatoriForTest, _setResvgForTest } from "../worker/svg-render.js";
@@ -5847,6 +5847,7 @@ console.log("\n[cleanupExpiredEntries]");
   const deleteFromR2Fn = async (bucket, id) => { deletedR2Ids.push(id); };
   await cleanupExpiredEntries({ IMAGE_BUCKET: {}, SUZURI_API_KEY: "key" }, {
     listExpiredIdsFn, getMetaFromR2Fn, deleteSuzuriMaterialFn, deleteFromR2Fn,
+    cleanupOrphanBackTextureMaterialsFn: async () => {},
   });
   assert("正常系: 全materialIdsが削除される", JSON.stringify(deletedMaterials) === JSON.stringify([1, 2, 3]));
   assert("正常系: 全R2 idが削除される", JSON.stringify(deletedR2Ids) === JSON.stringify(["bot/2026-09-01", "user/abc"]));
@@ -5862,6 +5863,7 @@ console.log("\n[cleanupExpiredEntries]");
   const deleteFromR2Fn = async (bucket, id) => { deletedR2Ids.push(id); };
   await cleanupExpiredEntries({ IMAGE_BUCKET: {} }, {
     listExpiredIdsFn, getMetaFromR2Fn, deleteSuzuriMaterialFn, deleteFromR2Fn,
+    cleanupOrphanBackTextureMaterialsFn: async () => {},
   });
   assert("SUZURI_API_KEY未設定: getMetaFromR2は呼ばれない", deletedMaterials.length === 0);
   assert("SUZURI_API_KEY未設定: R2削除は行われる", JSON.stringify(deletedR2Ids) === JSON.stringify(["bot/2026-09-01"]));
@@ -5880,6 +5882,7 @@ console.log("\n[cleanupExpiredEntries]");
   const deleteFromR2Fn = async (bucket, id) => { deletedR2Ids.push(id); };
   await cleanupExpiredEntries({ IMAGE_BUCKET: {}, SUZURI_API_KEY: "key" }, {
     listExpiredIdsFn, getMetaFromR2Fn, deleteSuzuriMaterialFn, deleteFromR2Fn,
+    cleanupOrphanBackTextureMaterialsFn: async () => {},
   });
   assert("1件失敗しても他のmaterialId削除は続行", JSON.stringify(deletedMaterials) === JSON.stringify([2]));
   assert("1件失敗してもR2削除は続行", JSON.stringify(deletedR2Ids) === JSON.stringify(["bot/2026-09-01"]));
@@ -5909,6 +5912,111 @@ console.log("\n[cleanupExpiredEntries]");
     threw = true;
   }
   assert("listExpiredIds失敗時も例外を投げない", threw === false);
+}
+
+console.log("\n[cleanupOrphanBackTextureMaterials]");
+{
+  // 正常系: 判定がtrueの素材のみ削除する
+  const nowMs = Date.UTC(2026, 9, 3);
+  const deleted = [];
+  const page = [{ id: 1, orphan: true }, { id: 2, orphan: false }, { id: 3, orphan: true }];
+  const result = await cleanupOrphanBackTextureMaterials({ SUZURI_API_KEY: "key" }, {
+    listSuzuriMaterialsFn: async (env, offset) => (offset === 0 ? page : []),
+    isOrphanFn: (mat) => mat.orphan,
+    deleteSuzuriMaterialFn: async (id) => { deleted.push(id); },
+    nowMs,
+  });
+  assert("正常系: 判定trueの素材のみ削除", JSON.stringify(deleted) === JSON.stringify([1, 3]));
+  assert("正常系: 削除件数を返す", result.deleted === 2);
+}
+
+{
+  // 1ページ50件ちょうどなら次ページも取得し、maxPagesで打ち切る
+  const offsets = [];
+  const fullPage = Array.from({ length: 50 }, (_, i) => ({ id: i }));
+  await cleanupOrphanBackTextureMaterials({ SUZURI_API_KEY: "key" }, {
+    listSuzuriMaterialsFn: async (env, offset) => { offsets.push(offset); return fullPage; },
+    isOrphanFn: () => false,
+    deleteSuzuriMaterialFn: async () => {},
+    maxPages: 2,
+  });
+  assert("maxPages=2で2ページ取得して打ち切る", JSON.stringify(offsets) === JSON.stringify([0, 50]));
+}
+
+{
+  // 50件未満のページが返ったら次ページは取得しない
+  const offsets = [];
+  await cleanupOrphanBackTextureMaterials({ SUZURI_API_KEY: "key" }, {
+    listSuzuriMaterialsFn: async (env, offset) => { offsets.push(offset); return [{ id: 1 }]; },
+    isOrphanFn: () => false,
+    deleteSuzuriMaterialFn: async () => {},
+  });
+  assert("最終ページ（50件未満）で取得を止める", JSON.stringify(offsets) === JSON.stringify([0]));
+}
+
+{
+  // maxDeletesを超える対象があっても上限で打ち切る（サブリクエスト予算・Bug#41）
+  const deleted = [];
+  const page = Array.from({ length: 30 }, (_, i) => ({ id: i }));
+  await cleanupOrphanBackTextureMaterials({ SUZURI_API_KEY: "key" }, {
+    listSuzuriMaterialsFn: async () => page,
+    isOrphanFn: () => true,
+    deleteSuzuriMaterialFn: async (id) => { deleted.push(id); },
+    maxDeletes: 10,
+  });
+  assert("maxDeletes=10で削除を打ち切る", deleted.length === 10);
+}
+
+{
+  // 1件の削除失敗でも残りの削除は続行する
+  const deleted = [];
+  await cleanupOrphanBackTextureMaterials({ SUZURI_API_KEY: "key" }, {
+    listSuzuriMaterialsFn: async () => [{ id: 1 }, { id: 2 }],
+    isOrphanFn: () => true,
+    deleteSuzuriMaterialFn: async (id) => { if (id === 1) throw new Error("status=500"); deleted.push(id); },
+  });
+  assert("1件失敗しても他の削除は続行", JSON.stringify(deleted) === JSON.stringify([2]));
+}
+
+{
+  // 一覧取得失敗時も例外を投げない
+  let threw = false;
+  try {
+    await cleanupOrphanBackTextureMaterials({ SUZURI_API_KEY: "key" }, {
+      listSuzuriMaterialsFn: async () => { throw new Error("status=503"); },
+      deleteSuzuriMaterialFn: async () => {},
+    });
+  } catch { threw = true; }
+  assert("一覧取得失敗時も例外を投げない", threw === false);
+}
+
+{
+  // SUZURI_API_KEY未設定時は何もしない
+  let listCalled = false;
+  await cleanupOrphanBackTextureMaterials({}, {
+    listSuzuriMaterialsFn: async () => { listCalled = true; return []; },
+  });
+  assert("SUZURI_API_KEY未設定: 一覧取得しない", listCalled === false);
+}
+
+{
+  // cleanupExpiredEntriesの末尾から背面画像の削除が呼ばれる（R2期限切れが0件でも）
+  let orphanCalled = false;
+  await cleanupExpiredEntries({ IMAGE_BUCKET: {}, SUZURI_API_KEY: "key" }, {
+    listExpiredIdsFn: async () => [],
+    cleanupOrphanBackTextureMaterialsFn: async () => { orphanCalled = true; },
+  });
+  assert("cleanupExpiredEntriesから背面画像の削除が呼ばれる", orphanCalled === true);
+}
+
+{
+  // listExpiredIdsが失敗しても背面画像の削除は実行される（独立したtry/catch）
+  let orphanCalled = false;
+  await cleanupExpiredEntries({ IMAGE_BUCKET: {}, SUZURI_API_KEY: "key" }, {
+    listExpiredIdsFn: async () => { throw new Error("R2一覧取得失敗"); },
+    cleanupOrphanBackTextureMaterialsFn: async () => { orphanCalled = true; },
+  });
+  assert("R2側が失敗しても背面画像の削除は実行される", orphanCalled === true);
 }
 
 console.log("\n[_buildGeminiPrompt / _buildPollinationsPrompt: reserveCalendarSpace]");

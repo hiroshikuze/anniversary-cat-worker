@@ -12,7 +12,9 @@
 | `GET` | `/api/v1/items` | アイテムID一覧取得・在庫確認 | `worker/suzuri.js` `fetchAvailableItemIds()` |
 | `POST` | `/api/v1/materials` | マテリアル＋商品一括作成 | `worker/suzuri.js` `createSuzuriProducts()` |
 | `DELETE` | `/api/v1/materials/{id}` | マテリアル削除（14日後の自動クリーンアップ・テスト後の手動削除） | `worker/suzuri.js` `deleteSuzuriMaterial()`（`worker/index.js` `scheduled()`から呼び出し）/ `scripts/test-suzuri-api.mjs` |
-| `GET` | `/api/v1/materials` | マテリアル一覧取得（孤立マテリアルの棚卸し用） | `scripts/audit-suzuri-materials.mjs`（2026-06追加）。`limit`は**1〜50**のみ許可（`100`を渡すと400エラー。実APIレスポンスのスキーマ正規表現`/^([1-9]|[1-4][0-9]|50)$/`で確認済み。他エンドポイントの`limit=100`慣習とは異なる点に注意） |
+| `GET` | `/api/v1/materials` | マテリアル一覧取得（孤立マテリアルの棚卸し・背面画像マテリアルの毎日の削除） | `scripts/audit-suzuri-materials.mjs`（2026-06追加）・`worker/suzuri.js` `listSuzuriMaterials()`（2026-10追加・Bug#42）。`limit`は**1〜50**のみ許可（`100`を渡すと400エラー。実APIレスポンスのスキーマ正規表現`/^([1-9]|[1-4][0-9]|50)$/`で確認済み。他エンドポイントの`limit=100`慣習とは異なる点に注意） |
+
+**`products[].sub_materials`は別マテリアルとして作成される（2026-10・SUZURI MCPで実測確認・Bug#42）**: `POST /api/v1/materials`の商品に`sub_materials`（Tシャツ背面印刷）を指定すると、SUZURI側でタイトルなし・非公開の独立したマテリアルが自動作成される。メインのマテリアルを削除してもこの背面マテリアルは残るため、別途削除が必要。`POST /materials`のレスポンスにこのIDが含まれるかは未確認。
 
 ---
 
