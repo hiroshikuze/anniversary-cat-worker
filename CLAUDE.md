@@ -164,7 +164,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | `sub_materials[].texture`はURLのみ（base64不可） | SUZURI APIのメイン`texture`はbase64を受け付けるが`sub_materials.texture`はURLのみ対応。base64で渡すと無視されて背面が白になる。R2アップロード後に`/back/:id`URLで渡す |
 | t-shirt+stickerグループのSUZURI登録は`ctx.waitUntil()`でバックグラウンド処理 | Wall-clock時間制限（~30秒）内でfal.ai処理は完了しない。Queue API（request_id保存→ポーリング）方式を使う |
 | fal.ai Queue APIのrequest_idは`ctx.waitUntil()`より前にR2へ保存 | ctx.waitUntil()がwall-clock超過で強制終了しても、IDだけは確実に残す保証が必要 |
-| fal.aiポーリング予算（3回×5秒）を安易に増やさない | 2026-08実測で成功ケース（3回目でCOMPLETED）は`bg開始`から`right グループ完了`まで約25.6秒かかっており、28秒予算に対し残り margin は約2.4秒しかない。ポーリングを1〜2秒伸ばすだけでも、CDN取得＋R2保存＋SUZURI登録という重い後処理ごと強制終了され、成功に近いケースほど「何も保存されない」方向に倒れるリスクがある。詳細は`.claude/revision_log.md`の2026-08エントリ参照 |
+| fal.aiポーリング予算（3回×5秒）を安易に増やさない | 2026-08実測で成功ケース（3回目でCOMPLETED）は`bg開始`から`right グループ完了`まで約25.6秒かかっており、28秒予算に対し残り margin は約2.4秒しかない。ポーリングを1〜2秒伸ばすだけでも、CDN取得＋R2保存＋SUZURI登録という重い後処理ごと強制終了され、成功に近いケースほど「何も保存されない」方向に倒れるリスクがある。詳細は`.claude/archive/revision_log_2026-08.md`参照 |
 | 外部APIレスポンスをMapにする際は整数IDをキーにする | 文字列名はAPIバージョン・ロケールで表記が変わる（過去バグ: SUZURI item.name 表記ゆれ） |
 | `updateMetaInR2()`は単純な`get→merge→put`に戻さない（R2条件付きPUT`onlyIf:{etagMatches:obj.etag}`によるCAS+リトライを維持する） | 複数の呼び出し元（右グループ・中央グループ・`/resume-hires`）が同一r2Idへ非同期タイミングで書き込むため、非アトミックな実装だとロストアップデートでmaterialIdがR2メタから消失し、SUZURI商品の多重登録・孤立マテリアルを招く（実際に発生・詳細は`.claude/bugs-history.md`のBug#34参照）。`etagMatches`は必ずクォートなしの`etag`を渡す（`httpEtag`はクォート付きでworkerdが例外を投げる。実際に本番で発生済み） |
 | `updateMetaInR2()`がリトライ枯渇後も最終的に失敗したら、直前に作成したSUZURIマテリアルを`_updateMetaOrRollback()`経由で削除する（放置しない） | 削除せず放置すると、R2に記録されない孤立マテリアルが訪問のたびに増殖する（実際に1日で8件発生する事故が起きた）。詳細は`.claude/rules/architecture.md`の「`updateMetaInR2()`最終失敗時のSUZURIマテリアル削除ロールバック」参照 |
@@ -261,5 +261,5 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 - コーディング規約・Markdown執筆ルール → `.claude/rules/coding.md`
 - テスト方針・診断手順 → `.claude/rules/testing.md`
 - Gitワークフロー・デプロイ手順 → `.claude/rules/git-workflow.md`
-- システム設計・API仕様・将来拡張・過去バグ詳細 → `.claude/rules/architecture.md`
+- システム設計・API仕様・将来拡張・過去バグ詳細 → `.claude/rules/architecture.md`（大きな節の本文は`.claude/docs/architecture/`。毎セッション自動では読み込まれないため、必要なときに読む）
 - SNS用のSUZURIセール告知（画像作成・Bluesky/Mastodonへの投稿・Discordへの転載用テキスト送信）を頼まれたとき → まずスキル`sale-announcement`（`.claude/skills/sale-announcement/SKILL.md`）の「手順」を読み、その順で進める（2026-09-29に一通り成功した流れ。経緯は`.claude/future-ideas.md`の「C. Gemini×Satori分業方式」、投稿の仕組みは`.claude/rules/git-workflow.md`の「SNSセール告知の自動投稿とDiscord送信」）
