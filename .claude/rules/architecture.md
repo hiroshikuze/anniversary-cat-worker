@@ -298,7 +298,7 @@ Tシャツの`sub_materials`がSUZURI側に作る背面画像マテリアル（�
   - `uploadedAt`から`ORPHAN_BACK_TEXTURE_MIN_AGE_MS`（15日）以上経過している（販売期間14日＋1日の余裕。販売中のTシャツの背面画像を消さないため）
 - **採用理由**: `POST /materials`のレスポンスに背面素材のIDが含まれるかは未確認で、レスポンス形式に依存せず、過去の取りこぼしも拾える方式を選んだ（比較した案: レスポンスからIDを取得して`materialIds`に記録する案／メイン素材と作成時刻が近い素材を探す案）。このアカウントでタイトルなし素材を作るのは背面画像のみのため、判定条件での誤削除リスクは低い
 - **サブリクエスト上限への配慮（Bug#41）**: 一覧取得は最大`maxPages=2`ページ（1ページ50件・新しい順）、削除は1回あたり最大`maxDeletes=10`件に制限する。定常状態では毎日1件程度の削除になる
-- **未検証の前提**: `GET /api/v1/materials`（`user_id`指定なし）が認証ユーザー自身の素材を新しい順に返すことを前提にしている（`scripts/audit-suzuri-materials.mjs`も同じ前提）。他ユーザーの素材が返る場合は`user.name`の一致判定で何も削除されず安全側に倒れる。初回Cron発火後に`query-worker-logs.mjs --grep "cleanup-backtexture"`で取得件数・削除件数を確認する
+- **未検証の前提**: `GET /api/v1/materials`（`user_id`指定なし）が認証ユーザー自身の素材を新しい順に返すことを前提にしている（公式ドキュメントPDFからの抜粋〔`.claude/future-ideas.md`の「`GET /api/v1/materials`」〕に「自分のマテリアル一覧」とある。並び順は未確認。`scripts/audit-suzuri-materials.mjs`も同じ前提）。他ユーザーの素材が返る場合は`user.name`の一致判定で何も削除されず安全側に倒れる。初回Cron発火後に`query-worker-logs.mjs --grep "cleanup-backtexture"`で取得件数・削除件数を確認する
 - 失敗（一覧取得・個別削除）は`console.warn`のみで、`cleanupExpiredEntries()`本体（R2/メイン素材の削除）には影響させない
 
 ### 処理フロー（`checkForNewSale(env, ctx, notifyFn)`）

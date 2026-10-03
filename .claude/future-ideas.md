@@ -477,7 +477,11 @@ Tシャツの背面に別画像を印刷するオプション。
 ```
 
 **活用場面**: Tシャツ背面に記念日テキストや別デザインを入れる場合。
-**注意**: 追加画像生成が必要になるため実装コストが高い。現状は不要。
+**現状（2026-10更新）**: 漢字一字の背面印刷として実装済み（`frontend/index.html` `generateKanjiTexture()`・`worker/suzuri.js` `createSuzuriProducts()`）。
+
+**注意（2026-10・Bug#42）**: `sub_materials`を渡すと、SUZURI側でタイトルなし・非公開の**別マテリアル**が自動作成される。このIDはR2メタの`materialIds`に記録されないため、現在は毎日のクリーンアップで素材一覧から探して削除している（`cleanupOrphanBackTextureMaterials()`）。
+
+**改善案（未実装・案A）**: 商品登録時の`POST /materials`のレスポンスから背面素材のIDを取り出し、メイン素材と同じく`materialIds`に記録する。成り立てば素材一覧を走査する現方式より確実で、一覧取得のサブリクエストも不要になる。前提として、レスポンスに背面素材のIDが含まれるかを確認する必要がある（未確認）。確認方法: `createSuzuriProducts()`で`data.products[]`（Tシャツ分）のキー構成を一度`console.log`に出し、`query-worker-logs.mjs`で見る。含まれていれば実装し、現方式は取りこぼし対策として残すかを判断する
 
 ---
 
@@ -530,7 +534,7 @@ curl -n "/api/v1/materials?limit=30&offset=0" \
 ```
 
 **活用場面**: 過去に登録したマテリアルの棚卸しや、孤立したマテリアルの削除。
-`scripts/audit-suzuri-materials.mjs`（2026-06追加）で実際に使用している。
+`scripts/audit-suzuri-materials.mjs`（2026-06追加）と、Tシャツ背面画像マテリアルの毎日の削除（`worker/suzuri.js` `listSuzuriMaterials()`・2026-10追加・Bug#42）で使用している。`limit`の上限は50（`suzuri-api-reference.md`参照）。
 
 ---
 
