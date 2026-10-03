@@ -45,7 +45,7 @@
 
 ## 未使用だが将来有用な機能
 
-[将来拡張メモ：未使用だが将来有用な機能](../future-ideas.md)参照
+[SUZURI API: 未使用だが将来有用な機能](../docs/suzuri-api-unused-features.md)参照
 
 ---
 
