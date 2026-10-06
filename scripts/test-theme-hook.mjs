@@ -113,6 +113,7 @@ function extractHook(data) {
     finishReason: candidate?.finishReason ?? "(なし)",
     partsCount: parts.length,
     promptFeedback: data.promptFeedback ? JSON.stringify(data.promptFeedback) : "(なし)",
+    rawResponse: !data.candidates ? JSON.stringify(data).slice(0, 500) : null,
   };
 
   try {
@@ -131,11 +132,12 @@ console.log(`${"═".repeat(70)}`);
 console.log(`themeHook生成テスト（同一テーマを2回試行して言い回しのブレを確認）`);
 console.log("═".repeat(70));
 
-for (const { theme, description } of TEST_CASES) {
+// デバッグ中: 原因特定目的のため1件・1回のみに絞る（切り分けできたらTEST_CASES全件・2回に戻す）
+for (const { theme, description } of TEST_CASES.slice(0, 1)) {
   console.log(`\n【${theme}】`);
   console.log(`  説明: ${description}`);
 
-  for (let trial = 1; trial <= 2; trial++) {
+  for (let trial = 1; trial <= 1; trial++) {
     const prompt = buildHookPrompt(theme, description);
     const t0 = Date.now();
     const data = await callGemini(prompt);
@@ -147,6 +149,7 @@ for (const { theme, description } of TEST_CASES) {
     console.log(`    JA: ${themeHook}`);
     console.log(`    EN: ${themeHookEn}`);
     console.log(`    debug: finishReason=${debug.finishReason} partsCount=${debug.partsCount} promptFeedback=${debug.promptFeedback}`);
+    if (debug.rawResponse) console.log(`    rawResponse: ${debug.rawResponse}`);
   }
 }
 
