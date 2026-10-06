@@ -35,9 +35,34 @@ Cloudflareダッシュボードの手動Scheduled送信は、Cronイベントロ
 - 戻り値: `runMonthlyWallpaperPost()`と同じパターンで`{ dryRun, bskyOk, mastoOk, theme }`（またはエラー時`{ error }`）を返すよう`runBot()`をvoidから変更した
 - Cron本番実行（`scheduled()`からの呼び出し）は`deps`省略のため`dryRun: false`扱いで、従来と完全に同じ挙動（後方互換）
 
+### 投稿フォーマットの選択（short/full・2026-10追加）
+
+**背景**: 毎回「説明文＋CTA＋サイトURL」のフル構成だと、(1) 絵と説明だけでSNS上で満足されクリックスルーに繋がっていない、(2) 毎回CTA＋紹介URLが付くことで「宣伝ポストっぽさ」が強まりフォロー動機を阻害している、という2つの懸念がユーザーから指摘された。対応として、投稿の大半をテーマ連動の短い一言＋URL＋ハッシュタグのみの**short版**にし、残りは効果比較・サービス再認知のため従来の**full版**を流す設計にした。
+
+`worker/bot.js`に`pickPostFormat()`を`CAT_PERSONALITIES`等（`worker/index.js`）と同じ「重み付き配列＋pick関数」パターンで新設する。
+
+| フォーマット | 重み | 確率 |
+| --- | --- | --- |
+| `short` | 80 | 80% |
+| `full` | 20 | 20% |
+
+- `pickPostFormat()`は`runBot()`内で`pickCta()`と同じタイミングで**1回だけ**呼び出し、Bluesky・Mastodon両方の生成に同じ結果を渡す（同じ投稿でBluesky版・Mastodon版の形式が食い違わないようにするため）
+- `themeHook`（下記「themeHook/themeHookEnフィールド」参照）が取得できない場合（旧データ・Gemini取得失敗時等）は、`short`が選ばれていても`full`にフォールバックする（short版はthemeHookが必須のため）
+- `#{theme正規化}`ハッシュタグはshort版でも**残す**（ユーザー判断:「URLを踏むまで何の日か分からない」という完全な伏せ字は行わない。タグ経由の流入が無視できないため）
+
+#### themeHook/themeHookEnフィールド（`handleResearch()`）
+
+テーマに絡めた、猫目線のウィットに富んだ一言。事実説明（`description`）の言い換えではなく問いかけ・つぶやき調にする指示をGeminiプロンプトに追加し、JSON出力に`themeHook`（日本語）・`themeHookEn`（英語）を含める。
+
+- 本実装前に`scripts/test-theme-hook.mjs`（ワンオフ検証スクリプト。`GEMINI_API_KEY=xxx node scripts/test-theme-hook.mjs`で実行、npm testには含めない）で品質を検証済み（[Issue #203](https://github.com/hiroshikuze/anniversary-cat-worker/issues/203)）。同一テーマでも試行ごとに表現が変化し、問いかけ・ボケ調が安定して得られることを確認した
+- 検証時に`gemini-2.5-flash-lite`が新規ユーザーに提供終了（404）していることが判明し、`gemini-3.1-flash-lite`/`gemini-3.5-flash-lite`で検証した（[Issue #204](https://github.com/hiroshikuze/anniversary-cat-worker/issues/204)で別途フォローアップ）。本番実装では固定モデル名を書かず、既存の`selectBestModel()`（Discovery API・コストスコアリング・KV記憶・モデル廃止時の自動フォールバック）を流用する
+- `stripHtmlTags()`サニタイズ対象に追加済み（`.claude/docs/architecture/gemini.md`の「プレーンテキストフィールドのサニタイズ」参照）
+
 ### 投稿テキスト形式
 
 #### Bluesky（`buildPostText()`・日本語のみ）
+
+**full版:**
 
 ```text
 今日は「{theme}」の日！🐱       ← theme が「の日」で終わる場合は「の日」を省略
@@ -55,9 +80,39 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 - `artworkUrl`は`pageUrl !== SITE_URL`のとき（R2保存成功）のみ追加される。失敗時はCTAのみ（~210 grapheme）
 - 300 grapheme以内に収まる設計（`artworkUrl`あり時の実測 ~270 grapheme・ゲストタグ追加後も余裕あり）。テーマタグを先頭にすることでInstagram手動投稿時に末尾タグを省略しやすくしている。
 
+**short版（2026-10追加）:**
+
+```text
+{themeHook}
+https://hiroshikuze.github.io/anniversary-cat-worker/
+
+#{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー #{guestSnsTag}
+```
+
+- 説明文・CTA行・📸作品URL行は**含めない**（画像自体は添付済みのため作品URLは冗長。CTA文言を毎回付けないことで宣伝ポストっぽさを下げる）
+- `{guestSnsTag}`はfull版と同様に残す（2026-10・ユーザー確認済み: テーマタグで既に「何の日か」が明示される前提のため、ゲスト動物タグの有無による「URLを踏むまで分からない」性への影響は小さいと判断）
+- `themeHook`が空の場合はfull版にフォールバックする（上記「投稿フォーマットの選択」参照）
+
 #### Mastodon（`buildMastodonText()`・英語優先・日英二言語）
 
 英語を先に置くことで海外ユーザーへのリーチを優先する。英語セクションには英語版直リンク（`?lang=en`）を、日本語セクションには日本語版直リンクをそれぞれ掲載する。500文字制限の都合上、英語CTAのサイトトップURL（`?lang=en`）は省き、英語直リンクに一本化する。
+
+**short版（2026-10追加）:**
+
+```text
+{themeHookEn}
+https://hiroshikuze.github.io/anniversary-cat-worker/?lang=en
+
+{themeHook}
+https://hiroshikuze.github.io/anniversary-cat-worker/
+
+#{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #Nyaniversary #にゃんバーサリー #{guestSnsTag}
+```
+
+- Blueskyのshort版と同じ方針（説明文・CTA行・📸作品URL行を省略）を英日二言語に適用する
+- `themeHookEn`が空の場合は`themeHook`＋日本語サイトURLのみ（Blueskyと同一テキスト）にフォールバック。`themeHook`自体が空の場合はfull版にフォールバックする（上記「投稿フォーマットの選択」参照）
+
+**full版:**
 
 ```text
 Today is "{themeEn}"!
@@ -173,9 +228,11 @@ CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言で
 ✅ にゃんバーサリーBot
 ✅ Bluesky投稿完了 {dateStr} {blueskyPostUrl}   ← Bluesky失敗時は ❌ Bluesky投稿失敗: {エラー}（URLなし）
 ✅ Mastodon投稿完了 {mastodonPostUrl}           ← 設定済みの場合。失敗時は ❌ Mastodon投稿失敗: {エラー}（URLなし）。未設定時は ⏭️ Mastodon未設定・スキップ
+🎲 フォーマット: short/full       ← pickPostFormat()の選択結果（2026-10追加）
 📅 テーマ: {theme}
 📝 説明: {description}           ← descriptionがある場合のみ
 🎨 視覚ヒント: {visualHint}      ← visualHintがある場合のみ
+💬 一言: {themeHook}             ← themeHookがある場合のみ（2026-10追加）
 🐱 毛柄: {persona}               ← personaがある場合のみ
 😺 性格: {personality}           ← personalityがある場合のみ（子猫ゲスト時は保護者修飾を含む）
 💭 感情: {emotion}               ← emotionがある場合のみ

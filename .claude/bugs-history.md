@@ -145,7 +145,7 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 - **気づいた経緯**: `resvg.wasm`のR2アップロード（`wrangler r2 object put`、当初は誤ってローカルR2エミュレーションに書き込んでおり`--remote`フラグ不足で二重に手間取った）完了後、ユーザーに実際の`POST /monthly-wallpaper/regenerate`実行を依頼。返ってきたJSONレスポンスの`composited: false`フィールドに違和感を覚え、`worker/bot.js`のコードを確認して「合成失敗時のフォールバックを示すフィールドだ」と特定。GitHub Actionsの`query-worker-logs`ワークフローをMCP経由で手動発火し、実際のCloudflare Workers Logsから`console.warn`に出力されたエラーメッセージ本文を取得して原因を確定した
 - **修正**: Photon（`worker/image-utils.js`・`import wasm from "@silvia-odwyer/photon/photon_rs_bg.wasm"`）が実際に本番で正常動作している「WASMをビルド時にESM静的importしてプリコンパイルする」パターンに統一した。`ensureResvg()`を`const { default: resvgWasm } = await import("@resvg/resvg-wasm/index_bg.wasm"); await mod.initWasm(resvgWasm);`に変更（`bucket`引数・R2取得ロジックを削除）。`@resvg/resvg-wasm`の`initWasm()`実装（`node_modules/@resvg/resvg-wasm/index.mjs`）を確認し、引数が`Response`でない場合は`WebAssembly.instantiate(module, imports)`（コンパイル済み`WebAssembly.Module`のインスタンス化のみ）を呼ぶ経路に入ることを確認済み。静的importされたWorkers上の`.wasm`はビルド時に`WebAssembly.Module`としてプリコンパイルされるため、この経路は動的コード生成の禁止に抵触しない。修正後`wrangler deploy --dry-run`でビルド成功・gzip後約2.05MB（Workers Free 3MB上限内）を確認し、当初懸念していたバンドルサイズ超過も実測では発生しなかった
 - **場所**: `worker/svg-render.js` `ensureResvg()`・`worker/image-utils.js` `compositeMonthlyWallpaper()`（`bucket`依存の除去）・`worker/bot.js` `runMonthlyWallpaperPost()`（`compositeMonthlyWallpaperFn`へ渡す`deps`から`bucket`除去）
-- **教訓**: 「WASMをバンドルせずランタイムで外部ストレージから取得してコンパイルする」という設計は、Cloudflare Workersでは**原理的に動作しない**（V8分離環境のセキュリティ制約）。WASMをWorkersで使う場合は常にビルド時のESM静的import（`import x from "*.wasm"`）でプリコンパイルする一択であり、バンドルサイズが懸念される場合でも「実行時fetch」は解決策にならない。この制約は`wrangler deploy --dry-run`では検知できない（ビルド自体は通り、実際のリクエスト処理時にのみ失敗するため）。新しい外部WASMライブラリを追加する際は、既存のPhoton実装パターン（静的import一択）を機械的に踏襲し、「サイズが気になるから実行時fetchにする」という設計を最初から選択肢から外す。CLAUDE.mdの「変えてはいけない設計判断」に一度記録した内容でも、実機検証前の設計判断は誤りうる（今回のように後で覆すこと自体は問題ないが、覆す際は必ずCLAUDE.mdの当該行も更新する）
+- **教訓**:「WASMをバンドルせずランタイムで外部ストレージから取得してコンパイルする」という設計は、Cloudflare Workersでは**原理的に動作しない**（V8分離環境のセキュリティ制約）。WASMをWorkersで使う場合は常にビルド時のESM静的import（`import x from "*.wasm"`）でプリコンパイルする一択であり、バンドルサイズが懸念される場合でも「実行時fetch」は解決策にならない。この制約は`wrangler deploy --dry-run`では検知できない（ビルド自体は通り、実際のリクエスト処理時にのみ失敗するため）。新しい外部WASMライブラリを追加する際は、既存のPhoton実装パターン（静的import一択）を機械的に踏襲し、「サイズが気になるから実行時fetchにする」という設計を最初から選択肢から外す。CLAUDE.mdの「変えてはいけない設計判断」に一度記録した内容でも、実機検証前の設計判断は誤りうる（今回のように後で覆すこと自体は問題ないが、覆す際は必ずCLAUDE.mdの当該行も更新する）
 
 **追記（2026-09・同日中に発覚した第2の障害）**: 上記修正をデプロイし、ユーザーに再度`POST /monthly-wallpaper/regenerate`を実行してもらったところ、依然として`composited: false`のままだった。`query-worker-logs.mjs`で再確認したところ、今度は別のエラー`Already initialized. The `initWasm()` function can be used only once.`が出ていた。
 
@@ -153,7 +153,7 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 - **気づいた経緯**: 1つ目の修正をデプロイ後、ユーザーに`POST /monthly-wallpaper/regenerate`の再実行を依頼したところ、応答は`composited: false`のまま変化なし。再度`query-worker-logs`ワークフローを手動発火し、実ログから新しいエラーメッセージを特定した
 - **修正**: `ensureResvg()`を進行中の初期化`Promise`を共有する「シングルフライト」パターンに変更し、並行呼び出しがあっても実際の初期化処理（`initWasm()`呼び出し）が1回に限定されるようにした（`_resvgInitPromise`変数を追加）。あわせて、WASMロード処理自体を`_loadResvg()`として切り出し`ensureResvg(deps = {})`が`deps.loadResvgFn`で注入可能にすることで、一度きりのロード関数を模した依存注入でこのレースコンディション自体を`scripts/test-bot.mjs`でユニットテスト可能にした（実際の`@resvg/resvg-wasm`のWASM読み込みはNode.jsテスト環境では動作しないため、Photonと同じく依存注入によるロジック検証にとどめている）
 - **場所**: `worker/svg-render.js` `ensureResvg()`・`_loadResvg()`
-- **教訓**: 「真偽値フラグ＋`if (flag) return;`」による非同期処理の重複実行防止は、**並行呼び出しに対しては安全ではない**（両方が古い値を読んでから処理に入る競合が起きる）。一度きりの初期化APIを扱う場合は、フラグではなく「進行中のPromiseを共有するシングルフライトパターン」を使う。今回は1つ目のバグ（動的コード生成禁止）の陰に隠れて2つ目のバグ（並行呼び出しの競合）が発覚しなかった。1つの修正で本番検証が通らなかった場合、「まだ同じ問題か」と決めつけず、修正後に改めて実ログを取得して**エラーメッセージ自体が変わっていないか**を必ず確認する（今回は`query-worker-logs`の再実行でメッセージが変わっていたことに気づき、別問題だと判断できた）
+- **教訓**:「真偽値フラグ＋`if (flag) return;`」による非同期処理の重複実行防止は、**並行呼び出しに対しては安全ではない**（両方が古い値を読んでから処理に入る競合が起きる）。一度きりの初期化APIを扱う場合は、フラグではなく「進行中のPromiseを共有するシングルフライトパターン」を使う。今回は1つ目のバグ（動的コード生成禁止）の陰に隠れて2つ目のバグ（並行呼び出しの競合）が発覚しなかった。1つの修正で本番検証が通らなかった場合、「まだ同じ問題か」と決めつけず、修正後に改めて実ログを取得して**エラーメッセージ自体が変わっていないか**を必ず確認する（今回は`query-worker-logs`の再実行でメッセージが変わっていたことに気づき、別問題だと判断できた）
 
 ### 37. 月替わり壁紙の月名バッジに月番号が欠落・カレンダーなし版の被写体が上寄りで下に不自然な余白（2026-09）
 
@@ -200,7 +200,7 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 
 - **1回目の対策とその失敗**: resvg/Photonの処理コストがピクセル数に比例するという仮説に基づき、「合成パイプライン全体を縮小解像度（540×960）で行い、最後にPhoton `resize()`（Lanczos3）で目標解像度（1080×1920）へ拡大する」方式を実装・デプロイしたが、実機で3回実行し**3回とも`error 1102`**という結果になった。過去の記録（本ファイルBug#37追記の「追加のLanczos3リサイズを1回上乗せしただけでCPU予算を超過させた」）と同じパターンを、検証を怠って繰り返してしまっていた。具体的には、カレンダーあり版・なし版それぞれに1回ずつ計2回、目標解像度へのLanczos3拡大呼び出しを新規追加しており、これが縮小解像度化で浮いた分を相殺・悪化させた可能性が高い
 - **2回目の対策（成功）**: 最終拡大（Lanczos3）ステップ自体を撤回し、`compositeMonthlyWallpaper()`の出力解像度そのものを540×960（デフォルト値の変更）にして、拡大処理を一切挟まない単一解像度パイプラインに戻した。実機で3回実行し**3回とも成功**（`error 1102`の再現なし）を確認した
-- **教訓**: 「過去に一度否定された設計パターン（追加のresize呼び出し）を、文脈が変わった（今回は縮小解像度化とセットだった）からといって再検討なしに採用してしまった」。CLAUDE.mdの「変えてはいけない設計判断」やbugs-historyに記録済みの教訓は、実装前に該当箇所を検索・参照するプロセスを徹底する必要がある。今回は幸い1回のデプロイサイクルの無駄で気づけたが、記録を活かせていれば最初から回避できた変更だった
+- **教訓**:「過去に一度否定された設計パターン（追加のresize呼び出し）を、文脈が変わった（今回は縮小解像度化とセットだった）からといって再検討なしに採用してしまった」。CLAUDE.mdの「変えてはいけない設計判断」やbugs-historyに記録済みの教訓は、実装前に該当箇所を検索・参照するプロセスを徹底する必要がある。今回は幸い1回のデプロイサイクルの無駄で気づけたが、記録を活かせていれば最初から回避できた変更だった
 
 ### 39. 月替わり壁紙の署名（© nyanmusu）が両バージョンとも判読不能（2026-09）
 
