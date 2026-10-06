@@ -136,25 +136,56 @@ export function pickCta() {
   return CTA_VARIANTS[0];
 }
 
+// ---------------------------------------------------------------------------
+// 投稿フォーマット（short/full・重み付き確率でランダム選択・2026-10追加）
+// ---------------------------------------------------------------------------
+// CAT_PERSONALITIES/CTA_VARIANTSと同じ「重み付き配列 + pick関数」パターン。
+// short: テーマ連動の一言（themeHook）＋URL＋タグのみで、説明文・CTAを省き宣伝ポストっぽさを抑える。
+// full: 従来の説明文＋CTA構成。効果比較・「何のサービスか」の再認知のため1/5残す（ユーザー判断）。
+const POST_FORMAT_VARIANTS = [
+  { weight: 80, format: "short" },
+  { weight: 20, format: "full" },
+];
+
+export function pickPostFormat() {
+  const total = POST_FORMAT_VARIANTS.reduce((s, v) => s + v.weight, 0);
+  let r = Math.random() * total;
+  for (const v of POST_FORMAT_VARIANTS) {
+    r -= v.weight;
+    if (r <= 0) return v.format;
+  }
+  return POST_FORMAT_VARIANTS[0].format;
+}
+
 /**
  * Bluesky 投稿テキストを生成する。
- * Bluesky の上限は 300 grapheme。この形式では最大 ~210 grapheme 程度に収まる。
+ * Bluesky の上限は 300 grapheme。full形式では最大 ~210 grapheme 程度に収まる。
  * @param {string} theme
  * @param {string} description
  * @param {string} [pageUrl] - 個別作品URL（?id=bot/YYYY-MM-DD）。SITE_URLと同値の場合は📸行を省略
  * @param {string|null} [guestSnsTag] - ゲスト動物の英語タグ（例: "#dog"）。null の場合は省略
  * @param {{ja: string, en: string}} [cta] - CTA行（pickCta()の戻り値）。省略時は固定文言（後方互換）
+ * @param {string|null} [themeHook] - テーマ連動のウィットに富んだ一言（2026-10追加）。short形式でのみ使用
+ * @param {"short"|"full"} [format] - pickPostFormat()の戻り値。省略時はfull（後方互換）。
+ *   "short"でもthemeHookが空の場合はfullにフォールバックする
  */
-export function buildPostText(theme, description, pageUrl = SITE_URL, guestSnsTag = null, cta = CTA_VARIANTS[0]) {
+export function buildPostText(theme, description, pageUrl = SITE_URL, guestSnsTag = null, cta = CTA_VARIANTS[0], themeHook = null, format = "full") {
+  const themeTag    = buildThemeTag(theme);
+  const baseTags    = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
+  const allTags     = guestSnsTag ? `${baseTags} ${guestSnsTag}` : baseTags;
+  const tags        = `\n\n${allTags}`;
+
+  // short形式: テーマ連動の一言＋サイトURL＋タグのみ（説明文・CTA・作品URL行は省略）。
+  // themeHookが空の場合はshort指定でもfullにフォールバックする（short版はthemeHook必須）。
+  if (format === "short" && themeHook) {
+    return truncateToGraphemes(`${themeHook}\n${SITE_URL}` + tags, BLUESKY_MAX_GRAPHEMES);
+  }
+
   const header      = theme.endsWith("の日")
     ? `今日は「${theme}」！🐱`
     : `今日は「${theme}」の日！🐱`;
   const artworkLine = pageUrl !== SITE_URL ? `\n\n📸 ${pageUrl}` : "";
   const ctaLine     = `\n\n${cta.ja}\n${SITE_URL}`;
-  const themeTag    = buildThemeTag(theme);
-  const baseTags    = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
-  const allTags     = guestSnsTag ? `${baseTags} ${guestSnsTag}` : baseTags;
-  const tags        = `\n\n${allTags}`;
   const footer      = artworkLine + ctaLine + tags;
 
   // Bug#30: theme破損等の想定外要因で300 grapheme上限を超えないよう、header・URL・CTA・
@@ -176,8 +207,12 @@ export function buildPostText(theme, description, pageUrl = SITE_URL, guestSnsTa
  * @param {string} [pageUrl]
  * @param {string|null} [guestSnsTag] - ゲスト動物の英語タグ（例: "#dog"）。null の場合は省略
  * @param {{ja: string, en: string}} [cta] - CTA行（pickCta()の戻り値）。省略時は固定文言（後方互換）
+ * @param {string|null} [themeHook] - テーマ連動のウィットに富んだ一言（日本語・2026-10追加）。short形式でのみ使用
+ * @param {string} [themeHookEn] - themeHookの英語版。空の場合はshort形式でも日本語のみ（Blueskyと同一テキスト）
+ * @param {"short"|"full"} [format] - pickPostFormat()の戻り値。省略時はfull（後方互換）。
+ *   "short"でもthemeHookが空の場合はfullにフォールバックする
  */
-export function buildMastodonText(theme, description, themeEn = "", descriptionEn = "", pageUrl = SITE_URL, guestSnsTag = null, cta = CTA_VARIANTS[0]) {
+export function buildMastodonText(theme, description, themeEn = "", descriptionEn = "", pageUrl = SITE_URL, guestSnsTag = null, cta = CTA_VARIANTS[0], themeHook = null, themeHookEn = "", format = "full") {
   const safeThemeEn = (themeEn ?? "").replace(/[^\x20-\x7E]/g, "").trim();
   const safeDescEn  = (descriptionEn ?? "").replace(/[^\x20-\x7E]/g, "").trim();
 
@@ -185,6 +220,14 @@ export function buildMastodonText(theme, description, themeEn = "", descriptionE
   const mastoTags   = [...MASTODON_EXTRA_TAGS, ...HASHTAG_LIST];
   const baseTagStr  = themeTag ? `${themeTag} ${mastoTags.join(" ")}` : mastoTags.join(" ");
   const tagStr      = guestSnsTag ? `${baseTagStr} ${guestSnsTag}` : baseTagStr;
+
+  // short形式: themeHookEn＋英語URL（ある場合）＋themeHook＋日本語URL＋タグのみ。
+  // themeHookが空の場合はshort指定でもfullにフォールバックする（short版はthemeHook必須）。
+  if (format === "short" && themeHook) {
+    const safeHookEn = (themeHookEn ?? "").replace(/[^\x20-\x7E]/g, "").trim();
+    const enHookBlock = safeHookEn ? `${safeHookEn}\n${SITE_URL}?lang=en\n\n` : "";
+    return truncateToGraphemes(`${enHookBlock}${themeHook}\n${SITE_URL}\n\n${tagStr}`, MASTODON_MAX_GRAPHEMES);
+  }
 
   const artworkLine   = pageUrl !== SITE_URL ? `\n\n📸 ${pageUrl}` : "";
   const enArtworkLine = pageUrl !== SITE_URL ? `\n\n📸 ${pageUrl}&lang=en` : "";
@@ -780,11 +823,17 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null, de
     const themeTag    = buildThemeTag(research.theme);
     const guestSnsTag = generated.guest?.snsTag ?? null;
     const cta         = pickCta();
-    const text        = buildPostText(research.theme, desc, pageUrl, guestSnsTag, cta);
+    // 投稿フォーマット（short/full・2026-10追加）。themeHookが空の場合は
+    // buildPostText()/buildMastodonText()内部でfullにフォールバックされる
+    const themeHook    = research.themeHook   ?? null;
+    const themeHookEn  = research.themeHookEn ?? "";
+    const postFormat   = pickPostFormat();
+    const effectivePostFormat = (postFormat === "short" && themeHook) ? "short" : "full";
+    const text        = buildPostText(research.theme, desc, pageUrl, guestSnsTag, cta, themeHook, postFormat);
     const mastoText   = buildMastodonText(
       research.theme, desc,
       research.themeEn ?? "", research.descriptionEn ?? "",
-      pageUrl, guestSnsTag, cta
+      pageUrl, guestSnsTag, cta, themeHook, themeHookEn, postFormat
     );
     const altText  = desc
       ? `にゃんバーサリー - 「${research.theme}」の日！${desc}（AIが生成した水彩画風の猫イラスト）`
@@ -921,9 +970,11 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null, de
         bskyLine,
         mastoLine,
         saleReplyLine,
+        `🎲 フォーマット: ${effectivePostFormat}`,
         `📅 テーマ: ${research.theme}`,
         research.description ? `📝 説明: ${research.description}` : null,
         research.visualHint  ? `🎨 視覚ヒント: ${research.visualHint}` : null,
+        themeHook             ? `💬 一言: ${themeHook}`              : null,
         generated.persona       ? `🐱 毛柄: ${generated.persona}`                      : null,
         generated.personality   ? `😺 性格: ${generated.personality}`                  : null,
         generated.emotion       ? `💭 感情: ${generated.emotion}`                      : null,

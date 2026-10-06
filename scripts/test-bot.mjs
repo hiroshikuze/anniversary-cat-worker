@@ -21,7 +21,7 @@ import { createSuzuriProducts, SUZURI_ITEM_IDS, SUZURI_TORIBUN, _buildDescriptio
 
 import {
   buildPostText, buildMastodonText, buildHashtagFacets, buildUrlFacets, buildThemeTag, buildBlueskyPostUrl, notifyDiscord, runBot,
-  shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta,
+  shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta, pickPostFormat,
   buildSaleReplyTextJa, buildSaleReplyTextBilingual,
   buildMonthlyWallpaperPostText, buildMonthlyWallpaperMastodonText, runMonthlyWallpaperPost,
 } from "../worker/bot.js";
@@ -4673,6 +4673,68 @@ function makeDiscordCaptureFetch() {
 }
 
 // ---------------------------------------------------------------------------
+// runBot: 投稿フォーマット（🎲行）・themeHook（💬行）のDiscord通知・配線確認
+// （2026-10追加）
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: 投稿フォーマット・themeHookの配線]");
+{
+  // themeHook未取得時: pickPostFormat()がshortを選んでもfullにフォールバックし、
+  // 🎲行は常にfull・💬行は出力されない（決定的に検証可能なケース）
+  const { fetchFn, discordBodies } = makeDiscordCaptureFetch();
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+  await runBot(
+    { GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook", BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass" },
+    async () => ({ theme: "テスト記念日", description: "説明文" }), // themeHookなし
+    async () => ({ imageData: "aW1h", mimeType: "image/png", source: "gemini" })
+  );
+  globalThis.fetch = origFetch;
+  const allBodies = discordBodies.join("\n");
+  assert("themeHook未取得時: 🎲行は常にfull", allBodies.includes("🎲 フォーマット: full"));
+  assert("themeHook未取得時: 💬行は出力されない", !allBodies.includes("💬 一言:"));
+}
+{
+  // themeHookあり: 🎲行の値（short/full）とBluesky投稿本文の構成が整合すること
+  const discordBodies = [];
+  let blueskyPostText = null;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("discord")) {
+      discordBodies.push(JSON.parse(opts?.body ?? "{}").content ?? "");
+      return { ok: true, status: 204, text: async () => "" };
+    }
+    if (u.includes("createSession")) return { ok: true, status: 200, text: async () => JSON.stringify({ accessJwt: "jwt", did: "did:plc:test" }) };
+    if (u.includes("uploadBlob"))   return { ok: true, status: 200, text: async () => JSON.stringify({ blob: { ref: { $link: "ref" }, mimeType: "image/png", size: 100 } }) };
+    if (u.includes("createRecord")) {
+      const body = JSON.parse(opts?.body ?? "{}");
+      blueskyPostText = body?.record?.text ?? null;
+      return { ok: true, status: 200, text: async () => JSON.stringify({ uri: "at://test", cid: "cid" }) };
+    }
+    return { ok: true, status: 200, text: async () => JSON.stringify({}) };
+  };
+
+  await runBot(
+    { GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook", BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass" },
+    async () => ({ theme: "国際協力の日", description: "説明文", themeHook: "一言テスト" }),
+    async () => ({ imageData: "aW1h", mimeType: "image/png", source: "gemini" })
+  );
+  globalThis.fetch = origFetch;
+
+  const allBodies = discordBodies.join("\n");
+  const formatLineMatch = allBodies.match(/🎲 フォーマット: (short|full)/);
+  assert("🎲フォーマット行が出力される", !!formatLineMatch);
+  assert("💬一言行が出力される（themeHookあり）", allBodies.includes("💬 一言: 一言テスト"));
+
+  if (formatLineMatch?.[1] === "short") {
+    assert("short選択時: Bluesky投稿本文にthemeHookが含まれる", blueskyPostText?.includes("一言テスト"));
+    assert("short選択時: Bluesky投稿本文に説明文が含まれない", !blueskyPostText?.includes("説明文"));
+  } else {
+    assert("full選択時: Bluesky投稿本文に説明文が含まれる", blueskyPostText?.includes("説明文"));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // buildPostText: guestSnsTag
 // ---------------------------------------------------------------------------
 console.log("\n[buildPostText: guestSnsTag]");
@@ -4735,6 +4797,101 @@ console.log("\n[pickCta]");
   const seen = new Set();
   for (let i = 0; i < 1000; i++) seen.add(pickCta().ja);
   assert(`1000回試行で複数パターンが出現する (実測: ${seen.size}種)`, seen.size >= 4);
+}
+
+// ---------------------------------------------------------------------------
+// pickPostFormat（投稿フォーマットのローテーション・short80%/full20%・2026-10追加）
+// ---------------------------------------------------------------------------
+console.log("\n[pickPostFormat]");
+{
+  const results = Array.from({ length: 1000 }, () => pickPostFormat());
+  assert("戻り値は\"short\"または\"full\"のみ",
+    results.every(f => f === "short" || f === "full"));
+
+  const shortCount = results.filter(f => f === "short").length;
+  const shortRatio = shortCount / 1000;
+  assert(`short比率がおおよそ80%（実測: ${(shortRatio * 100).toFixed(1)}%）`,
+    shortRatio > 0.65 && shortRatio < 0.95);
+
+  const fullCount = results.filter(f => f === "full").length;
+  assert(`full比率がおおよそ20%（実測: ${(fullCount / 1000 * 100).toFixed(1)}%）`,
+    fullCount > 0);
+}
+
+// ---------------------------------------------------------------------------
+// buildPostText: short形式（themeHook＋URL＋タグのみ・2026-10追加）
+// ---------------------------------------------------------------------------
+console.log("\n[buildPostText: short形式]");
+{
+  const text = buildPostText("国際協力の日", "国際社会における協力を考える日。", undefined, null, undefined,
+    "にゃんこで国際親善できないかな？", "short");
+  assert("themeHookが本文に含まれる", text.includes("にゃんこで国際親善できないかな？"));
+  assert("サイトURLが含まれる", text.includes("https://hiroshikuze.github.io/anniversary-cat-worker/"));
+  assert("テーマタグが含まれる", text.includes("#国際協力の日"));
+  assert("固定タグが含まれる", text.includes("#AIart") && text.includes("#にゃんバーサリー"));
+  assert("説明文は含まれない", !text.includes("国際社会における協力を考える日。"));
+  assert("CTA文言（デフォルト）は含まれない", !text.includes("あなたも今日の #にゃんバーサリー を作ってみませんか？"));
+  assert("📸作品URL行の絵文字は含まれない", !text.includes("📸"));
+}
+{
+  // ゲストタグはshort形式でも残す（設計方針通り）
+  const text = buildPostText("国際協力の日", "説明文", undefined, "#dog", undefined,
+    "一言テスト", "short");
+  assert("short形式でもguestSnsTagが含まれる", text.includes("#dog"));
+}
+{
+  // themeHookが空の場合はshort指定でもfullにフォールバックする
+  const text = buildPostText("国際協力の日", "説明文", undefined, null, undefined, null, "short");
+  assert("themeHook空時: フォールバックでヘッダー文言が含まれる", text.includes("今日は「国際協力の日」！🐱"));
+  assert("themeHook空時: 説明文が含まれる（full形式）", text.includes("説明文"));
+}
+{
+  // format省略時は従来通りfull（後方互換）
+  const text = buildPostText("国際協力の日", "説明文", undefined, null, undefined, "一言テスト");
+  assert("format省略時はfull形式のまま（後方互換）", text.includes("今日は「国際協力の日」！🐱"));
+  assert("format省略時はthemeHookが使われない", !text.includes("一言テスト"));
+}
+{
+  // short形式でも300 grapheme以内（念のための安全網確認）
+  const longHook = "あ".repeat(400);
+  const text = buildPostText("テスト", "説明文", undefined, null, undefined, longHook, "short");
+  const graphemes = [...new Intl.Segmenter().segment(text)].length;
+  assert(`short形式: 長いthemeHookでも300 grapheme以内 (実測: ${graphemes})`, graphemes <= 300);
+}
+
+// ---------------------------------------------------------------------------
+// buildMastodonText: short形式（themeHookEn/themeHook＋URL＋タグのみ・2026-10追加）
+// ---------------------------------------------------------------------------
+console.log("\n[buildMastodonText: short形式]");
+{
+  const text = buildMastodonText("国際協力の日", "説明文", "International Cooperation Day", "desc",
+    undefined, null, undefined, "にゃんこで国際親善できないかな？", "Can cats help world peace?", "short");
+  assert("英語themeHookEnが含まれる", text.includes("Can cats help world peace?"));
+  assert("英語URL（?lang=en）が含まれる", text.includes("?lang=en"));
+  assert("日本語themeHookが含まれる", text.includes("にゃんこで国際親善できないかな？"));
+  assert("日本語URLが含まれる", text.includes("https://hiroshikuze.github.io/anniversary-cat-worker/"));
+  assert("説明文（英日いずれも）は含まれない", !text.includes("desc") && !text.includes("説明文"));
+  assert("CTA文言は含まれない", !text.includes("Why don't you try making your own"));
+}
+{
+  // themeHookEnが空の場合は日本語のみ（Blueskyと同一テキスト）にフォールバック
+  const text = buildMastodonText("国際協力の日", "説明文", "International Cooperation Day", "desc",
+    undefined, null, undefined, "にゃんこで国際親善できないかな？", "", "short");
+  assert("themeHookEn空時: 英語ブロックを含まない", !text.includes("?lang=en"));
+  assert("themeHookEn空時: 日本語themeHookは含まれる", text.includes("にゃんこで国際親善できないかな？"));
+}
+{
+  // themeHook（日本語）が空の場合はshort指定でもfullにフォールバックする
+  const text = buildMastodonText("国際協力の日", "説明文", "International Cooperation Day", "desc",
+    undefined, null, undefined, null, "Can cats help world peace?", "short");
+  assert("themeHook空時: フォールバックで英語ヘッダーが含まれる", text.includes('Today is "International Cooperation Day"!'));
+}
+{
+  // format省略時は従来通りfull（後方互換）
+  const text = buildMastodonText("国際協力の日", "説明文", "International Cooperation Day", "desc",
+    undefined, null, undefined, "一言テスト");
+  assert("format省略時はfull形式のまま（後方互換）", text.includes('Today is "International Cooperation Day"!'));
+  assert("format省略時はthemeHookが使われない", !text.includes("一言テスト"));
 }
 
 // ---------------------------------------------------------------------------
@@ -4963,6 +5120,8 @@ console.log("\n[handleResearch: HTMLタグ除去]");
     descriptionEn: "A day celebrating <i>gekiga</i> culture.",
     themeKana: "<ruby>劇画<rt>げきが</rt></ruby>の<ruby>日<rt>ひ</rt></ruby>",
     descriptionKana: "<ruby>劇画<rt>げきが</rt></ruby>文化を祝う<ruby>記念日<rt>きねんび</rt></ruby>",
+    themeHook: "<ruby>劇画<rt>げきが</rt></ruby>って猫目線でもアツいにゃ",
+    themeHookEn: "<b>Gekiga</b> is intense, even for a cat.",
     visualHint: "cat reading manga",
     foodItem: null,
     kanjiChar: "画",
@@ -4982,8 +5141,35 @@ console.log("\n[handleResearch: HTMLタグ除去]");
   assert("descriptionからHTMLタグが除去される", result?.description === "大人向けの劇画文化を祝う記念日");
   assert("themeEnからHTMLタグが除去される", result?.themeEn === "Gekiga Day");
   assert("descriptionEnからHTMLタグが除去される", result?.descriptionEn === "A day celebrating gekiga culture.");
+  assert("themeHookからHTMLタグが除去される（2026-10追加）", result?.themeHook === "劇画って猫目線でもアツいにゃ");
+  assert("themeHookEnからHTMLタグが除去される（2026-10追加）", result?.themeHookEn === "Gekiga is intense, even for a cat.");
   assert("themeKanaのruby HTMLは保持される（サニタイズ対象外）", result?.themeKana === "<ruby>劇画<rt>げきが</rt></ruby>の<ruby>日<rt>ひ</rt></ruby>");
   assert("descriptionKanaのruby HTMLは保持される（サニタイズ対象外）", result?.descriptionKana === "<ruby>劇画<rt>げきが</rt></ruby>文化を祝う<ruby>記念日<rt>きねんび</rt></ruby>");
+}
+{
+  // themeHook/themeHookEn未返却時はundefined（旧データ・取得失敗時の後方互換確認）
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeResearchFetchMock({
+    theme: "大仏の日",
+    themeEn: "Great Buddha Day",
+    description: "記念日の説明。",
+    descriptionEn: "Description.",
+    visualHint: "Buddha statue",
+    foodItem: null,
+    kanjiChar: "尊",
+    sourceUrl: "https://example.com",
+  });
+
+  let result;
+  try {
+    result = await handleResearch({ date: "2026年5月21日" }, "test-key");
+  } catch (e) {
+    result = null;
+  }
+  globalThis.fetch = origFetch;
+
+  assert("themeHook未返却時はundefined（2026-10追加）", !result?.themeHook);
+  assert("themeHookEn未返却時はundefined（2026-10追加）", !result?.themeHookEn);
 }
 
 {

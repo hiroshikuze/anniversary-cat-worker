@@ -581,7 +581,7 @@ export async function handleResearch(body, apiKey, env = null, ctx = null) {
     `今日は${date}です。この日の日本の記念日・季節の行事・季節の花を` +
     `Google検索で調べ、最も特徴的なものを1つ選んでください（速報ニュース・災害・事故・訃報は除く）。` +
     `回答は以下のJSONのみ（マークダウン・説明文は不要）:\n` +
-    `{"theme":"記念日名","themeEn":"English name of this theme (5 words max, ASCII only)","description":"50文字以内の説明（日付・曜日は含めない）","descriptionEn":"English description in 50 chars or less (ASCII only, omit dates/weekdays)","themeKana":"themeをHTML ruby形式でふりがな付きに変換（例: <ruby>大仏<rt>だいぶつ</rt></ruby>の<ruby>日<rt>ひ</rt></ruby>）。ひらがなのみ・カタカナ・英数字はrubyなしそのまま","descriptionKana":"descriptionをHTML ruby形式でふりがな付きに変換。漢字のみrubyを付ける","visualHint":"このテーマをかわいい猫のイラストで表現するとき使えるASCII英語キーワード5〜8語。テーマの象徴となる動物・物・人物を先頭1〜2語に必ず含め、続いて背景・小物・雰囲気を続ける。先頭の名詞はテーマそのものの実際の姿で表現し、テーマを猫や他の動物に擬人化しない（例: 象の日→large friendly elephant, Kyoto imperial garden, pine trees, stone lanterns。草の日のような植物テーマではgreen catのような猫化はせずgrass fieldのようにそのまま表現する）","foodItem":"その記念日の主な行為・目的が食べることである場合のみ食材・料理名をASCII英語で1〜3語。農業・収穫・行事の象徴として食材が登場するだけの場合はnull。そうでなければnull","kanjiChar":"このテーマを象徴する漢字一字（常用漢字・旧字体不可）。具体的な漢字が思い浮かばない場合はnull","sourceUrl":"参照した実際のURL"}`;
+    `{"theme":"記念日名","themeEn":"English name of this theme (5 words max, ASCII only)","description":"50文字以内の説明（日付・曜日は含めない）","descriptionEn":"English description in 50 chars or less (ASCII only, omit dates/weekdays)","themeKana":"themeをHTML ruby形式でふりがな付きに変換（例: <ruby>大仏<rt>だいぶつ</rt></ruby>の<ruby>日<rt>ひ</rt></ruby>）。ひらがなのみ・カタカナ・英数字はrubyなしそのまま","descriptionKana":"descriptionをHTML ruby形式でふりがな付きに変換。漢字のみrubyを付ける","visualHint":"このテーマをかわいい猫のイラストで表現するとき使えるASCII英語キーワード5〜8語。テーマの象徴となる動物・物・人物を先頭1〜2語に必ず含め、続いて背景・小物・雰囲気を続ける。先頭の名詞はテーマそのものの実際の姿で表現し、テーマを猫や他の動物に擬人化しない（例: 象の日→large friendly elephant, Kyoto imperial garden, pine trees, stone lanterns。草の日のような植物テーマではgreen catのような猫化はせずgrass fieldのようにそのまま表現する）","foodItem":"その記念日の主な行為・目的が食べることである場合のみ食材・料理名をASCII英語で1〜3語。農業・収穫・行事の象徴として食材が登場するだけの場合はnull。そうでなければnull","kanjiChar":"このテーマを象徴する漢字一字（常用漢字・旧字体不可）。具体的な漢字が思い浮かばない場合はnull","themeHook":"テーマに絡めた猫目線のウィットに富んだ一言。事実説明ではなく問いかけ・つぶやき・ボケ調（例: 「〜かな？」「〜してみたい」）。20〜30文字程度、絵文字は使わない","themeHookEn":"themeHookの英語版。直訳ではなく英語として自然な短いフレーズにする（ASCII only）","sourceUrl":"参照した実際のURL"}`;
 
   const res = await fetchWithRetry(
     `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
@@ -631,7 +631,7 @@ export async function handleResearch(body, apiKey, env = null, ctx = null) {
   // Bug#30: Geminiがtheme等のプレーンテキストフィールドにthemeKana用のruby HTMLを
   // 誤って混入させることがあるため除去する。themeKana/descriptionKanaはruby HTMLが
   // 仕様上必要なため対象外。
-  for (const field of ["theme", "description", "themeEn", "descriptionEn"]) {
+  for (const field of ["theme", "description", "themeEn", "descriptionEn", "themeHook", "themeHookEn"]) {
     if (typeof result[field] === "string") result[field] = stripHtmlTags(result[field]);
   }
 
