@@ -102,12 +102,28 @@ function callGemini(prompt) {
 }
 
 function extractHook(data) {
-  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+  const candidate = data.candidates?.[0];
+  const parts = candidate?.content?.parts ?? [];
+  // thinkingモデルは parts に {thought:true,...} が混在することがあるため、
+  // thought ではない最初の text part を本文として扱う。
+  const textPart = parts.find(p => p.text && !p.thought) ?? parts[0];
+  const rawText = textPart?.text ?? "{}";
+
+  const debug = {
+    finishReason: candidate?.finishReason ?? "(なし)",
+    partsCount: parts.length,
+    promptFeedback: data.promptFeedback ? JSON.stringify(data.promptFeedback) : "(なし)",
+  };
+
   try {
     const parsed = JSON.parse(rawText.replace(/```json|```/g, "").trim());
-    return { themeHook: parsed.themeHook ?? "(なし)", themeHookEn: parsed.themeHookEn ?? "(なし)" };
+    return {
+      themeHook: parsed.themeHook ?? "(フィールドなし)",
+      themeHookEn: parsed.themeHookEn ?? "(フィールドなし)",
+      debug,
+    };
   } catch {
-    return { themeHook: "(JSON解析失敗)", themeHookEn: rawText.slice(0, 80) };
+    return { themeHook: "(JSON解析失敗)", themeHookEn: rawText.slice(0, 80), debug };
   }
 }
 
@@ -124,12 +140,13 @@ for (const { theme, description } of TEST_CASES) {
     const t0 = Date.now();
     const data = await callGemini(prompt);
     const ms = Date.now() - t0;
-    const { themeHook, themeHookEn } = extractHook(data);
+    const { themeHook, themeHookEn, debug } = extractHook(data);
 
     const jaLen = [...themeHook].length;
     console.log(`  [${trial}回目 ${ms}ms, ${jaLen}文字]`);
     console.log(`    JA: ${themeHook}`);
     console.log(`    EN: ${themeHookEn}`);
+    console.log(`    debug: finishReason=${debug.finishReason} partsCount=${debug.partsCount} promptFeedback=${debug.promptFeedback}`);
   }
 }
 
