@@ -27,7 +27,7 @@ if (!apiKey) {
   process.exit(1);
 }
 
-const MODEL = "gemini-2.5-flash-lite";
+const MODEL = "gemini-3.5-flash-lite";
 const HOST  = "generativelanguage.googleapis.com";
 const BASE  = `/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
 
@@ -132,12 +132,11 @@ console.log(`${"═".repeat(70)}`);
 console.log(`themeHook生成テスト（同一テーマを2回試行して言い回しのブレを確認）`);
 console.log("═".repeat(70));
 
-// デバッグ中: 原因特定目的のため1件・1回のみに絞る（切り分けできたらTEST_CASES全件・2回に戻す）
-for (const { theme, description } of TEST_CASES.slice(0, 1)) {
+for (const { theme, description } of TEST_CASES) {
   console.log(`\n【${theme}】`);
   console.log(`  説明: ${description}`);
 
-  for (let trial = 1; trial <= 1; trial++) {
+  for (let trial = 1; trial <= 2; trial++) {
     const prompt = buildHookPrompt(theme, description);
     const t0 = Date.now();
     const data = await callGemini(prompt);
