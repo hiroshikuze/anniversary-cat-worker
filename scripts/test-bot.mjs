@@ -3365,6 +3365,36 @@ console.log("\n[handleResearch: visualHint生成プロンプトの擬人化禁�
   globalThis.fetch = origFetch;
 }
 
+// handleResearch: プロンプトにthemeHook/themeHookEn生成指示が含まれる（2026-10追加）
+console.log("\n[handleResearch: themeHook生成指示]");
+{
+  const origFetch = globalThis.fetch;
+  let capturedPrompt;
+
+  globalThis.fetch = async (url, opts) => {
+    capturedPrompt = JSON.parse(opts.body).contents[0].parts[0].text;
+    return new Response(JSON.stringify({
+      candidates: [{
+        content: { parts: [{ text: JSON.stringify({
+          theme: "草の日", description: "説明", visualHint: "grass field, wildflowers",
+          themeHook: "草ってかじってもいいのかにゃ？", themeHookEn: "Can I nibble on this grass?",
+          foodItem: null, kanjiChar: null, sourceUrl: "https://example.com",
+        })}] },
+        groundingMetadata: {},
+      }],
+    }), { status: 200 });
+  };
+
+  const result = await handleResearch({ date: "4月19日" }, "dummy-key");
+  assert("プロンプトにthemeHookフィールド名が含まれる", capturedPrompt.includes('"themeHook"'));
+  assert("プロンプトにthemeHookEnフィールド名が含まれる", capturedPrompt.includes('"themeHookEn"'));
+  assert("プロンプトに問いかけ・つぶやき調の指示が含まれる", capturedPrompt.includes("問いかけ・つぶやき"));
+  assert("Geminiが返したthemeHookがそのまま返却される", result?.themeHook === "草ってかじってもいいのかにゃ？");
+  assert("Geminiが返したthemeHookEnがそのまま返却される", result?.themeHookEn === "Can I nibble on this grass?");
+
+  globalThis.fetch = origFetch;
+}
+
 // ---------------------------------------------------------------------------
 // 【回帰】runBot - R2メタに kanjiChar が保存される
 // ボット画像の初回訪問者がSUZURI登録する際に漢字が🐾にならないための保証

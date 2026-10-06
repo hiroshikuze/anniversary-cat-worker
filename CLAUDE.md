@@ -139,6 +139,7 @@ wrangler dev                                          # ローカル開発サー
 wrangler deploy                                       # 手動デプロイ（通常はCIが自動実行）
 node scripts/test-suzuri-api.mjs                      # SUZURI API動作確認（実商品が生成される）
 GEMINI_API_KEY=xxx node scripts/test-gemini-image-timing.mjs   # Gemini所要時間計測
+GEMINI_API_KEY=xxx node scripts/test-theme-hook.mjs   # themeHook（テーマ連動の一言）の品質検証
 FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 SUZURI_API_KEY=xxx node scripts/audit-suzuri-materials.mjs           # 孤立SUZURIマテリアルの棚卸し（dry-run）
 SUZURI_API_KEY=xxx node scripts/audit-suzuri-materials.mjs --delete   # 上記で見つかった孤立マテリアルを削除
