@@ -82,7 +82,7 @@ if (ver) score -= parseInt(ver[1]) * 3 + parseInt(ver[2]);  // 低バージョ�
 
 - 選択されたモデルを`RATE_KV`の`text-model:active`キーに保存（既存namespaceを再利用）
 - 前回の記録と異なるモデルが選ばれた場合: Discordに`🔄 テキストモデルを切替: {from} → {to}`を通知
-- 通知条件: 「前回記録値≠今回選択値かつ前回記録値が存在する」（記録なし→初回設定は通知しない）
+- 通知条件:「前回記録値≠今回選択値かつ前回記録値が存在する」（記録なし→初回設定は通知しない）
 - KV操作は`selectBestModel()`内でtry/catchし、失敗してもモデル選択自体はブロックしない
 - 同時並行リクエストで通知が数通重複する可能性がある（画像モデルと同じ設計判断・許容）
 
@@ -146,7 +146,7 @@ GeminiのAPIレスポンスに含まれる`usageMetadata.totalTokenCount`を取�
 - **`/suzuri-create`ハンドラーへの横展開**: `suzuriCreate-backTextureDecode`計測（`incrementUsageKv()`とのペアはなく`recordCpuCheckpoint()`単体呼び出し）にも同じパターンを適用した。この箇所は`fetch()`ハンドラー内にインラインで書かれておりexportされた関数がなかったため、`_recordBackTextureDecodeCpu(cpuMs, env, ctx)`としてexport・テスト可能な形に切り出した（`_pollFalAndGetTexture()`と同じ「依存関数を引数で受け取る」切り出しパターン）。`fetch(request, env, ctx)`内なので`ctx`は常に存在するが、他の箇所と実装を揃えるため同じ`if (ctx) { ctx.waitUntil(...) } else { await ... }`分岐を踏襲する
 - **共通ヘルパー`_deferOrAwait(promise, ctx)`への集約**: 上記「`ctx`があれば`ctx.waitUntil()`・なければ`await`」という同一パターンが4箇所（`handleResearch()`・`handleGenerate()`・`_recordBackTextureDecodeCpu()`・`runBot()`の`shrinkImage`計測）に重複したため、`worker/index.js`に`_deferOrAwait(promise, ctx)`として抽出しexportした。4箇所すべてこのヘルパー経由に統一している
 - **`runBot()`の`shrinkImage`計測**: `worker/bot.js`の`recordCpuCheckpoint("shrinkImage", ..., env.RATE_KV)`も同じKV書き込みブロッキングパターンだったが、`ctx`導入時に見落としていた。`runBot(env, handleResearch, handleGenerate, ctx = null)`が受け取る`ctx`を`_deferOrAwait()`経由でこの呼び出しにも適用する
-- **ネットワークI/O待ちはCPU時間に計上されない（[Cloudflare Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)で確認済み）**: 「Waiting on network requests (such as fetch() calls, KV reads, or database queries) does not count toward CPU time」と明記されている。CPU時間は実際にコードを実行している時間のみを測定し、fetch・KV等のI/O待ちは「Duration」（壁時計時間）には含まれるがCPU時間には計上されない。`ctx.waitUntil()`はこのI/O待ち部分をクリティカルパスから外す（応答速度を改善する）手段であり、CPU時間の予算そのものを増やすものではない点に注意
+- **ネットワークI/O待ちはCPU時間に計上されない（[Cloudflare Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)で確認済み）**:「Waiting on network requests (such as fetch() calls, KV reads, or database queries) does not count toward CPU time」と明記されている。CPU時間は実際にコードを実行している時間のみを測定し、fetch・KV等のI/O待ちは「Duration」（壁時計時間）には含まれるがCPU時間には計上されない。`ctx.waitUntil()`はこのI/O待ち部分をクリティカルパスから外す（応答速度を改善する）手段であり、CPU時間の予算そのものを増やすものではない点に注意
 
 **`generate-jsonParse`: JSON.parse()単体の切り分け計測（2026-08追加）:**
 
@@ -224,7 +224,7 @@ Do not render the scene as if painted, printed, or mounted on a plate, dish, fan
 
 ### 猫以外への顔・擬人化の禁止（Bug#33・2026-09追加）
 
-**背景**: 「草の日」テーマの生成画像で、メインの猫（白いラグドール）とは別に、草むらの中に猫の顔がもう1つ描かれる事象が発生した。実際のプロンプトを確認したところ、`visualHint`が`cute green cat, lush grass field, tiny wildflowers, sunny morning, soft fur, playful expression`となっており、先頭の主役名詞がGeminiによって「草」を擬人化した「かわいい緑の猫」になっていた。2026-07の既知の未対応バグ（「visualHintで食材が主役名詞になると猫の絵に直接合成されて不気味になる」＝半夏生でタコの足が猫に生えた件）と同じ原因の類型で、対象が食材から植物に広がったケース。
+**背景**:「草の日」テーマの生成画像で、メインの猫（白いラグドール）とは別に、草むらの中に猫の顔がもう1つ描かれる事象が発生した。実際のプロンプトを確認したところ、`visualHint`が`cute green cat, lush grass field, tiny wildflowers, sunny morning, soft fur, playful expression`となっており、先頭の主役名詞がGeminiによって「草」を擬人化した「かわいい緑の猫」になっていた。2026-07の既知の未対応バグ（「visualHintで食材が主役名詞になると猫の絵に直接合成されて不気味になる」＝半夏生でタコの足が猫に生えた件）と同じ原因の類型で、対象が食材から植物に広がったケース。
 
 Bug#27（丸皿画像・原因未確定）と同じ考え方で、**原因が確定していても効果を確実にするため、対症療法（常時ネガティブ指示）を主策、根本原因への対処（visualHint生成プロンプトの調整）を補助策として両方実施**した。
 
@@ -304,7 +304,7 @@ Only the cat(s) described above should have a face, eyes, or expression. Do not 
 今日の記念日テーマから主役となる名詞（動物・物・人物）を1〜2語で先頭に抽出し、
 続いて関連する背景・小物・雰囲気を3〜6語で続ける。ASCII英語、計5〜8語。
 主役名詞はテーマそのものの実際の姿で表現し、テーマを猫や他の動物に擬人化しない
-（例: 「草の日」→ 草はそのまま "grass" と表現し、"green cat" のような猫化はしない）。
+（例:「草の日」→ 草はそのまま "grass" と表現し、"green cat" のような猫化はしない）。
 例: 図書館記念日 → library books, warm reading nook, wooden bookshelves, soft lamplight
 例: 象の日 → large friendly elephant, Kyoto imperial garden, pine trees, stone lanterns
 ```
