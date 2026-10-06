@@ -226,7 +226,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | レート制限（`/generate`: IP 3回/日・グローバル 50回/日） | `worker/index.js` `checkRateLimit()` | 稼働中 |
 | かなモード（JP/かな/EN 3択・ruby furigana・Gemini生成`themeKana`/`descriptionKana`・日付`formatDateKana()`でふりがな） | `frontend/index.html` `translations.kana`/`setLang()`/`formatDateKana()` / `worker/index.js` `handleResearch()` | 稼働中 |
 | Bluesky/Mastodon投稿CTA行のローテーション（`CTA_VARIANTS`重み付き5パターン・毎回同一文言の反復を回避） | `worker/bot.js` `pickCta()` | 稼働中 |
-| 投稿フォーマットのshort/full切替（`pickPostFormat()`重み付きshort80%/full20%。short版はテーマ連動の一言`themeHook`/`themeHookEn`＋URL＋タグのみで宣伝ポストっぽさを抑制。themeHook欠落時はfullにフォールバック） | `worker/bot.js` `pickPostFormat()` / `worker/index.js` `handleResearch()` | 稼働中 |
+| 投稿フォーマットのshort/full切替（`pickPostFormat()`重み付きshort80%/full20%。short版はテーマ連動の一言`themeHook`/`themeHookEn`＋URL＋タグのみで宣伝ポストっぽさを抑制。themeHook欠落時はfullにフォールバック） | `worker/bot.js` `pickPostFormat()` / `worker/index.js` `handleResearch()` | 実装済み・PR #205未マージ・デプロイ後の実機投稿確認待ち |
 | SUZURIセール情報の一元管理（frontend/Bot双方が単一の情報源を参照） | `worker/sale.js` `getActiveSaleInfo()` / `worker/index.js` `GET /sale-info` | 稼働中 |
 | Bot投稿へのセール告知リプライ（セール期間中のみ、本体投稿成功時にbest-effortでスレッド返信） | `worker/bot.js` `runBot()` | 稼働中 |
 | SUZURIセール自動検知Cron（毎日1回ニュース一覧をチェック・新着セール記事をGeminiで構造化抽出しDiscord通知。本番反映は手動） | `worker/sale-check.js` `checkForNewSale()` | 稼働中 |

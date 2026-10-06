@@ -48,7 +48,7 @@ Cloudflareダッシュボードの手動Scheduled送信は、Cronイベントロ
 
 - `pickPostFormat()`は`runBot()`内で`pickCta()`と同じタイミングで**1回だけ**呼び出し、Bluesky・Mastodon両方の生成に同じ結果を渡す（同じ投稿でBluesky版・Mastodon版の形式が食い違わないようにするため）
 - `themeHook`（下記「themeHook/themeHookEnフィールド」参照）が取得できない場合（旧データ・Gemini取得失敗時等）は、`short`が選ばれていても`full`にフォールバックする（short版はthemeHookが必須のため）
-- `#{theme正規化}`ハッシュタグはshort版でも**残す**（ユーザー判断: 「URLを踏むまで何の日か分からない」という完全な伏せ字は行わない。タグ経由の流入が無視できないため）
+- `#{theme正規化}`ハッシュタグはshort版でも**残す**（ユーザー判断:「URLを踏むまで何の日か分からない」という完全な伏せ字は行わない。タグ経由の流入が無視できないため）
 
 #### themeHook/themeHookEnフィールド（`handleResearch()`）
 
