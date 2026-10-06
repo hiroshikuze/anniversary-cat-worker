@@ -4911,6 +4911,13 @@ console.log("\n[buildMastodonText: short形式]");
   assert("themeHookEn空時: 日本語themeHookは含まれる", text.includes("にゃんこで国際親善できないかな？"));
 }
 {
+  // ゲストタグはMastodon short形式でも残す（2026-10・ユーザー確認済み。
+  // buildPostText側の同種テストと対にする）
+  const text = buildMastodonText("国際協力の日", "説明文", "International Cooperation Day", "desc",
+    undefined, "#dog", undefined, "一言テスト", "Hook text", "short");
+  assert("Mastodon short形式でもguestSnsTagが含まれる", text.includes("#dog"));
+}
+{
   // themeHook（日本語）が空の場合はshort指定でもfullにフォールバックする
   const text = buildMastodonText("国際協力の日", "説明文", "International Cooperation Day", "desc",
     undefined, null, undefined, null, "Can cats help world peace?", "short");

@@ -90,7 +90,7 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 ```
 
 - 説明文・CTA行・📸作品URL行は**含めない**（画像自体は添付済みのため作品URLは冗長。CTA文言を毎回付けないことで宣伝ポストっぽさを下げる）
-- `{guestSnsTag}`はfull版と同様に残す
+- `{guestSnsTag}`はfull版と同様に残す（2026-10・ユーザー確認済み: テーマタグで既に「何の日か」が明示される前提のため、ゲスト動物タグの有無による「URLを踏むまで分からない」性への影響は小さいと判断）
 - `themeHook`が空の場合はfull版にフォールバックする（上記「投稿フォーマットの選択」参照）
 
 #### Mastodon（`buildMastodonText()`・英語優先・日英二言語）
