@@ -27,7 +27,7 @@ if (!apiKey) {
   process.exit(1);
 }
 
-const MODEL = "gemini-3.5-flash-lite";
+const MODEL = "gemini-3.1-flash-lite";
 const HOST  = "generativelanguage.googleapis.com";
 const BASE  = `/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
 
