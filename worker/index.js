@@ -11,7 +11,7 @@
 
 import { runBot, notifyDiscord, runMonthlyWallpaperPost } from "./bot.js";
 import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2, collectMaterialIds } from "./r2-storage.js";
-import { createSuzuriProducts, deleteSuzuriMaterial } from "./suzuri.js";
+import { createSuzuriProducts, deleteSuzuriMaterial, listSuzuriMaterials, isOrphanBackTextureMaterial } from "./suzuri.js";
 import { submitFalJob, getFalResult } from "./fal.js";
 import { fetchWithRetry } from "./http-utils.js";
 import { autoCropImage } from "./image-utils.js";
@@ -332,6 +332,7 @@ export async function cleanupExpiredEntries(env, deps = {}) {
     getMetaFromR2Fn        = getMetaFromR2,
     deleteSuzuriMaterialFn = deleteSuzuriMaterial,
     deleteFromR2Fn          = deleteFromR2,
+    cleanupOrphanBackTextureMaterialsFn = cleanupOrphanBackTextureMaterials,
   } = deps;
   if (!env.IMAGE_BUCKET) return;
   try {
@@ -357,6 +358,47 @@ export async function cleanupExpiredEntries(env, deps = {}) {
   } catch (e) {
     console.error(`[cleanup] エラー: ${e.message}`);
   }
+  // R2側の失敗とは独立して実行する（関数内で例外を握りつぶす）
+  await cleanupOrphanBackTextureMaterialsFn(env);
+}
+
+// Tシャツ背面画像のSUZURIマテリアル（sub_materialsが自動作成し、materialIdsに記録されない）を
+// 素材一覧から探して削除する（Bug#42。詳細はarchitecture.md「Tシャツ背面画像マテリアルの一括削除」参照）。
+// サブリクエスト予算（Bug#41）を考慮し、一覧取得はmaxPagesページ・削除はmaxDeletes件までに制限する
+export async function cleanupOrphanBackTextureMaterials(env, deps = {}) {
+  const {
+    listSuzuriMaterialsFn  = listSuzuriMaterials,
+    deleteSuzuriMaterialFn = deleteSuzuriMaterial,
+    isOrphanFn             = isOrphanBackTextureMaterial,
+    nowMs                  = Date.now(),
+    maxPages               = 2,
+    maxDeletes             = 10,
+  } = deps;
+  if (!env.SUZURI_API_KEY) return { deleted: 0 };
+  const PAGE_SIZE = 50;
+  let scanned = 0;
+  let deleted = 0;
+  try {
+    const targets = [];
+    for (let page = 0; page < maxPages; page++) {
+      const materials = await listSuzuriMaterialsFn(env, page * PAGE_SIZE, PAGE_SIZE);
+      scanned += materials.length;
+      targets.push(...materials.filter(m => isOrphanFn(m, nowMs)));
+      if (materials.length < PAGE_SIZE) break;
+    }
+    for (const mat of targets.slice(0, maxDeletes)) {
+      try {
+        await deleteSuzuriMaterialFn(mat.id, env);
+        deleted++;
+      } catch (e) {
+        console.warn(`[cleanup-backtexture] material=${mat.id} 削除失敗: ${e.message}`);
+      }
+    }
+    console.log(`[cleanup-backtexture] 一覧${scanned}件中 対象${targets.length}件 削除${deleted}件`);
+  } catch (e) {
+    console.warn(`[cleanup-backtexture] エラー: ${e.message}`);
+  }
+  return { deleted };
 }
 
 // ---------------------------------------------------------------------------

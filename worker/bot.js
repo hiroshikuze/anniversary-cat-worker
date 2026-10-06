@@ -347,7 +347,7 @@ export function buildUrlFacets(text, url = SITE_URL) {
 // ---------------------------------------------------------------------------
 
 /** App Password でセッションを作成し accessJwt と did を返す */
-async function createBlueskySession(identifier, password) {
+export async function createBlueskySession(identifier, password) {
   const res = await fetch(`${BLUESKY_API}/com.atproto.server.createSession`, {
     method:  "POST",
     headers: { "Content-Type": "application/json" },
@@ -472,7 +472,7 @@ export function _setPhotonForTest(mockPhotoImage) {
 }
 
 /** 画像データを Bluesky にアップロードして blob 参照を返す */
-async function uploadBlob(accessJwt, imageBytes, mimeType) {
+export async function uploadBlob(accessJwt, imageBytes, mimeType) {
   const res = await fetch(`${BLUESKY_API}/com.atproto.repo.uploadBlob`, {
     method:  "POST",
     headers: {
@@ -585,7 +585,7 @@ async function createReplyPost(accessJwt, did, text, url, parentRef, rootRef = p
 // ---------------------------------------------------------------------------
 
 /** Mastodon に画像をアップロードして media_id を返す。 */
-async function uploadMediaToMastodon(instanceUrl, accessToken, imageBytes, mimeType, altText) {
+export async function uploadMediaToMastodon(instanceUrl, accessToken, imageBytes, mimeType, altText) {
   const form = new FormData();
   form.append("file", new Blob([imageBytes], { type: mimeType }), "image.jpg");
   if (altText) form.append("description", altText.slice(0, 1500));
@@ -613,7 +613,7 @@ async function uploadMediaToMastodon(instanceUrl, accessToken, imageBytes, mimeT
  * Mastodon にステータスを投稿する。inReplyToId指定時はセール告知リプライ等のスレッド返信になる。
  * mediaIdは単一ID・ID配列（月替わり壁紙の複数画像投稿用）・nullのいずれも受け付ける。
  */
-async function postStatusToMastodon(instanceUrl, accessToken, text, mediaId = null, inReplyToId = null) {
+export async function postStatusToMastodon(instanceUrl, accessToken, text, mediaId = null, inReplyToId = null) {
   const params = new URLSearchParams({ status: text });
   const mediaIds = mediaId == null ? [] : Array.isArray(mediaId) ? mediaId : [mediaId];
   for (const id of mediaIds) params.append("media_ids[]", id);

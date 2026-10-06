@@ -11,20 +11,28 @@ anniversary-cat-worker/
 │   ├── health-check.yml              ← push時: ユニットテスト + E2Eチェック
 │   ├── deploy-worker.yml             ← main push時: Cloudflare Workersデプロイ
 │   ├── deploy-pages.yml              ← main push時: GitHub Pagesデプロイ
-│   └── query-worker-logs.yml         ← workflow_dispatch: Cloudflare Workers Logsのキーワード検索（2026-08追加）
+│   ├── query-worker-logs.yml         ← workflow_dispatch: Cloudflare Workers Logsのキーワード検索（2026-08追加）
+│   └── sale-announcement.yml         ← claude/**へのpush: tmp-sale-announcement/の告知をBluesky・Mastodonへ投稿しDiscordへ送信（2026-09追加）
 ├── .claude/
 │   ├── revision_log.md               ← ミスパターン記録（毎セッション冒頭で読む）
-│   ├── bugs-history.md               ← バグ履歴 Bug#1〜（都度参照・自動ロードなし）
+│   ├── bugs-history.md               ← バグ履歴 Bug#31〜と全バグの一覧表（都度参照・自動ロードなし）
 │   ├── future-ideas.md               ← 将来拡張アイデア（都度参照・自動ロードなし）
+│   ├── docs/                         ← 詳細仕様（都度参照・自動ロードなし・2026-10追加）
+│   │   ├── architecture/             ← architecture.mdから移動した大きな節（suzuri-create・sale-check-and-cleanup・gemini・bot-posting・monthly-wallpaper）
+│   │   └── suzuri-api-unused-features.md ← future-ideas.mdから移動したSUZURI APIの未使用機能一覧
 │   ├── settings.json                 ← PostToolUseフック（Markdownスペース検証）
+│   ├── skills/
+│   │   └── sale-announcement/        ← スキル: SNSセール告知の作成・投稿手順と合成スクリプト（`/sale-announcement`・2026-09追加）
 │   ├── archive/
 │   │   ├── revision_log_2026-03.md   ← アーカイブ済みの旧revision_log（2026-03分）
-│   │   └── revision_log_2026-04-07.md ← アーカイブ済みの旧revision_log（2026-04〜2026-07分・2026-09追加）
+│   │   ├── revision_log_2026-04-07.md ← アーカイブ済みの旧revision_log（2026-04〜2026-07分・2026-09追加）
+│   │   ├── revision_log_2026-08.md   ← アーカイブ済みの旧revision_log（2026-08分・2026-10追加）
+│   │   └── bugs-history_01-30.md     ← アーカイブ済みのバグ履歴（Bug#1〜30・2026-10追加）
 │   └── rules/                        ← 以下は毎セッション自動ロード
 │       ├── coding.md                 ← コーディング規約・Markdown執筆ルール
 │       ├── testing.md                ← テスト方針・診断手順
 │       ├── git-workflow.md           ← Gitワークフロー・デプロイ手順
-│       ├── architecture.md           ← このファイル（設計・仕様）
+│       ├── architecture.md           ← このファイル（設計・仕様の目次。大きな節の本文は.claude/docs/architecture/）
 │       └── suzuri-api-reference.md   ← SUZURI APIリファレンス抜粋
 ├── worker/
 │   ├── index.js                      ← Cloudflare Worker本体（fetch + scheduledハンドラ）
@@ -53,7 +61,9 @@ anniversary-cat-worker/
     ├── test-pool-30days.mjs          ← 事前リサーチプール方式シミュレーション（GEMINI_API_KEY必要）
     ├── generate-kana-translations.mjs ← translations.kanaブランチのruby HTML一括生成（kuroshiro使用・一回限りユーティリティ）
     ├── preview-kana.mjs              ← かなモードのrubyふりがなをブラウザでプレビュー（引数: theme description）
-    └── query-worker-logs.mjs         ← Cloudflare Workers Logsのキーワード検索（CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID必要・2026-08追加）
+    ├── query-worker-logs.mjs         ← Cloudflare Workers Logsのキーワード検索（CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID必要・2026-08追加）
+    ├── post-sale-announcement.mjs    ← SNSセール告知の検証・Bluesky/Mastodon投稿・Discord送信（sale-announcement.ymlから実行・2026-09追加）
+    └── test-post-sale-announcement.mjs ← 上記の純粋関数のユニットテスト（外部API不要）← npm test（2026-09追加）
 ```
 
 ---
@@ -86,121 +96,24 @@ anniversary-cat-worker/
 
 ## /suzuri-createエンドポイント仕様
 
-フロントエンドがCanvasでウォーターマーク合成した画像をSUZURIに登録するエンドポイント。
-`/generate`からSUZURI登録処理を分離することで、合成済み画像のみSUZURIに送れる。
+> **詳細は[`.claude/docs/architecture/suzuri-create.md`](../docs/architecture/suzuri-create.md)に移動した**（2026-10・自動読み込みの軽量化）。この節を参照する指示があったら移動先を読むこと。
 
-商品ごとにウォーターマーク位置が異なるため、フロントから**2回**呼び出す（右下グループ・中央下グループ）。
+フロントがウォーターマーク合成済み画像を2回（右グループ・中央グループ）送ってSUZURI登録し、R2メタの`materialIds`/`products`を更新するエンドポイント。重複防止チェック・`updateMetaInR2()`のCAS＋リトライ・失敗時のSUZURIマテリアル削除ロールバック・Tシャツ背面画像が3つ目のマテリアルになる件（Bug#42）を含む。
 
-**ウォーターマーク位置ルール:**
+移動先に収録している小見出し（太字の見出し）:
 
-| 商品 | position | 理由 |
-| --- | --- | --- |
-| `t-shirt` / `sticker` | `bottom-right` | 矩形商品なのでコーナーが見切れない |
-| `can-badge` / `acrylic-keychain` | `bottom-center` | 円形・変形クロップでコーナーが切れるため |
-
-**リクエスト:**
-
-```json
-{
-  "imageData": "<base64>",
-  "hiresImageData": "<base64>",
-  "mimeType": "image/jpeg",
-  "theme": "記念日テーマ",
-  "r2Id": "user/{uuid}",
-  "slugs": ["t-shirt", "sticker"],
-  "description": "記念日の説明文",
-  "backTexture": "data:image/jpeg;base64,..."
-}
-```
-
-- `slugs`は任意。指定時はそのスラッグのみSUZURI登録する（未指定時は全4商品）。
-- `r2Id`は任意。指定時はSUZURI登録完了後にR2の`meta.json`を`materialIds`/`products`で更新する。フロントは右グループ（t-shirt/sticker）・中央グループ（can-badge/acrylic-keychain）の**両方の呼び出し**に同じ`r2Id`を渡す（`createSuzuriFromImage()`）。
-- `hiresImageData`は任意。t-shirt/stickerグループのみ送る。フロントがCanvas `imageSmoothingQuality:"high"`（Chrome: Lanczos / Firefox・Safari: bicubic）で2048pxにリサイズした画像。fal.ai失敗時のフォールバックとして使用し、元画像（~1024px）より印刷品質が向上する。`imageData`はfal.ai投入用として元サイズのまま維持する（2048px入力→ESRGAN→4096px≈24MBとなりSUZURI 20MB超過を招くため）。
-- `description`は任意。`/research`が返す記念日説明文。SUZURIマテリアルの`description`フィールドに使用する。
-- `backTexture`は任意。t-shirt/stickerグループのみ送る。フロントが`generateKanjiTexture(kanjiChar)`でCanvas生成した漢字テクスチャ（`data:image/jpeg;base64,...`形式）。`kanjiChar`がnullまたは無効値の場合は🐾フォールバックで生成し、必ず送信する。Tシャツのみ`sub_materials`（背面印刷）として適用。
-
-**重複防止チェック（2026-04追加）:**
-
-`r2Id`と`slugs`が両方指定された場合、R2メタの`products`に対象スラッグが全件存在すれば既存データを返して登録をスキップする。これによりボット画像への複数ユーザー同時訪問による二重登録を防ぐ。
-
-**SUZURIマテリアルは画像1件につき2つ作成される（2026-06明確化）:**
-
-右グループ（t-shirt/sticker）・中央グループ（can-badge/acrylic-keychain）はそれぞれ独立して`createSuzuriProducts()`を呼ぶため、`POST /api/v1/materials`が**2回**実行され、SUZURI側には別々の`materialId`を持つ2つのマテリアルが作成される。R2メタの`materialIds`（配列）は両方の呼び出し結果を`updateMetaInR2()`で蓄積し（`products`と同じupsertパターン）、14日後のクリーンアップ（`scheduled()`）が配列内の全IDを削除する。`/resume-hires/:id`（安全網エンドポイント）が右グループを再実行した場合も同様に`materialIds`へ追記する。
-
-**`updateMetaInR2()`の並行書き込み耐性（2026-09追加・Bug#34）:** 右グループ（`ctx.waitUntil()`内で15〜20秒後）・中央グループ（同期）・`/resume-hires`はいずれも同一`r2Id`のmeta.jsonへ独立したタイミングで書き込む。かつては単純な`get→JSでマージ→put`だったため、書き込みが競合すると後勝ちが先勝ちの結果を黙って上書きするロストアップデートが発生し、実際に本番でマテリアルIDが`materialIds`配列から消失する事故が起きた（詳細は`.claude/bugs-history.md`のBug#34参照）。現在はR2の条件付きPUT（`onlyIf: { etagMatches: obj.etag }`）による楽観的並行性制御+有界リトライ（`maxRetries=5`）で、複数の書き込みが競合しても全て失われずマージされることを保証している。
-
-**`updateMetaInR2()`最終失敗時のSUZURIマテリアル削除ロールバック（`_updateMetaOrRollback()`・2026-09追加）:** 上記のCAS+リトライを`maxRetries`回試しても最終的に`updateMetaInR2()`が失敗した場合（etag競合が解消しない・R2側の障害等）、`createSuzuriProducts()`はすでに成功済み（課金対象の商品ページがSUZURI上に存在）だがR2メタには一切記録されない「孤立マテリアル」が残ってしまう。この孤立は`scripts/audit-suzuri-materials.mjs`では検出できない（同スクリプトは販売期間が過ぎた期限切れマテリアルのみを対象とし、今日登録されたばかりの孤立は対象外）ため、次に共有ページが訪問されるたびにR2側が「未登録」と誤認して再登録が走り、孤立が際限なく増え続けるリスクがある（実際に2026-09に1日で8件の孤立マテリアルが発生する事故が起きた。詳細は`.claude/bugs-history.md`のBug#34参照）。
-
-- `worker/index.js` `_updateMetaOrRollback(env, r2Id, updates, materialId, logPrefix, deps = {})`としてexport。`updateMetaInR2()`を試み、失敗したら**直前に作成した`materialId`を`deleteSuzuriMaterial()`で削除する補償トランザクション（ロールバック）**を行う
-- ロールバック（削除）が成功した場合は孤立が実際には残らないため、Discord通知は行わない（`console.error`のログのみ）。**ロールバック自体も失敗した場合のみ**Discord通知する（書き込み失敗・削除失敗の両エラーメッセージを含む）。この場合のみ実際に孤立マテリアルが残るため、手動対応が必要というシグナルになる
-- center・right・`/resume-hires`の3箇所すべてこのヘルパー経由に統一。`deps`引数（`updateMetaInR2Fn`・`deleteSuzuriMaterialFn`・`notifyDiscordFn`）はテスト用（`_pollFalAndGetTexture()`と同じ「依存関数を引数で受け取る」パターン）
-- **削除ロールバックが本質的に完全な保証ではない点**: `deleteSuzuriMaterial()`自体もネットワーク障害等で失敗しうる（その場合は従来通りDiscord通知で人間に委ねる）。ただしR2書き込みとSUZURI削除という独立した2つの操作が両方失敗する確率は、R2書き込みの単独失敗より大幅に低いと見込まれるため、孤立の発生頻度を実用上大きく下げられる
-
-**レスポンス:**
-
-```json
-{
-  "products": [{ "slug": "t-shirt", "sampleUrl": "...", "previewImageUrl": "...", "available": true }, ...],
-  "materialId": 12345
-}
-```
-
-`materialId`はこの呼び出し（1グループ分）で作成されたマテリアルのIDを返す。R2に蓄積される配列は`materialIds`（複数形）であり、フィールド名が異なる点に注意。
-
-| フィールド | 説明 |
-| --- | --- |
-| `slug` | 商品種別（`t-shirt` / `sticker` / `can-badge` / `acrylic-keychain`） |
-| `sampleUrl` | SUZURIの商品詳細ページURL |
-| `previewImageUrl` | グッズプレビュー画像URL（`pngSampleImageUrl` → `sampleImageUrl` の優先順）。フロントでサムネイルカード表示に使用 |
-| `available` | 在庫あり: true / 在庫切れ: false |
-| `queued` | t-shirt/sticker のfal.ai処理中: true（`previewImageUrl`なし） |
-
-**フロントのグッズ表示（`showGoods()`）:**
-
-| 状態 | 表示 |
-| --- | --- |
-| `available: true` + `previewImageUrl`あり | サムネイル画像カード（`<img>` + 商品名ラベル）。SUZURIへリンク |
-| `available: true` + `previewImageUrl`なし | テキストボタン（後方互換） |
-| `queued: true` | 生成済み猫画像を`opacity-40`に暗転 + 商品アイコンオーバーレイ（「準備中」トースト） |
-| それ以外（在庫切れ等） | `btn-disabled`グレーボタン |
-
-**SUZURIプレビュー画像のCDN遅延対策（2026-04）:**
-
-商品登録直後、SUZURIはプレビュー画像を非同期生成する。生成完了前にブラウザがURLを叩くと404が返りネガティブキャッシュされる。`<img onerror>`で3秒後に1回だけリトライ（`?r=1`クエリ付加でキャッシュ回避）。
-
-- `SUZURI_API_KEY`未設定時は503を返す
-- レート制限なし（`/generate`のレート制限が上流で機能するため）
-
-**SUZURIマテリアル説明文（`buildDescription()`・2026-04）:**
-
-`POST /api/v1/materials`の`description`フィールドは任意文字列として公式APIが対応していることを確認済み（[developer docs](https://suzuri.jp/developer/documentation/v1)）。
-
-```text
-{M}月{D}日の「{theme}」をテーマにしました。
-【期間限定！】{期限日}（日本時間）までの販売🐱
-
-{description}          ← 空の場合はこのブロックごと省略
-
-にゃんバーサリー {URL}  ← r2Id指定時は?id={r2Id}付き画像ページ、未指定はTOPページ
-#AIイラスト #猫 #水彩画 #記念日 #にゃんバーサリー #{themeTag} #{guestSuzuriTag}
-```
-
-- 登録日のJST日付と期限日（+14日JST）は`buildDescription(theme, description, r2Id, nowMs)`内で算出
-- `nowMs`はテスト用引数（デフォルト`Date.now()`）。固定値で日付ロジックの回帰テストが可能
-- SUZURI自動削除（14日）は`scheduled()`のcleanupブロックで実装済み。R2と期限を統一している
-- `{themeTag}`はthemeの末尾の「の日」を除去してタグ化（例: 大仏の日 → `#大仏`）。記号のみになる場合は省略
-- `{guestSuzuriTag}`はゲスト登場時のみ追加（例: `#犬` `#うさぎ`）。伴侶猫・子猫は`#猫`と重複するため追加しない
-
-**`createSuzuriProducts()`のシグネチャ（2026-04更新）:**
-
-```js
-createSuzuriProducts(imageUrl, theme, env, slugFilter = null, backTexture = null, description = "", r2Id = null, guestSuzuriTag = null)
-```
-
-- `backTexture`: Tシャツのみ`sub_materials`（背面印刷）に使用。`data:image/jpeg;base64,...`形式。nullの場合は背面印刷なし
-- `description`・`r2Id`はフロントから`/suzuri-create`のリクエストボディで受け取り、`/resume-hires`ではR2メタから取得する
-- can-badge/acrylic-keychainグループの呼び出しでは`backTexture=null`を渡す（Tシャツへの背面印刷は右グループのみ）
-- 全商品に`resizeMode: "contain"`を設定（画像がアスペクト比を保ったまま収まる）
+- ウォーターマーク位置ルール
+- リクエスト
+- 重複防止チェック（2026-04追加）
+- SUZURIマテリアルは画像1件につき2つ作成される（2026-06明確化）
+- Tシャツ背面画像は3つ目のマテリアルになる（2026-10判明・Bug#42）
+- `updateMetaInR2()`の並行書き込み耐性（2026-09追加・Bug#34）
+- `updateMetaInR2()`最終失敗時のSUZURIマテリアル削除ロールバック（`_updateMetaOrRollback()`・2026-09追加）
+- レスポンス
+- フロントのグッズ表示（`showGoods()`）
+- SUZURIプレビュー画像のCDN遅延対策（2026-04）
+- SUZURIマテリアル説明文（`buildDescription()`・2026-04）
+- `createSuzuriProducts()`のシグネチャ（2026-04更新）
 
 ---
 
@@ -245,64 +158,21 @@ export function _setSaleForTest(sale) { ... } // テスト用
 
 ## SUZURIセール自動検知Cron（`worker/sale-check.js`・2026-08追加）
 
-### 背景
+> **詳細は[`.claude/docs/architecture/sale-check-and-cleanup.md`](../docs/architecture/sale-check-and-cleanup.md)に移動した**（2026-10・自動読み込みの軽量化）。この節を参照する指示があったら移動先を読むこと。
 
-`worker/sale.js`の`_currentSale`は「セール開催をユーザーがClaudeに伝える」→Claude Codeセッションが手動で編集、という運用だった。SUZURIはニュース一覧（<https://suzuri.jp/media/category/news/>）にセール告知記事を掲載するため、これを1日1回自動チェックし、新しいセール記事を検知したらDiscordに通知することで、ユーザーからの都度の指示を待たずに準備を始められるようにした。
+`0 16 * * *`でSUZURIニュース一覧からセール記事を検知しDiscordへ通知する（本番反映は人手）。同じCronで期限切れR2/SUZURIエントリのクリーンアップ（Bug#41で移設）とTシャツ背面画像マテリアルの一括削除（Bug#42）も行う。
 
-### 方針: 自動検知はするが「本番反映は自動化しない」
+移動先に収録している小見出し:
 
-- セール情報のHTML構造は毎回微妙に異なる（2026-08「ニンニンSALE」は商品カテゴリー別の階層的な割引で、単純な1商品1金額ではなかった）
-- このショップが扱う4商品（t-shirt/sticker/can-badge/acrylic-keychain）のうち**どれが対象でどれが対象外か**の判断は、過去に実際にユーザーと相談して決めた経緯がある（例: ステッカーがニンニンSALE対象外だった件）
-- 抽出ミスがそのまま本番のセールバナー・Bot投稿に自動反映されるのはリスクが高い
-
-→ **Cronジョブは「候補を検知し、Discordに通知する」までを担当し、`worker/sale.js`の`_currentSale`への反映は引き続き人間（またはレビューするClaude Codeセッション）が行う。**
-
-### Worker側`fetch()`のsuzuri.jp疎通確認（実装前の検証結果）
-
-`.claude/future-ideas.md`に記載していた「suzuri.jpはWAFでWebFetchを403で弾く」は、Claude CodeのWebFetchツールに対する制約であり、Cloudflare Worker自身の`fetch()`が同様にブロックされるかは別問題として未検証だった。実装前にBashの`curl`から`https://suzuri.jp/media/category/news/`へ直接アクセスしたところ200 OKで取得でき、実際のHTML内に`journal_ninnin-sale_202608`（現行セールの記事URL）が一覧の最上部（＝新着順で先頭）に含まれることを確認した。
-
-ただしこれはこのセッションのサンドボックス環境からの疎通確認であり、**Cloudflare Workersのエッジネットワークからの`fetch()`が同様に成功するかは、実際にデプロイしてCronを発火させるまで確定しない**（WAFがCloudflare WorkersのIPレンジを特別扱いしている可能性は理論上残る）。そのため`checkForNewSale()`は取得失敗時にDiscordへ「⚠️ SUZURIセールチェック失敗（ニュース一覧取得エラー）」を通知する設計にしており、初回のCron発火（またはダッシュボードから`event.cron === "0 16 * * *"`に一致する手動Scheduled発火。`"0 16 * * *"`は明示的に一致する値のため投稿を伴わず、`testing.md`のBug#40対応後も引き続き使用可）で疎通の成否がDiscord通知として可視化される。ブロックされていた場合はこの通知が「自動検知不可・手動確認が必要」のシグナルとして機能する。
-
-### Cronトリガー
-
-`wrangler.toml`の`crons`に`"0 16 * * *"`（1:00 JST）を追加。既存の`"0 15 * * *"`（リサーチプール生成）の直後、Bot Cron（`"0 22 * * 1-5"`）とは独立した`scheduled()`invocationとして実行される（同一invocation内で実行されるBot Cronの負荷とは合算されない）。
-
-### 期限切れR2/SUZURIエントリのクリーンアップ（2026-09移設）
-
-`cleanupExpiredEntries(env, ctx)`（`worker/index.js`）を`checkForNewSale()`と同じ`"0 16 * * *"`分岐に`ctx.waitUntil()`として同居させている。当初はBot Cron（`"0 22 * * 1-5"`）の一部として、`runBot()`の直前に逐次実行していた。
-
-**移設した理由（2026-09・実障害）**: cleanupは期限切れ1件につき「R2メタ取得(1) → SUZURI API DELETE(materialId数分) → R2オブジェクト削除(1)」を行う。Cloudflare Workersの「サブリクエスト」はfetch()だけでなくR2/KV等のバインディング呼び出しも含めてカウントされ、削除件数が多い日（実測141件）は最低でも282件以上のサブリクエストが発生する計算になる。これが`runBot()`の`handleGenerate()`（Gemini1本+Pollinations4本の計5本を同時fetch）と同一Cron・同一event・同一サブリクエスト予算を共有していたため、cleanupの逐次実行（1件ずつawait）で長時間・大量の外部通信を終えた直後に`generate()`が開始する構造になっており、実際にGeminiとPollinations両方が同時にタイムアウトする障害（`[generate] ALL SOURCES FAILED`）が発生した。
-
-**検討した代替案とその却下理由**:
-
-- 同一Cron内でcleanupと`runBot()`を別々の`ctx.waitUntil()`に分離する案 → サブリクエスト予算はevent単位で共有されるため根本解決にならない。さらに並行実行にすると「cleanup 1本+generate() 5本＝同時6本」でCloudflareの同時接続数上限（6）にちょうど当たる新たなリスクを生むため却下
-- `"0 15 * * *"`（リサーチプール生成Cron）へ移設する案 → 月末は同じCron内で`runMonthlyWallpaperPost()`（Satori/resvg/PhotonによるCPU予算が極めて逼迫する処理、過去に`error 1102`を繰り返し発生させた経緯あり。詳細は「月替わり壁紙プレゼント機能」参照）が動くため、月末に限ってcleanupが同じ問題を再発させるリスクがあり却下
-
-`"0 16 * * *"`は`checkForNewSale()`が大半の日はKV比較のみで即returnする軽量な設計のため、cleanupと安全に同居できる。移設に伴い、cleanupの実行頻度が実質的に改善する副次効果もある（従来はBot Cronの一部だったため平日のみの実行だったが、`"0 16 * * *"`は毎日発火するため週末に期限切れになったエントリも即日処理される）。
-
-### 処理フロー（`checkForNewSale(env, ctx, notifyFn)`）
-
-1. ニュース一覧を`fetchWithRetry()`で取得。失敗時はDiscordに手動確認要の通知を送って終了（KVは更新しない＝翌日また自然にリトライされる）
-2. `extractLatestSaleArticleUrl(html)`（純粋関数）で、一覧中の`/media/journal_*`リンクのうちスラッグに`sale`を含む最初の1件（＝新着順で最初に見つかったセール関連記事）のURLを抽出。見つからなければ通常運用としてログのみで終了
-3. KV（`sale-check:last-notified`）に保存済みのURLと比較。**同一なら即return**（Gemini呼び出しを行わない。大半の日はここで終了しCPU時間はごく僅か）
-4. 新しい記事の場合のみ、記事本文を取得しGeminiへ構造化抽出を依頼（`responseMimeType: "application/json"`）。対象商品4種それぞれの`included`/`discountYen`をGeminiに判定させる（ステッカー対象外のような過去の判断パターンをプロンプトで委ねる）。**使用モデルは固定文字列で書かず、`worker/index.js`の`selectBestModel()`（export済み）で動的に選択する**（2026-08追加・下記「初回Cron発火で判明した問題」参照）
-5. 抽出結果が`isSale: true`の場合、`buildSaleCandidateMessage()`（純粋関数）でDiscord通知文を組み立てて送信。**Discord通知を先に送り、KVへの「通知済みURL」書き込みはその後**（notify→mark-seenの順）。理由: 途中でCPU時間切れ・強制終了が起きても、KVが未更新なら翌日また同じURLで再試行される自己修復的な設計。逆の順序だと「検知したのに誰にも知らされない」まま次回スキップされてしまう
-6. `isSale: false`と判定された記事（値上げ告知等、セール以外のニュース）もKVに記録し、翌日以降の無駄な再抽出を防ぐ
-
-### テスト・実装上の注意
-
-- `extractLatestSaleArticleUrl()`・`buildSaleCandidateMessage()`はhandleResearch()と同じ「fetchモック・純粋関数切り出し」パターンでテスト（`scripts/test-bot.mjs`）。`extractLatestSaleArticleUrl()`のテストには実際に取得したニュース一覧HTMLの実データ（記事URLパターン）を使用し、机上の推測パターンでテストしない
-- `worker/sale-check.js`は`worker/index.js`から`recordCpuCheckpoint`・`_deferOrAwait`をimportする（既存の循環import許容パターン）。`notifyDiscord`は`worker/bot.js`が持つため、`worker/index.js`の`scheduled()`から関数として注入する形にし、`sale-check.js`が`bot.js`への新規importを持たないようにしている（循環importを増やさない設計判断）
-- Gemini抽出フェーズ（記事取得〜構造化抽出）の所要時間は`recordCpuCheckpoint("sale-check-extract", ms, env.RATE_KV)`で計測する。この区間はfetch・KV操作というI/Oを挟むため、`performance.now()`の「I/Oがない同期区間では進まない」制約（自動トリミング機能の計測時に判明・`.claude/revision_log.md`の2026-08エントリ参照）には該当せず、ある程度実測可能と見込んでいるが、正確な値になるかは`/cpu-usage`の実測で確認する
-
-### 初回Cron発火で判明した問題（2026-08・修正済み）
-
-デプロイ後の初回Cron発火（`0 16 * * *`）で実際にセール記事（ニンニンSALE）を検知し、Gemini構造化抽出を試みたところ`status=404`で失敗した（Discordに「⚠️ SUZURIセール候補を検知しましたが構造化抽出に失敗しました」の安全な通知が届いた）。`query-worker-logs.mjs`で実ログを確認した結果:
-
-- **フェーズ1（Worker側`fetch()`のsuzuri.jp疎通）は成功と確認できた**（`[sale-check] 新しい記事を検知 url=...`のログが出力されており、ニュース一覧取得〜記事URL抽出〜KV比較までは正常に完走していた）。「suzuri.jpはWAFでWebFetchを403で弾く」という制約はやはりClaude CodeのWebFetchツール固有のものであり、Cloudflare Worker自身の`fetch()`はブロックされないことが実際のCron発火で確定した
-- **実際の失敗原因**: 実装時に固定文字列で書いた`gemini-2.5-flash-lite`が「新規ユーザーには提供終了」というエラーで404になっていた（`.claude/revision_log.md`の2026-08エントリ参照）。`worker/index.js`には既にこの種のモデル廃止に対応する`selectBestModel()`（Discovery API・スコアリング・KV記憶・切替時Discord通知）が存在していたが、実装時に見落として固定文字列を書いてしまっていた
-- **修正**: `selectBestModel()`を`worker/index.js`からexportし、`sale-check.js`の`extractSaleInfoWithGemini()`が固定モデル名の代わりにこれを呼ぶよう変更した。これにより将来同種のモデル廃止が起きても`handleResearch()`と同じ自動フォールバック・Discord通知が働く
-- **設計した安全網が実際に機能した点**: KVへの「通知済みURL」書き込みをDiscord通知の後に行う設計（notify→mark-seenの順）だったため、この404失敗時点ではKVは更新されておらず、翌日以降のCronで同じ記事URLに対して自動的に再試行される状態を保っていた
+- 背景
+- 方針: 自動検知はするが「本番反映は自動化しない」
+- Worker側`fetch()`のsuzuri.jp疎通確認（実装前の検証結果）
+- Cronトリガー
+- 期限切れR2/SUZURIエントリのクリーンアップ（2026-09移設）
+- Tシャツ背面画像マテリアルの一括削除（`cleanupOrphanBackTextureMaterials()`・2026-10追加・Bug#42）
+- 処理フロー（`checkForNewSale(env, ctx, notifyFn)`）
+- テスト・実装上の注意
+- 初回Cron発火で判明した問題（2026-08・修正済み）
 
 ---
 
@@ -353,7 +223,7 @@ fal.aiアップスケール未完了のDiscord通知が連日発生した際、�
 | 失敗（3回とも`IN_QUEUE`→base64フォールバック） | 約20.3秒 | ポーリング約16.0秒 + フォールバック登録約4.3秒 |
 | 成功（3回目のポーリングで`COMPLETED`） | **約25.6秒**（28秒予算に対しmargin約2.4秒） | ポーリング約16.0秒 + CDN取得→R2保存→SUZURI登録約9.7秒 |
 
-成功ケースの方が完了後の処理（CDN fetch・R2保存・SUZURI登録）が重く、ポーリングを伸ばすほど「3回目でギリギリ完了しそうなケース」が後処理の重さで28秒予算を超過し、強制終了＝何も保存されない方向に倒れるリスクが高い。詳細な調査経緯は`.claude/revision_log.md`の2026-08エントリ参照。`CLAUDE.md`の「変えてはいけない設計判断」にも追記済み。
+成功ケースの方が完了後の処理（CDN fetch・R2保存・SUZURI登録）が重く、ポーリングを伸ばすほど「3回目でギリギリ完了しそうなケース」が後処理の重さで28秒予算を超過し、強制終了＝何も保存されない方向に倒れるリスクが高い。詳細な調査経緯は`.claude/archive/revision_log_2026-08.md`参照。`CLAUDE.md`の「変えてはいけない設計判断」にも追記済み。
 
 ---
 
@@ -463,840 +333,64 @@ Florkiewicz & Scott（2023）の276表情研究（友好的45%・攻撃的37%・
 
 ## Geminiモデル管理
 
-### 画像生成モデル（`worker/index.js`の`KNOWN_IMAGE_CANDIDATES`）
-
-```js
-const KNOWN_IMAGE_CANDIDATES = [
-  "gemini-2.5-flash-image",              // 2026-03現在のstable（メイン）
-  "gemini-2.0-flash-exp",                // フォールバック
-  "gemini-2.0-flash-preview-image-generation",  // 廃止済みの可能性あり
-];
-```
-
-**全候補が404になったら（`KNOWN_IMAGE_CANDIDATES`全滅）:**
-
-1. Discordに`🚨 画像生成モデル全滅`通知が届く（下記「自動切替・記憶」参照）。または Actionsタブでhealth-checkの失敗を確認（Cloudflareログで`unavailable(404)`を確認）
-2. [Google AI for Developers](https://ai.google.dev/gemini-api/docs/models)で現行モデルを確認
-3. `KNOWN_IMAGE_CANDIDATES`に新しいモデルを追記してpush → Actionsで確認
-
-`scripts/health-check.js`は`KNOWN_IMAGE_CANDIDATES`と同期させた独立コピーを保持し、`checkImageModels()`で配列の先頭エントリをE2Eチェックする（配列が古い場合は`warn`のみでCI失敗にはしない）。下記の自動切替・記憶機構とは独立しており、実際にKVへ記憶されている稼働モデルではなく配列の静的な内容を見ている点に注意。
-
-### 画像生成モデルの自動切替・記憶（`_resolveImageModel()`・2026-06追加）
-
-`tryGemini()`は`KNOWN_IMAGE_CANDIDATES`を毎回先頭から順に試すのではなく、`RATE_KV`（既存のレート制限用KVを再利用、新規namespaceは作成しない）のキー`image-model:active`に**現在有効なモデル名を記憶**し、次回以降はそのモデルを最優先で試す。
-
-```js
-export async function _resolveImageModel(kv, candidates, callModel) {
-  const remembered = kv ? await kv.get(IMAGE_MODEL_KV_KEY) : null;
-  const order = remembered && candidates.includes(remembered)
-    ? [remembered, ...candidates.filter(m => m !== remembered)]
-    : candidates;
-  // order を順に callModel(model) で試行。
-  // callModel が err.cascade=true を投げた場合のみ次の候補へ。
-  // 成功したモデルが remembered と異なれば KV を更新する。
-  // 成功したモデルが「今回最初に試したモデル」（order[0]。記憶値があればそれ、
-  // なければ candidates[0]）と異なる場合のみ modelSwitch を返す（＝カスケードが
-  // 実際に発生した場合のみ通知対象。KVが空の初回起動でcandidates[0]がそのまま
-  // 成功した場合は通知しない）。
-}
-```
-
-- `callModel(model)`内の404/"not found"/"not supported"判定のみが`err.cascade = true`としてカスケード対象になる。429（クォータ超過）・「画像パートなし」・その他のエラーは**従来通りカスケードしない**（即throw）。クォータ超過を自動切替対象にすると本来のクォータ問題を隠してしまうため意図的に対象外にしている
-- モデルが切り替わった場合: Discordに`🔄 画像生成モデルを切替: {from} → {to}`を通知（`tryGemini()`内で直接`await notifyDiscord()`、`ctx.waitUntil()`化はしない。fal.ai運用通知等の既存パスと同じ規約）
-- `KNOWN_IMAGE_CANDIDATES`の候補すべてが失敗した場合: Discordに`🚨 画像生成モデル全滅`を通知してからエラーをrethrowする（Pollinationsフォールバックは`_twoPhaseRace`側で従来通り機能する）
-- **このKV記憶機構が解決しないこと**: `KNOWN_IMAGE_CANDIDATES`配列自体の更新（新しいモデル名の追記）は引き続き人間が行う。Discovery API（List Models）を`tryGemini()`のホットパスに追加することは過去に廃止した設計判断であり、本機構でも再導入しない（2フェーズレースのレイテンシ予算を侵害するため）
-- 同時並行リクエストが同一の死活変化を同時に検知した場合、Discord通知が2〜3通程度重複する可能性がある。Workers KVにはCAS機構がなく、Durable Objects等の追加インフラなしには排他できないため、この程度の重複は許容している
-
-### Researchモデル（テキスト用）・コスト最適化スコアリング（2026-06更新）
-
-`selectBestModel(apiKey, kv, webhookUrl)`がスコアリングで自動選択。ログ: `[model-select] selected: gemini-xxx`
-
-**スコアリング哲学**: このアプリの研究タスク（記念日をJSONで返す・Google Search grounding使用）は高度な推論を必要としない。コスト最小化を優先してスコア式を設計する。
-
-**スコア計算式（`_selectFromCandidates()`・exportされた純粋関数）:**
-
-```js
-let score = 0;
-if (name.includes("flash"))    score += 20;  // flash = 高速・低コストティア
-if (!name.includes("preview")) score += 10;  // 安定版を優先
-if (name.includes("lite"))     score +=  5;  // lite = 最安値ティア
-const ver = name.match(/gemini-(\d+)\.(\d+)/);
-if (ver) score -= parseInt(ver[1]) * 3 + parseInt(ver[2]);  // 低バージョン優先（低コスト）
-```
-
-**モデル別スコア例（2026-06時点・公式料金ページ確認済み）:**
-
-| モデル | スコア | 有料出力/100万token | 備考 |
-| --- | --- | --- | --- |
-| `gemini-2.5-flash-lite` | 24 | $0.40 | 最安値・最優先 |
-| `gemini-2.5-flash` | 19 | $2.50 | flash-lite廃止時のfallback |
-| `gemini-3.5-flash` | 16 | $9.00 | 思考トークン含む・高コスト |
-| `gemini-2.5-pro` | -1 | $10.00 | flashでないため低スコア |
-
-- `gemini-2.5-flash-lite`はGoogle Search grounding対応（無料枠500 RPD・flashと共有）
-- 旧スコア式（`score += major*3+minor`）は「高バージョン=高コスト優先」になっていたため修正した
-- `-exp$`で終わるモデルは無料枠クォータが0のため除外フィルターを維持する
-
-**KV記憶・Discord通知（`TEXT_MODEL_KV_KEY = "text-model:active"`）:**
-
-- 選択されたモデルを`RATE_KV`の`text-model:active`キーに保存（既存namespaceを再利用）
-- 前回の記録と異なるモデルが選ばれた場合: Discordに`🔄 テキストモデルを切替: {from} → {to}`を通知
-- 通知条件: 「前回記録値≠今回選択値かつ前回記録値が存在する」（記録なし→初回設定は通知しない）
-- KV操作は`selectBestModel()`内でtry/catchし、失敗してもモデル選択自体はブロックしない
-- 同時並行リクエストで通知が数通重複する可能性がある（画像モデルと同じ設計判断・許容）
-
-**Discovery API呼び出し自体が失敗した場合の最終フォールバック（2026-08修正）:**
-
-`selectBestModel()`はDiscovery API（`GET /models`）へのfetch自体がネットワークエラー・タイムアウト等で失敗した場合、`catch`節で`_modelCache.name ?? FALLBACK_TEXT_MODEL`を返す。KVキャッシュ（1時間TTL）が空のコールドスタート直後にDiscovery API呼び出しが失敗するという稀なケース限定の保険。`_selectFromCandidates([])`（候補が0件の場合）も同じ定数を返す。
-
-- この定数は`FALLBACK_TEXT_MODEL`としてモジュールスコープに切り出し、2箇所で共有する（sale-check.jsのGeminiモデル404障害の調査で、この保険用の値自体も廃止済みモデルを指していたと判明したため。`.claude/revision_log.md`の2026-08エントリ参照）
-- **通常運用ではこの保険には到達しない**（Discovery API呼び出しが成功する限り、動的スコアリングが常に現行モデルから選ぶため、廃止されたモデルが再度選ばれることはない）。この保険はあくまで「動的選択アルゴリズム自体が動かせない」という別の障害モードに対するものであり、次回モデル廃止時に自動更新される仕組みではない点に注意
-
-**`handleResearch()`シグネチャ更新:**
-
-```js
-export async function handleResearch(body, apiKey, env = null)
-```
-
-- `env`を第3引数として追加（省略可能・nullのときKV/Discord通知なしで動作）
-- `selectBestModel(apiKey, env?.RATE_KV, env?.DISCORD_WEBHOOK_URL)`を内部で呼ぶ
-- 呼び出し元: fetchハンドラー・`bot.js runBot()`・`generateResearchPool()`いずれも`env`を渡す
-
-**プレーンテキストフィールドのサニタイズ（`stripHtmlTags()`・2026-07追加・Bug#30）:**
-
-Geminiが`theme`/`description`/`themeEn`/`descriptionEn`/`themeHook`/`themeHookEn`（プレーンテキスト前提のフィールド）に、本来`themeKana`/`descriptionKana`用のruby HTMLを誤って混入させることがある（実測: 10並列生成中1件で発生）。Gemini JSONレスポンスをパースした直後にこれらのフィールドへ`stripHtmlTags()`（`<[^>]*>`除去）を適用し、`themeKana`/`descriptionKana`（ruby HTML必須）は対象外とする。`themeHook`/`themeHookEn`は2026-10追加（下記「Bluesky Bot」の「投稿フォーマットの選択（short/full）」参照）。副次効果として、タグ除去後は文字列表現が揃うため`filterAndDedupePool()`の重複除去も正しく機能するようになる。
-
-**トークン使用量記録（`usageMetadata`・2026-06追加、モデル解決名の記録は2026-07追加）:**
-
-GeminiのAPIレスポンスに含まれる`usageMetadata.totalTokenCount`を取得し、日次集計をKVに保存する。
-
-- KVキー: `usage:YYYY-MM-DD`（UTC基準・TTL=32日）
-- 集計フィールド: `textCalls`（回数）・`textTokens`（累計トークン数）・`textModel`・`textModelResolved`・`imageCalls`・`imageTokens`・`imageModel`・`imageModelResolved`
-- `/usage` GETエンドポイントで直近30日分をJSON返却（認証なし・統計のみ）
-- `scripts/health-check.js`の末尾でエンドポイントを呼び、CIログに出力する（将来のClaude CodeセッションがCIログからモデルとトークン数を確認できる）
-
-**CPU時間のステップ別記録（`incrementCpuTimeKv()`・2026-08追加・Bug#32）:**
-
-`/usage`（トークン使用量）と同じパターンで、CPU時間が心配な実行パスのステップ別所要時間をKVに日次集計し、APIで取得できるようにする。GitHub Actionsのログ経由でClaude CodeセッションがCPU時間の実測データを直接確認できるようにする目的。
-
-- KVキー: `cpu-time:YYYY-MM-DD`（UTC基準・TTL=32日、`usage:`と同じ命名パターン）
-- 集計フィールド: ステップ名をキーとしたオブジェクト（例: `research`・`generate`・`generate-jsonParse`・`generate-autoCrop`・`shrinkImage`・`suzuriCreate-backTextureDecode`）。各ステップは`{calls, totalMs, maxMs}`
-- `/cpu-usage` GETエンドポイントで直近30日分をJSON返却（認証なし・統計のみ）
-- `scripts/health-check.js`の末尾でエンドポイントを呼び、CIログに出力する
-
-**計測チェックポイントの共通化（`recordCpuCheckpoint()`・2026-08追加）:**
-
-各チェックポイントで`console.log`とKV集計を個別に書くと同じ2行パターンが重複するため、`recordCpuCheckpoint(step, ms, kv = null)`に共通化した。`console.log`は常に行い、`incrementCpuTimeKv(kv, step, ms)`は無条件に呼ぶ（`kv`が`null`の場合は`incrementCpuTimeKv()`自身が既に持つnullガードで安全に何もしない。呼び出し側で`if (kv)`のような分岐を重ねる必要はない）。
-
-- KV集計が必要な経路（`research`・`generate`・`shrinkImage`・`suzuriCreate-backTextureDecode`）: `recordCpuCheckpoint(step, ms, env?.RATE_KV)`
-- 壁時計時間・レート制限のない高頻度経路等、KV集計対象外の経路: `recordCpuCheckpoint(step, ms)`（`kv`省略）
-- `worker/index.js`に定義し、`worker/bot.js`からimportして使う（既存の`pickFromPool`と同じ循環import許容パターン）。`worker/r2-storage.js`は`index.js`から先にimportされている側のため、逆方向のimportで循環参照を新設することを避け、単独の`console.log`のまま共通化の対象外とした
-
-**KV書き込みの`ctx.waitUntil()`背景化（2026-08追加・Bug#32追加調査）:**
-
-`/cpu-usage`稼働後の実測で、`research`ステップが`maxMs=94ms`（Free プランCPU時間上限10msの約9倍）という値を示した。原因は、計測区間（`tCpuStart`〜`recordCpuCheckpoint()`）に`incrementUsageKv()`のKV `get`→`put`往復（ネットワークI/O）が含まれていたためで、実際のCPUバウンドな同期処理（JSON.parse・正規表現等）自体は軽量だった。
-
-- **計測精度の是正**: `performance.now() - tCpuStart`の計算を`incrementUsageKv()`呼び出しより*前*に移動し、KV往復を計測区間から除外した。この修正は`ctx`の有無に関わらず適用される
-- **クリティカルパスからの分離**: `handleResearch(body, apiKey, env, ctx = null)`・`handleGenerate(body, apiKey, env, ctx = null)`が末尾に`ctx`（Workers `ExecutionContext`）を受け取るようになった。`ctx`が渡された場合、`incrementUsageKv()`・`recordCpuCheckpoint()`の呼び出しは`ctx.waitUntil()`に渡され、KV書き込みの完了を待たずに関数が結果を返す。`ctx`が渡されない場合（テスト等）は従来通り`await`する後方互換動作
-  - Cloudflare Workersは1 invocationにつき単一のV8アイソレートで動作し、真のマルチスレッドは利用できない。`ctx.waitUntil()`はI/Oバウンドな処理（KV書き込み等）を応答後もバックグラウンドで完了させるための仕組みであり、CPU時間の予算そのものを増やすものではない（CPU時間課金・上限はinvocation全体に対して適用され、`waitUntil()`で登録した背景処理も含む）
-  - `/suzuri-create`のfal.aiキュー処理（`ctx.waitUntil()`でバックグラウンド処理）と同じ設計パターン
-- **`ctx`の伝播経路**: `fetch(request, env, ctx)`の`/research`・`/generate`ハンドラー → `handleResearch()`/`handleGenerate()`に直接渡す。Cron側は`scheduled(event, env, ctx)` → `generateResearchPool(env, ctx)`（10並列の各`handleResearch()`呼び出しに渡す）・`runBot(env, handleResearch, handleGenerate, ctx)`（`worker/bot.js`、内部の`handleResearch()`/`handleGenerate()`呼び出しに渡す）
-- `handleGenerate()`内部の`callModel()`クロージャは`ctx`を追加の引数受け渡しなしにクロージャ経由でそのまま参照する
-- **`/suzuri-create`ハンドラーへの横展開**: `suzuriCreate-backTextureDecode`計測（`incrementUsageKv()`とのペアはなく`recordCpuCheckpoint()`単体呼び出し）にも同じパターンを適用した。この箇所は`fetch()`ハンドラー内にインラインで書かれておりexportされた関数がなかったため、`_recordBackTextureDecodeCpu(cpuMs, env, ctx)`としてexport・テスト可能な形に切り出した（`_pollFalAndGetTexture()`と同じ「依存関数を引数で受け取る」切り出しパターン）。`fetch(request, env, ctx)`内なので`ctx`は常に存在するが、他の箇所と実装を揃えるため同じ`if (ctx) { ctx.waitUntil(...) } else { await ... }`分岐を踏襲する
-- **共通ヘルパー`_deferOrAwait(promise, ctx)`への集約**: 上記「`ctx`があれば`ctx.waitUntil()`・なければ`await`」という同一パターンが4箇所（`handleResearch()`・`handleGenerate()`・`_recordBackTextureDecodeCpu()`・`runBot()`の`shrinkImage`計測）に重複したため、`worker/index.js`に`_deferOrAwait(promise, ctx)`として抽出しexportした。4箇所すべてこのヘルパー経由に統一している
-- **`runBot()`の`shrinkImage`計測**: `worker/bot.js`の`recordCpuCheckpoint("shrinkImage", ..., env.RATE_KV)`も同じKV書き込みブロッキングパターンだったが、`ctx`導入時に見落としていた。`runBot(env, handleResearch, handleGenerate, ctx = null)`が受け取る`ctx`を`_deferOrAwait()`経由でこの呼び出しにも適用する
-- **ネットワークI/O待ちはCPU時間に計上されない（[Cloudflare Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)で確認済み）**: 「Waiting on network requests (such as fetch() calls, KV reads, or database queries) does not count toward CPU time」と明記されている。CPU時間は実際にコードを実行している時間のみを測定し、fetch・KV等のI/O待ちは「Duration」（壁時計時間）には含まれるがCPU時間には計上されない。`ctx.waitUntil()`はこのI/O待ち部分をクリティカルパスから外す（応答速度を改善する）手段であり、CPU時間の予算そのものを増やすものではない点に注意
-
-**`generate-jsonParse`: JSON.parse()単体の切り分け計測（2026-08追加）:**
-
-`generate`ステップはKV往復除去後も高い値（実測`maxMs=666ms`）を示すことがあり、原因が「Gemini画像生成レスポンス（base64画像データを含む大きめのJSON）の`JSON.parse()`自体が重い」のか別要因かを推測ではなく実測で切り分けるため、`JSON.parse(resText)`単体の所要時間を`generate-jsonParse`という別ステップとして`handleGenerate()`内に追加計測する。`generate`（全体）と`generate-jsonParse`（`JSON.parse()`のみ）を`/cpu-usage`で比較することで、`JSON.parse()`が支配的コストかどうかを実測で判断できる。
-
-**同一KVキーへの並行書き込み race の回避**: `generate`と`generate-jsonParse`はどちらも同じKVキー（`cpu-time:YYYY-MM-DD`）にGET→PUTするため、2つのPromiseを先に生成してから並行して`ctx.waitUntil()`/`_deferOrAwait()`に渡すと、read-modify-writeが競合し一方の更新が失われる（`incrementCpuTimeKv()`はアトミックインクリメントではない）。実装時にこの競合を作り込みテストで検出したため、同じKVキーに書き込む2つのチェックポイントは1つの非同期関数にまとめて内部で直列に`await`し、`_deferOrAwait()`には単一のPromiseとして渡す（`usagePromise`は別キー`usage:YYYY-MM-DD`のため引き続き並行実行してよい）。同じ日次ドキュメントに複数ステップを記録する箇所を追加する際は、既存の書き込みとキーが重複していないか確認し、重複する場合は直列化する。
-
-**`generate-autoCrop`（自動トリミング計測）の扱い**: この計測は`handleGenerate()`の外側（`/generate`ハンドラー、`handleGenerate()`が返った後）で行うため、`handleGenerate()`内部の`cpuPromise`（`generate`/`generate-jsonParse`をまとめて書き込む背景タスク）へは呼び出し元からアクセスできず直列化できない。そのため`_recordAutoCropCpu()`は`ctx`を渡さず常に同期`await`し、少なくとも自分自身の書き込みは単発化することで競合の可能性を下げている。それでも`handleGenerate()`側の背景書き込みとの完全な排他は保証されない（診断用の集計値のため、稀な取りこぼしは許容している）。
-
-**KV書き込み回数の制約による対象範囲の線引き（2026-08追加）:**
-
-Workers KV Free プランは書き込み1日1,000回までという厳しい制限があるため、全経路にKV集計を入れるのではなく、既存のレート制限で書き込み量が自然に上限管理されている経路のみを対象にする。
-
-| 経路 | KV集計 | 理由 |
-| --- | --- | --- |
-| Cron `generateResearchPool()` / `runBot()` / `checkForNewSale()` | 対象 | 1日3回のみ（`checkForNewSale()`のGemini抽出自体は新着セール記事検知時のみさらに稀） |
-| `POST /research` / `POST /generate`（`handleResearch()`/`handleGenerate()`内部で計測） | 対象 | 既存レート制限（`/research` 10回/日/IP・`/generate` 3回/日/IP・50回/日グローバル）で書き込み量が有界 |
-| `POST /suzuri-create` | 対象 | 生成1回につき数回程度、同様に有界 |
-| `GET /image/:id`（`getImageFromR2()`） | **対象外**（`console.log`のみ） | レート制限がなく訪問のたびに呼ばれるため、KV書き込みすると1,000回/日の予算を圧迫しうる |
-
-`research`/`generate`のCPU計測は`handleResearch()`/`handleGenerate()`自体の内部に実装する（呼び出し元の`runBot()`外側でラップしない）。これにより`generateResearchPool()`の10並列呼び出し・`runBot()`・`/research`・`/generate`エンドポイントのすべてを1箇所の実装で自動的にカバーする（DRY）。
-
-**`textModel`/`imageModel` と `textModelResolved`/`imageModelResolved` の違い（2026-07追加）:**
-
-`selectBestModel()`/`_resolveImageModel()`が選ぶモデル名（`textModel`・`imageModel`）は`gemini-flash-lite-latest`のような**エイリアス名**の場合があり、実際にどのバージョン（2.5・3.5等）が使われたかはこの文字列だけでは判別できない。GeminiのAPIレスポンス（`generateContent`）には`modelVersion`フィールド（実際に使用された解決済みモデル名を返す。[公式ドキュメント](https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse)で確認済み）が含まれるため、これを`textModelResolved`/`imageModelResolved`として追加保存する。
-
-- `handleResearch()`と画像生成の`callModel()`はそれぞれ`data.modelVersion`を取得し、`incrementUsageKv(kv, kind, tokens, model, resolvedModel)`の第5引数として渡す
-- `resolvedModel`が取得できない場合（レスポンスにフィールドが存在しない等）は該当日の`textModelResolved`/`imageModelResolved`を更新しない（前回値を保持）
-- 画像生成モデルは以前`incrementUsageKv()`の`model`引数を受け取っていながらKVに保存していなかった（記録漏れ）。今回`imageModel`として保存するよう修正した
-- 過去に記録済みの日次データ（`imageModel`/`textModelResolved`/`imageModelResolved`が存在しない古いエントリ）は再集計しない。新しい呼び出し分から順次記録される
-
-### Gemini画像生成プロンプト（`handleGenerate()`・2026-05変更）
-
-`themeEn`/`descriptionEn`が利用可能な場合は英語版を使用し、未取得の場合のみ日本語の`theme`/`description`にフォールバックする。
-
-```text
-Theme: {themeEn || theme}.
-Context: {descriptionEn || description}.
-Setting and surrounding atmosphere; the cat may naturally interact with theme-related items...: {visualHint}.
-```
-
-- altテキスト・SUZURI商品説明は**日本語のみ**（`theme`/`description`を使用。変更しない）
-- `themeEn`/`descriptionEn`は`handleGenerate(body)`の`body`経由で受け取る（ボット: `research.themeEn`/`research.descriptionEn`から渡す。ユーザー生成: `/generate`リクエストボディに含めてもよいが必須ではない）
-- プロンプト構築は`_buildGeminiPrompt()`としてexport済み（2026-06）。`_buildPollinationsPrompt()`と同じく純粋関数として切り出し、`handleGenerate()`から呼び出す
-
-### Style行の季節カラー（`getSeasonalStyleTone()`・2026-06追加）
-
-**背景（Bug#26）**: Style行が年間共通の固定文言`light pink and beige tones`だったため、テーマ・visualHintに花の言及がない日でもGeminiが桜の花びらを装飾として補完してしまう問題があった。
-
-```text
-Style: soft pastel colors, {getSeasonalStyleTone(today)}, gentle watercolor brushstrokes, white background, Japanese illustration style.
-```
-
-- `getSeasonalStyleTone(dateStr)`は`SEASONAL_FLOWERS`（既存の24エントリ・`startMd`/`endMd`境界）に追加した`style`フィールド（ASCII英語の色調記述）を返す。季節補充フォールバック専用だった`SEASONAL_FLOWERS`を「年間の色調テーブル」として再利用し、新しい日付テーブルは作らない
-- `today`には`toJSTDateStringWorker(new Date())`を使用。季節補充フォールバック（`generateResearchPool()`）限定ではなく、**すべてのGemini画像生成**（ユーザー生成・ボット投稿問わず）に適用する
-- 実際にピンク系の花が咲く時期（梅・彼岸桜・染井吉野・皐月・蓮・百日紅・秋桜）は`style`もピンク系トーンを維持する。季節と合致する桜表現は引き続き可能
-- ネガティブ指示`Do not add cherry blossoms, falling flower petals, or other seasonal decorations that are not explicitly mentioned in the Theme, Context, or Setting above.`をStyle行の後に追加（保険・デフェンスインデプス）。Theme/Context/Setting欄に明示された場合（例: 春のvisualHintに桜が含まれる）は除外対象にならない
-- **物理オブジェクト化・円形フレーム化の禁止（Bug#27・2026-07追加）**: 上記ネガティブ指示に続けて`Do not render the scene as if painted, printed, or mounted on a plate, dish, fan, tapestry, or any other physical object, and do not add a circular frame, border, or vignette around the subject.`を追加。生成画像が丸皿・団扇等の工芸品風にレンダリングされ、SUZURI連携（缶バッジ/アクキーの二重クロップ・Tシャツ/ステッカーの余白汚染）に悪影響を及ぼす問題への対処。**原因は未確定**（蓮エントリ`07-01`〜`07-15`のStyle行に唯一含まれていた`pond`語を疑ったが、報告事例のTheme/Context/Setting側には蓮・池を連想させる語がなく断定できなかった）のため、原因非依存で効果のあるネガティブ指示を主策とした。蓮エントリの`style`からは`pond`語を除去し他エントリと同じ「色調＋抽象的雰囲気語」パターンに統一済み（`"soft pink and deep green tones, tranquil summer calm"`）。詳細は`bugs-history.md`のBug#27参照
-
-### 構図の余白削減指示（2026-08追加）
-
-**背景**: ユーザーから「くり抜く構図自体は良いが、被写体の周囲の余白が多い」と指摘（無料版Geminiでの手動テストで象の日テーマの生成画像を確認）。`Style:`行の`white background`指示のみでは、Geminiが被写体を小さく中央に配置し周囲を白背景で埋める構図になりやすい問題があった。`white background`自体はSUZURI缶バッジ/アクキーの円形クロップに必要なため維持し、余白の「量」だけを削る構図指示を追加した。
-
-```text
-Setting and surrounding atmosphere...: {visualHint}.
-Composition: fill the frame with the cat and scene elements, leaving only a small, even margin around the edges. Avoid large empty corners or a distant, isolated subject floating in excess white space — the illustration should feel full and immersive, not small or shrunken.
-Style: soft pastel colors, {getSeasonalStyleTone(today)}, gentle watercolor brushstrokes, white background, Japanese illustration style.
-...
-Do not render the scene as if painted, printed, or mounted on a plate, dish, fan, tapestry, or any other physical object, and do not add a circular frame, border, or vignette around the subject. Do not leave large blank margins or empty corners around the subject.
-```
-
-- `_buildGeminiPrompt()`: `Setting`行の直後・`Style`行の直前に`Composition:`行を追加。末尾の否定指示（Bug#27の円形フレーム禁止文）に続けて「余白を残さない」念押しの否定指示を1文追加（Bug#27と同じ「構図指示＋念のための否定指示」の二段構え）
-- `_buildPollinationsPrompt()`: keyword列挙形式のため、`parts`配列の末尾（`"pastel colors, white background"`の後）に`"full frame composition, minimal empty space"`を追加。フルセンテンスではなくキーワードで同じ意図を伝える
-- **効果は未確定な部分あり**: ユーザーの手動テスト（無料版Gemini・象の日テーマ）では「完璧ではないが前より余白が減った」という結果。プロンプトのみでの完全解決は保証されない。2026-08時点でBot投稿（`bot/2026-08-26`）で再び余白過多が確認され、プロンプト指示だけでは不安定と判明した
-
-### 猫以外への顔・擬人化の禁止（Bug#33・2026-09追加）
-
-**背景**: 「草の日」テーマの生成画像で、メインの猫（白いラグドール）とは別に、草むらの中に猫の顔がもう1つ描かれる事象が発生した。実際のプロンプトを確認したところ、`visualHint`が`cute green cat, lush grass field, tiny wildflowers, sunny morning, soft fur, playful expression`となっており、先頭の主役名詞がGeminiによって「草」を擬人化した「かわいい緑の猫」になっていた。2026-07の既知の未対応バグ（「visualHintで食材が主役名詞になると猫の絵に直接合成されて不気味になる」＝半夏生でタコの足が猫に生えた件）と同じ原因の類型で、対象が食材から植物に広がったケース。
-
-Bug#27（丸皿画像・原因未確定）と同じ考え方で、**原因が確定していても効果を確実にするため、対症療法（常時ネガティブ指示）を主策、根本原因への対処（visualHint生成プロンプトの調整）を補助策として両方実施**した。
-
-**主策: 常時ネガティブ指示（`_buildGeminiPrompt()`）**
-
-従来`eatingAction`が真のときのみ付与していた「食べ物には顔をつけない」指示を、常時・全要素対象に汎用化した。
-
-```text
-Only the cat(s) described above should have a face, eyes, or expression. Do not depict grass, plants, flowers, food, or any other scenery element with a face, eyes, or anthropomorphized expression.
-```
-
-- 末尾のネガティブ指示群（Bug#27の丸皿・円形フレーム禁止、余白禁止に続く）に追加し、`eatingAction`の有無にかかわらず常に含まれる
-- 旧来の`eatingAction`専用文言（`Only the cat has a face and expressions; all food items must be depicted as ordinary objects without faces or eyes.`）はこの汎用指示に統合し廃止（重複指示を避けるため）
-- `_buildPollinationsPrompt()`はkeyword列挙形式のため、`parts`配列末尾に`"only the cat has a face, no faces on other objects"`を追加
-
-**補助策: visualHint生成プロンプトの調整（`handleResearch()`）**
-
-主役名詞の抽出指示に「テーマ自体を動物・猫として擬人化しない」旨の制約を追加（詳細は下記「visualHintの役割」参照）。
-
-### 生成後の自動トリミング（コード側補正・2026-08追加・計測フェーズ）
-
-プロンプト指示が不安定なため、Photon（WASM画像処理ライブラリ、`worker/bot.js`の`shrinkImageIfNeeded()`ですでに使用）でコード側から余白を検出・トリミングする機能を追加した。
-
-**重要な前提**: Bot投稿（`runBot()`）は生成〜R2保存〜Bluesky/Mastodon投稿まで**フロントエンドを一切経由しない**（`frontend/index.html`のCanvas処理が動くのは訪問者がSUZURI登録するときだけ）。そのためBot投稿画像の余白を直すには**Worker側（サーバー側）でのコード補正が必須**で、フロントのCanvas処理だけでは解決しない。
-
-**アルゴリズム（`worker/image-utils.js`）:**
-
-1. Photonで画像をデコードし、64×64程度に縮小（`resize`）
-2. 縮小画像のピクセル（`get_raw_pixels()`）をJSでスキャンし、各辺から内側に向かって「ほぼ白」の行・列を探索して被写体のバウンディングボックスを検出（`_detectCropBox()`・WASM非依存の純粋関数）
-3. 検出した比率（0〜1）をフル解像度の座標に換算し、フル解像度画像を`crop()`
-4. 安全策: 検出した余白が閾値未満ならトリミングしない（`minMarginRatio`）、1辺あたりの最大クロップ率に上限（`maxMarginRatio`）、被写体ギリギリまで詰めない安全パディング（`paddingRatio`）
-
-**CPU時間の実測結果（Node.js環境・1024×1024画像・2026-08計測）:**
-
-| 処理 | 所要時間 |
-| --- | --- |
-| デコード | 約3ms |
-| 64×64縮小 | 約10ms |
-| 縮小画像のピクセル取得＋余白スキャン（JS） | 1ms未満 |
-| フル解像度クロップ | 約12〜20ms |
-| PNG再エンコード | 約22〜27ms |
-| **合計** | **約45〜60ms** |
-
-余白検出のJSスキャン自体は想定通り軽量（1ms未満）だが、**Photonネイティブのcrop/エンコード処理自体が支配的コスト**であることが判明。`shrinkImageIfNeeded()`（Bluesky上限超過時のみ発動する条件付き処理）と異なり、この処理は生成のたびに無条件で発生するため、Workers Freeプランの公式CPU上限（10ms/リクエスト）は大きく超過する。Bug#32で観測された非公式な猶予（243〜297ms）の範囲内ではあるが、その猶予自体が2026-08に一度枯渇して障害化した経緯があるため、無条件に本番投入するのは危険と判断した。
-
-**ロールアウト方針（2026-08時点）**: リスクを抑えるため、**まず`/generate`（ユーザー生成・レート制限あり: IP 3回/日・グローバル50回/日）のみ**に適用し、`runBot()`（平日Cron・1日1回・失敗時のリカバリー手段なし）には組み込まない。`recordCpuCheckpoint("generate-autoCrop", ms, env.RATE_KV)`で実際のCloudflare Workers（`workerd`）上のCPU時間を`/cpu-usage`から確認し、安全と判断できてから`runBot()`への適用を検討する（Node.js計測はあくまで目安で、実際のWorkersランタイムとは特性が異なる可能性がある）。**2026-09に`runBot()`へも適用済み（下記「`runBot()`への適用」参照）。**
-
-**CPU計測は機能しないことが判明（2026-08）**: 実際に`/generate`を実行し`/cpu-usage`を確認したところ、`generate-autoCrop`は常に`0.0ms`だった（エラーなし・機能自体は正常動作）。原因はCloudflare Workersの仕様で、`performance.now()`は**I/Oが発生したときしか進まない**（Spectre対策。[公式ドキュメント](https://developers.cloudflare.com/workers/runtime-apis/performance/)で確認済み）ため。`autoCropImage()`はPhotonのデコード・縮小・crop・エンコードがすべて同期処理でI/Oを挟まず、区間内で`performance.now()`が一切進まないため差分が原理的に常に0になる。`recordCpuCheckpoint()`ベースの計測はこの種の純粋同期処理には使えないと判明した。実CPUコストの確認にはCloudflareダッシュボードの分析画面（アカウント所有者のみ閲覧可能）等、JSコードから観測できない経路が必要。詳細は`.claude/revision_log.md`の2026-08エントリ参照
-
-**`runBot()`への適用（2026-09追加）**: CPU実測は上記の理由で未確認のままだったが、実際の本番投稿画像（`bot/2026-09-03`）に対して`_detectCropBox()`を実データで検証したところ、余白（上10.5%・下12.1%・左右5.8%）を正しく検出できることを確認した。Node.js実測（約45〜60ms/回）とBug#32で観測された非公式CPU猶予（243〜297ms実績）を踏まえ、ユーザーの承認を得て`runBot()`にも適用した。`worker/bot.js`の`runBot()`が`handleGenerate()`の直後、R2保存の前に`autoCropImage()`を呼ぶ（`/generate`ハンドラーと同じ「常に同期await・ctx未使用」パターン。理由は同じKVキーへの並行書き込みraceを避けるため）。失敗時は元の未トリミング画像にフォールバックし、投稿自体は失敗させない
-
-- 失敗時（Photon読み込み失敗・例外等）は元の未トリミング画像にフォールバックし、生成自体は失敗させない
-- 出力は常にPNG（`get_bytes()`）に統一し、`mimeType`もそれに合わせて上書きする
-
-**季節補充フォールバックのkana/英語フィールド（`getSeasonalFlowerKana()`/`getSeasonalFlowerEn()`・2026-07追加・Bug#31）:**
-
-`generateResearchPool()`の季節補充フォールバック（当日のリサーチプールが3件未満のときに`SEASONAL_FLOWERS`から直接組み立てるエントリ）は、Geminiを呼ばないため通常エントリが持つ`themeKana`/`descriptionKana`/`themeEn`/`descriptionEn`が欠落しており、かなモード・英語モードで日本語表示にフォールバックしていた。
-
-- `SEASONAL_FLOWERS`の各エントリに`kana`（花の名前のruby HTML、例: 桔梗→`<ruby>桔梗<rt>ききょう</rt></ruby>`）・`en`（花の英語名、例: `Balloon Flower`）フィールドを追加。`visual`/`style`と同じ人手管理パターンで、Gemini API呼び出しは追加しない
-- `getSeasonalFlowerKana(dateStr)`/`getSeasonalFlowerEn(dateStr)`を`getSeasonalFlowerVisual()`と同じ形で新設
-- 季節補充フォールバックのオブジェクトは`theme`/`description`の固定テンプレート（「の季節」「今の季節を彩る」）部分のふりがなと組み合わせて以下を組み立てる:
-  - `themeKana`: `${flowerKana}の<ruby>季節<rt>きせつ</rt></ruby>`
-  - `descriptionKana`: `<ruby>今<rt>いま</rt></ruby>の<ruby>季節<rt>きせつ</rt></ruby>を<ruby>彩<rt>いろど</rt></ruby>る${flowerKana}`
-  - `themeEn`: `${flowerEn} Season`
-  - `descriptionEn`: `${flowerEn} is the highlight of this season.`（苔・紅葉・銀杏・千両等「花が咲かない」季節要素にも使えるよう「bloom」等の開花表現は避ける。Bug#25と同じ配慮）
-- `themeKana`/`descriptionKana`は`<rp>`フォールバック括弧を付けない。Geminiが生成する`themeKana`の既存例（プロンプト内サンプル・`handleResearch()`のテスト用フィクスチャ）と表記を揃えるため
-
-### visualHintの役割（2026-05変更）
-
-旧役割: テーマが日本語のみのときPollinationsプロンプトのASCII化で内容が失われる問題を補完（「日本語回避」）。
-
-新役割: テーマに依存せず**ビジュアル演出**に特化。`themeEn`で英語テーマが確保されるため、visualHintは主役名詞＋背景・小物・雰囲気の提示に集中する。
-
-**`handleResearch()`のvisualHint生成指示（2026-05更新）:**
-
-```text
-今日の記念日テーマから主役となる名詞（動物・物・人物）を1〜2語で先頭に抽出し、
-続いて関連する背景・小物・雰囲気を3〜6語で続ける。ASCII英語、計5〜8語。
-主役名詞はテーマそのものの実際の姿で表現し、テーマを猫や他の動物に擬人化しない
-（例: 「草の日」→ 草はそのまま "grass" と表現し、"green cat" のような猫化はしない）。
-例: 図書館記念日 → library books, warm reading nook, wooden bookshelves, soft lamplight
-例: 象の日 → large friendly elephant, Kyoto imperial garden, pine trees, stone lanterns
-```
-
-**Bug#33（2026-09追加）**: 上記「テーマを猫や他の動物に擬人化しない」制約を追加。「草の日」でGeminiが草を「かわいい緑の猫」として擬人化し、画像内にメインの猫とは別の猫顔が描画される事象への対処（詳細は上記「猫以外への顔・擬人化の禁止」参照）。
-
-**Pollinationsでのvisualの使い方（安全網ロジック）:**
-
-`_buildPollinationsPrompt`の`usedVhAsSubject`ロジックは`themeEn`が空の稀なフォールバック用に残存する。`themeEn`が存在する場合は`usedVhAsSubject=false`となり、visualHint全体がビジュアル演出として使われる。
+> **詳細は[`.claude/docs/architecture/gemini.md`](../docs/architecture/gemini.md)に移動した**（2026-10・自動読み込みの軽量化）。この節を参照する指示があったら移動先を読むこと。
+
+画像生成モデルの候補・自動切替（KV記憶）、テキストモデルのコスト最適化スコアリング、トークン/CPU時間のKV集計（`/usage`・`/cpu-usage`）、Gemini/Pollinationsのプロンプト設計（季節カラー・余白削減・擬人化禁止）、生成後の自動トリミング、visualHintの役割。
+
+移動先に収録している小見出し:
+
+- 画像生成モデル（`worker/index.js`の`KNOWN_IMAGE_CANDIDATES`）
+- 画像生成モデルの自動切替・記憶（`_resolveImageModel()`・2026-06追加）
+- Researchモデル（テキスト用）・コスト最適化スコアリング（2026-06更新）
+- Gemini画像生成プロンプト（`handleGenerate()`・2026-05変更）
+- Style行の季節カラー（`getSeasonalStyleTone()`・2026-06追加）
+- 構図の余白削減指示（2026-08追加）
+- 猫以外への顔・擬人化の禁止（Bug#33・2026-09追加）
+- 生成後の自動トリミング（コード側補正・2026-08追加・計測フェーズ）
+- visualHintの役割（2026-05変更）
 
 ---
 
 ## Bluesky Bot
 
-### 設計方針
-
-- Botアカウント: `@nyanmusu.bsky.social`
-- 投稿スケジュール: 月〜金 7:00 JST（UTC 22:00 前日）、Cron式: `0 22 * * 1-5`（2026-05-01より。変更前: `0 10 * * 2-6`（19:00 JST））
-- ハッシュタグ: テーマ由来の動的タグ1件を先頭に置き、固定タグ`#AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー`を後続（Instagramで末尾タグを省略しやすくするため）
-- エラー時: リトライなし（`/generate`内部にPollinationsフォールバックあり）
-- Mastodon同時投稿: `Promise.allSettled`で並列実行。Mastodon失敗はBluesky投稿に影響しない。シークレット未設定時はスキップ
-- **Mastodon設定エラー検出**: `MASTODON_INSTANCE_URL`が`https://`で始まらない場合は`throw new Error(...)`でPromise.allSettledに拒否を返し、Discordの`mastoLine`に`❌ Mastodon投稿失敗: 設定エラー`として表示する（旧: `return null`でスキップしていたが、Discordに何も出ず原因不明になるため変更）。投稿後にstatus=401/403が返った場合も「設定エラー（認証失敗）」として`console.error`に分類して出力する
-- **Mastodon未設定時**: `mastoLine`に`⏭️ Mastodon未設定・スキップ`を表示し、`console.log`でCloudflareログにも記録する（旧: Discord通知から行ごと省略していたため処理状態が不明だった）
-- **R2保存キーのスロット方式（`bot/YYYY-MM-DD-n`）**: 同日に複数回`runBot()`が実行された場合（意図的・偶発的を問わず）、既存のR2キーを上書きせず`bot/YYYY-MM-DD-2`、`bot/YYYY-MM-DD-3`…とスロットをずらして保存する。`findAvailableR2Id(bucket, jstDateISO)`がmeta.jsonの存在確認で次のスロットを決定する（最大`-9`まで、超過時は`-9`を上書き）。ギャラリー・RSSは`bot/YYYY-MM-DD`（1スロット目）のみ参照。2スロット目以降のBluesky共有URLは`?id=bot/YYYY-MM-DD-2`形式で有効。削除は`listExpiredIds()`がスロット単位で自然に処理する（変更不要）
-
-### `scheduled()`のCron明示チェック（2026-09追加・Bug#40）
-
-`worker/index.js`の`scheduled()`は、`"0 15 * * *"`・`"0 16 * * *"`のいずれにも一致しない`event.cron`をすべてBot Cron分岐（実投稿）に流す設計だった。この設計上、Cloudflareダッシュボードの「コード編集画面→HTTP→Scheduled→送信」で手動テストした際に想定と異なる`event.cron`値が渡ると、無条件に本番投稿が実行されてしまう問題があった（2026-09、実行者不明のまま本番投稿が2重発生。Cronイベントログ・監査ログのいずれにも記録が残らず原因特定不能だった。詳細は`.claude/bugs-history.md`のBug#40参照）。
-
-修正: Bot Cron分岐に入る条件を`event.cron === "0 22 * * 1-5"`の明示一致チェックに変更した。一致しない値（未知のcron・ダッシュボードでの誤操作等）の場合は投稿処理を実行せず`console.warn`でログのみ出力する。ただしこれは「ダッシュボードでダミーの/未知のcron値が送られた場合」のみを防ぐ多層防御であり、仮に正しい`"0 22 * * 1-5"`をダッシュボードから明示的に選んで送信された場合までは防げない。**本命の対策はダッシュボードのScheduled手動送信機能自体を使わない運用への切替**（下記「手動実行エンドポイント」参照）。
-
-### 手動実行エンドポイント（`POST /bot/manual-run`・2026-09追加・Bug#40）
-
-Cloudflareダッシュボードの手動Scheduled送信は、Cronイベントログにも監査ログにも記録が残らず「誰が・いつ発火させたか」を事後追跡できない（Bug#40で実際に発生し、実行者を特定できなかった）。この方法を廃止し、既存の`BYPASS_TOKEN`で保護されたHTTPエンドポイント経由に統一した（`/monthly-wallpaper/regenerate`と同じ設計パターン）。
-
-- `worker/index.js`: `POST /bot/manual-run`。`isBypassed(request, env)`で403チェック後、`runBot(env, handleResearch, handleGenerate, ctx, { dryRun })`を呼ぶ。`dryRun`はクエリパラメーター`?dryRun=false`のときのみ`false`（それ以外・省略時は`true`）。**安全側をデフォルトにする**ことで、誤って叩いても実投稿されない
-- `worker/bot.js`: `runBot(env, handleResearch, handleGenerate, ctx = null, deps = {})`に`deps.dryRun`（デフォルト`false`）を追加。`true`のとき以下をスキップする:
-  - R2保存（`saveToR2()`。`pageUrl`は`SITE_URL`のまま）
-  - Bluesky投稿（`createBlueskySession()`/`uploadBlob()`/`createPost()`）
-  - Mastodon投稿（`uploadMediaToMastodon()`/`postStatusToMastodon()`）
-  - セール告知リプライ
-  - `research`/`generate`（Gemini API呼び出し）は`dryRun`時も実行される（生成内容そのものの確認が目的のため）。Discord通知は`🧪 テスト実行（投稿は行われていません）`を明記したうえで、実際に投稿されるはずだった`buildPostText()`/`buildMastodonText()`の出力をプレビューとして送信する
-- 戻り値: `runMonthlyWallpaperPost()`と同じパターンで`{ dryRun, bskyOk, mastoOk, theme }`（またはエラー時`{ error }`）を返すよう`runBot()`をvoidから変更した
-- Cron本番実行（`scheduled()`からの呼び出し）は`deps`省略のため`dryRun: false`扱いで、従来と完全に同じ挙動（後方互換）
-
-### 投稿フォーマットの選択（short/full・2026-10追加）
-
-**背景**: 毎回「説明文＋CTA＋サイトURL」のフル構成だと、(1) 絵と説明だけでSNS上で満足されクリックスルーに繋がっていない、(2) 毎回CTA＋紹介URLが付くことで「宣伝ポストっぽさ」が強まりフォロー動機を阻害している、という2つの懸念がユーザーから指摘された。対応として、投稿の大半をテーマ連動の短い一言＋URL＋ハッシュタグのみの**short版**にし、残りは効果比較・サービス再認知のため従来の**full版**を流す設計にした。
-
-`worker/bot.js`に`pickPostFormat()`を`CAT_PERSONALITIES`等（`worker/index.js`）と同じ「重み付き配列＋pick関数」パターンで新設する。
-
-| フォーマット | 重み | 確率 |
-| --- | --- | --- |
-| `short` | 80 | 80% |
-| `full` | 20 | 20% |
-
-- `pickPostFormat()`は`runBot()`内で`pickCta()`と同じタイミングで**1回だけ**呼び出し、Bluesky・Mastodon両方の生成に同じ結果を渡す（同じ投稿でBluesky版・Mastodon版の形式が食い違わないようにするため）
-- `themeHook`（下記「themeHook/themeHookEnフィールド」参照）が取得できない場合（旧データ・Gemini取得失敗時等）は、`short`が選ばれていても`full`にフォールバックする（short版はthemeHookが必須のため）
-- `#{theme正規化}`ハッシュタグはshort版でも**残す**（ユーザー判断: 「URLを踏むまで何の日か分からない」という完全な伏せ字は行わない。タグ経由の流入が無視できないため）
-
-#### themeHook/themeHookEnフィールド（`handleResearch()`）
-
-テーマに絡めた、猫目線のウィットに富んだ一言。事実説明（`description`）の言い換えではなく問いかけ・つぶやき調にする指示をGeminiプロンプトに追加し、JSON出力に`themeHook`（日本語）・`themeHookEn`（英語）を含める。
-
-- 本実装前に`scripts/test-theme-hook.mjs`（ワンオフ検証スクリプト。`GEMINI_API_KEY=xxx node scripts/test-theme-hook.mjs`で実行、npm testには含めない）で品質を検証済み（[Issue #203](https://github.com/hiroshikuze/anniversary-cat-worker/issues/203)）。同一テーマでも試行ごとに表現が変化し、問いかけ・ボケ調が安定して得られることを確認した
-- 検証時に`gemini-2.5-flash-lite`が新規ユーザーに提供終了（404）していることが判明し、`gemini-3.1-flash-lite`/`gemini-3.5-flash-lite`で検証した（[Issue #204](https://github.com/hiroshikuze/anniversary-cat-worker/issues/204)で別途フォローアップ）。本番実装では固定モデル名を書かず、既存の`selectBestModel()`（Discovery API・コストスコアリング・KV記憶・モデル廃止時の自動フォールバック）を流用する
-- `stripHtmlTags()`サニタイズ対象に追加済み（上記「プレーンテキストフィールドのサニタイズ」参照）
-
-### 投稿テキスト形式
-
-#### Bluesky（`buildPostText()`・日本語のみ）
-
-**full版:**
-
-```text
-今日は「{theme}」の日！🐱       ← theme が「の日」で終わる場合は「の日」を省略
-{description}
-
-📸 {artworkUrl}                  ← R2保存成功時のみ挿入（?id=bot/YYYY-MM-DD）
-
-{cta.ja}                         ← pickCta()で選択されたCTA行（下記「CTA行のローテーション」参照）
-https://hiroshikuze.github.io/anniversary-cat-worker/
-
-#{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー #{guestSnsTag}
-```
-
-- `{guestSnsTag}`はゲスト登場時のみ末尾に追加（例: `#dog` `#rabbit`）。伴侶猫・子猫は`#cat` `#kitten`と重複するため追加しない
-- `artworkUrl`は`pageUrl !== SITE_URL`のとき（R2保存成功）のみ追加される。失敗時はCTAのみ（~210 grapheme）
-- 300 grapheme以内に収まる設計（`artworkUrl`あり時の実測 ~270 grapheme・ゲストタグ追加後も余裕あり）。テーマタグを先頭にすることでInstagram手動投稿時に末尾タグを省略しやすくしている。
-
-**short版（2026-10追加）:**
-
-```text
-{themeHook}
-https://hiroshikuze.github.io/anniversary-cat-worker/
-
-#{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー #{guestSnsTag}
-```
-
-- 説明文・CTA行・📸作品URL行は**含めない**（画像自体は添付済みのため作品URLは冗長。CTA文言を毎回付けないことで宣伝ポストっぽさを下げる）
-- `{guestSnsTag}`はfull版と同様に残す
-- `themeHook`が空の場合はfull版にフォールバックする（上記「投稿フォーマットの選択」参照）
-
-#### Mastodon（`buildMastodonText()`・英語優先・日英二言語）
-
-英語を先に置くことで海外ユーザーへのリーチを優先する。英語セクションには英語版直リンク（`?lang=en`）を、日本語セクションには日本語版直リンクをそれぞれ掲載する。500文字制限の都合上、英語CTAのサイトトップURL（`?lang=en`）は省き、英語直リンクに一本化する。
-
-**short版（2026-10追加）:**
-
-```text
-{themeHookEn}
-https://hiroshikuze.github.io/anniversary-cat-worker/?lang=en
-
-{themeHook}
-https://hiroshikuze.github.io/anniversary-cat-worker/
-
-#{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #Nyaniversary #にゃんバーサリー #{guestSnsTag}
-```
-
-- Blueskyのshort版と同じ方針（説明文・CTA行・📸作品URL行を省略）を英日二言語に適用する
-- `themeHookEn`が空の場合は`themeHook`＋日本語サイトURLのみ（Blueskyと同一テキスト）にフォールバック。`themeHook`自体が空の場合はfull版にフォールバックする（上記「投稿フォーマットの選択」参照）
-
-**full版:**
-
-```text
-Today is "{themeEn}"!
-{descriptionEn}
-
-📸 {artworkUrl}&lang=en          ← R2保存成功時のみ挿入（?id=bot/YYYY-MM-DD&lang=en）
-
-{cta.en}                         ← 同じpickCta()結果の英語版（Blueskyと同一トーンで対になる）
-
-今日は「{theme}」！🐱
-{description}
-
-📸 {artworkUrl}                  ← R2保存成功時のみ挿入（?id=bot/YYYY-MM-DD）
-
-{cta.ja}
-https://hiroshikuze.github.io/anniversary-cat-worker/
-
-#{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #Nyaniversary #にゃんバーサリー #{guestSnsTag}
-```
-
-- `themeEn`・`descriptionEn`は`handleResearch()`がGeminiから取得する英語フィールド
-- `themeEn`が空の場合は英語セクション全体を省略し、Blueskyと同一テキスト（`buildPostText()`）にフォールバック
-- `descriptionEn`が空の場合は英語説明行のみ省略
-- `artworkUrl`は`pageUrl !== SITE_URL`のとき（R2保存成功）のみ英語・日本語の両方に挿入。失敗時は両方省略
-- 想定文字数: ~450文字（artworkUrlあり時・Mastodon標準上限500文字以内）
-- altテキスト・SUZURI商品説明は**日本語のみ**（変更しない）
-
-**投稿文字数の実行時安全網（2026-07追加・Bug#30）:**
-
-`theme`/`description`が想定外に長い・破損している場合（Gemini出力の異常等）でも、Bluesky/Mastodonの上限超過で投稿自体が失敗しないよう実行時チェックを追加した。
-
-- `buildPostText()`: header（`今日は「{theme}」の日！🐱`）とfooter（artworkUrl・CTA・SITE_URL・ハッシュタグ）を必ず保持し、300 grapheme予算から残りを`description`に割り当てて超過分を切り詰める。header・URL・タグが削られることはない
-- `buildMastodonText()`: 最終的な組み立て文字列全体を500 graphemeで切り詰める（Mastodonは英日二言語で構成が複雑なため、Bluesky版のような部分ごとの予算配分ではなく全体の末尾切り詰めで対応）
-- `Intl.Segmenter`でgrapheme数を計測する既存のテストパターン（`scripts/test-bot.mjs`）と同じ方式を本番コードにも適用
-- Bluesky投稿は二重投稿防止のため意図的にリトライしない設計（「意図的にリトライ対象外の箇所」参照）なので、一度の投稿失敗でその日の投稿機会が失われる。この安全網は根本原因（Bug#30のHTMLタグ混入等）の修正とは独立した多重防御
-
-**CTA行のローテーション（`pickCta()`・2026-07追加）:**
-
-CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言ではなく、`worker/bot.js`の`CTA_VARIANTS`配列（重み付き5パターン）から`pickCta()`が毎回ランダムに1件選ぶ。テーマ・説明文・ハッシュタグ・URL等の必須情報は変更しない。目的は同一文言の反復による「Bot感」の低減（過去の投稿が毎回一字一句同じCTAだったため）。
-
-- 設計は`CAT_PERSONALITIES`/`CAT_EMOTIONS`（`worker/index.js`）と同じ「重み付き配列 + pick関数」パターン
-- `pickCta()`は`runBot()`内で**1回だけ**呼び出し、`buildPostText()`と`buildMastodonText()`の両方に同じ結果を渡す（同じ投稿でBluesky版・Mastodon版のCTAトーンが食い違わないようにするため）
-- `CTA_VARIANTS[0]`（現行の固定文言・weight 40%）が`buildPostText()`/`buildMastodonText()`双方の`cta`引数のデフォルト値。デフォルト値のまま呼び出した場合は従来と完全に同一の文言を返す（後方互換）
-- 各バリアントは日本語版（`ja`）・英語版（`en`）をペアで保持し、トーンを揃える
-
-**セール告知リプライ（2026-08追加）:**
-
-`worker/sale.js`の`getActiveSaleInfo()`が現在有効なセール情報を返す場合（`_currentSale`の期間内）のみ、本体投稿（Bluesky/Mastodon）が成功した媒体に対してスレッドへのリプライ形式でSUZURIショップ（`https://suzuri.jp/nyanmusu`）への告知を追加投稿する。
-
-- **フック位置**: 本体投稿の`Promise.allSettled`（`bskyOk`/`mastoOk`判定）の直後、Discord通知ブロックより前。**本体投稿の成否と独立したbest-effort**（本体投稿が失敗した媒体にはリプライを送らない。物理的にreply先のuri/cid・ステータスIDが存在しないため）
-- Bluesky: `createReplyPost(accessJwt, did, text, parentRef, rootRef = parentRef)`。`com.atproto.repo.createRecord`の`record`に`reply: { root: {uri, cid}, parent: {uri, cid} }`を含める（単発リプライのためroot=parent）。本体投稿IIFEの`accessJwt`/`did`はローカルスコープに閉じているため、リプライ用に`createBlueskySession()`を再取得する
-- Mastodon: `postStatusToMastodon(instanceUrl, accessToken, text, mediaId, inReplyToId)`に第5引数`inReplyToId`を追加（省略時`null`・既存呼び出し箇所は4引数以下のままで後方互換）。指定時は`in_reply_to_id`パラメータを付与する
-- リプライ文言: `buildSaleReplyTextJa(sale)`（Bluesky・日本語のみ、`buildPostText()`と同じ方針）・`buildSaleReplyTextBilingual(sale)`（Mastodon・英語優先→日本語、`buildMastodonText()`と同じ方針）。URLのfacet化には既存の`buildUrlFacets()`を再利用する
-- 失敗時は`console.warn`のみで投稿全体を失敗させない
-- Discord通知（1通目）に`🛍️ セールリプライ: Bluesky✅ / Mastodon✅`のような1行を、セール対象時のみ追加する（既存の「値がなければnullを入れて`.filter(Boolean)`で除去」パターンを踏襲）
-
-**「の日」重複防止ロジック（`buildPostText`）:**
-
-- `theme.endsWith("の日")` が true の場合 → `今日は「{theme}」！🐱`（重複なし）
-- false の場合 → `今日は「{theme}」の日！🐱`（通常通り付与）
-- 例: `"大仏の日"` → `今日は「大仏の日」！🐱` / `"お花見"` → `今日は「お花見」の日！🐱`
-
-### テーマタグ正規化（`buildThemeTag`）
-
-`research.theme`から記念日テーマをハッシュタグ文字列へ変換する。
-
-- Unicode文字・数字・アンダースコア以外（空白・句読点・記号等）を除去
-- 空文字になる場合は`null`を返し、タグ行に追加しない
-- 最大30文字でトリム
-- 例: `"世界猫の日"` → `#世界猫の日`、`"ロールプレイング・ゲームの日"` → `#ロールプレイングゲームの日`
-
-### 画像altテキスト形式
-
-```text
-にゃんバーサリー - 「{theme}」の日！{description}（AIが生成した水彩画風の猫イラスト）
-```
-
-- descriptionが空の場合は従来形式: `にゃんバーサリー - 「{theme}」をテーマにAIが生成した水彩画風の猫イラスト`
-- テーマと記念日説明を含めることで、スクリーンリーダーユーザーへの情報提供と検索流入の両立を図る
-
-### Discord通知（`notifyDiscord()`）
-
-**制約・動作（2026-04）:**
-
-- Discord Webhook `content` フィールドは**2,000文字上限**（超過するとHTTP 400）
-- `notifyDiscord()`は先頭ヘッダー（`{emoji} にゃんバーサリーBot\n`）を確保したうえで本文を上限内に切り詰め、末尾に`\n...`を付加する
-- 送信後は`res.ok`を確認し、失敗時は`console.warn`でログを出力する
-- タイムアウト: `AbortSignal.timeout(10_000)`（10秒）
-- `webhookUrl`が未設定の場合は即座にreturnしてスキップ
-
-**2通目分割方式（2026-04追加・2026-05再編）:**
-
-`runBot()`内で`notifyDiscord()`を2回`await`順次呼び出しすることで全文を送信する。各通の文字数が2000字上限に対して均等になるよう、Geminiプロンプトを1通目・Pollinationsプロンプトとすべての投稿テキストを2通目に振り分けている（1通目 ~1,100字・2通目 ~1,200字）。
-
-- **1通目** (`✅`/`❌`): 投稿成否 + テーマ情報 + Geminiプロンプト（採用/不採用いずれも表示）
-- **2通目** (`📣`): 成否再掲 + Pollinationsプロンプト + Bluesky投稿テキスト + Mastodon投稿テキストまたは注記
-  - `themeEn`あり（日英二言語）: `📣 Mastodon投稿テキスト（二言語・転載用）:\n{mastoText}`
-  - `themeEn`なし（日本語のみ）: `⚠️ themeEn未取得のためMastodon投稿テキストはBlueskyと同一（日本語のみ）`
-- 2通目に成否を再掲することで、1通目が文字数で省略されても結果を確認できる
-- 2通目が失敗しても1通目は送信済みのため情報損失はBluesky部分に限られない
-
-**投稿URLの記載（2026-09追加）**: 投稿成功時、Discord通知の成否行に実際の投稿URLを付与する。目的は、テスト投稿・本番投稿を問わず、Discordを見るだけで実際に何が投稿されたか確認・削除できるようにするため（従来はCloudflare Workers Logsを検索してAT URI/ステータスIDから手動でURLを組み立てる必要があった）。
-
-- Bluesky: `buildBlueskyPostUrl(uri, identifier)`（`worker/bot.js`・純粋関数）が、`createPost()`の戻り値`uri`（AT URI形式`at://{did}/app.bsky.feed.post/{rkey}`）末尾のrkeyを抽出し、`https://bsky.app/profile/{identifier}/post/{rkey}`を組み立てる。`identifier`には`env.BLUESKY_IDENTIFIER`（ハンドル、例: `nyanmusu.bsky.social`）を渡す。didではなくハンドルを使うことでURLが人間にも読みやすくなる
-- Mastodon: `postStatusToMastodon()`の戻り値（Mastodon Status API）に含まれる`url`フィールドをそのまま使う（Mastodon API仕様上Status entityは常に投稿ページの正規URLを`url`として返すため、独自に組み立てる必要がない）
-- 失敗時・未設定時はURLを付与しない（そもそも投稿が存在しないため）
-
-### Discord成功通知フォーマット
-
-投稿完了後に`notifyDiscord()`で送信される通知（2通構成）。
-
-```text
-✅ にゃんバーサリーBot
-✅ Bluesky投稿完了 {dateStr} {blueskyPostUrl}   ← Bluesky失敗時は ❌ Bluesky投稿失敗: {エラー}（URLなし）
-✅ Mastodon投稿完了 {mastodonPostUrl}           ← 設定済みの場合。失敗時は ❌ Mastodon投稿失敗: {エラー}（URLなし）。未設定時は ⏭️ Mastodon未設定・スキップ
-🎲 フォーマット: short/full       ← pickPostFormat()の選択結果（2026-10追加）
-📅 テーマ: {theme}
-📝 説明: {description}           ← descriptionがある場合のみ
-🎨 視覚ヒント: {visualHint}      ← visualHintがある場合のみ
-💬 一言: {themeHook}             ← themeHookがある場合のみ（2026-10追加）
-🐱 毛柄: {persona}               ← personaがある場合のみ
-😺 性格: {personality}           ← personalityがある場合のみ（子猫ゲスト時は保護者修飾を含む）
-💭 感情: {emotion}               ← emotionがある場合のみ
-🍴 食べ物アクション: {eatingAction} ← eatingActionがある場合のみ
-🐾 ゲスト外見: {guest.appearance}   ← ゲスト登場時のみ
-🐾 ゲスト性格: {guest.personality}  ← ゲスト登場時のみ
-🈁 裏面漢字: {kanjiChar}（採用）    ← 常に表示（無効値は「なし→🐾」）
-🖼 ソース: {source}
-
-📋 Geminiプロンプト（採用）:     ← Gemini採用時は「（採用）」付き
-{prompt}                         ← promptがある場合のみ
-```
-
-**2通目フォーマット（themeEnあり）:**
-
-```text
-📣 にゃんバーサリーBot
-✅ Bluesky投稿完了 {dateStr}      ← 1通目と同じ成否ステータスを再掲
-✅ Mastodon投稿完了               ← 同上（失敗/未設定時はそれぞれ表示）
-
-📋 Pollinationsプロンプト:       ← Pollinations採用時は「（採用）」付き
-{pollinationsPrompt}             ← pollinationsPromptがある場合のみ
-
-📣 Bluesky投稿テキスト（X・Instagram等に転載用）:
-{buildPostText()の出力全文}      ← 日本語のみ・ハッシュタグ・URL含む
-
-📣 Mastodon投稿テキスト（二言語・転載用）:
-{buildMastodonText()の出力全文}  ← 日英二言語・ハッシュタグ・URL含む
-```
-
-**2通目フォーマット（themeEn未取得）:**
-
-```text
-📣 にゃんバーサリーBot
-✅ Bluesky投稿完了 {dateStr}
-✅ Mastodon投稿完了
-
-📋 Pollinationsプロンプト:
-{pollinationsPrompt}
-
-📣 Bluesky投稿テキスト（X・Instagram等に転載用）:
-{buildPostText()の出力全文}
-
-⚠️ themeEn未取得のためMastodon投稿テキストはBlueskyと同一（日本語のみ）
-```
-
-**設計意図**: 1通目は「採用プロンプト確認」、2通目は「転載用テキスト一式 + フォールバックプロンプト」として役割を分離。どちらのAIが採用されたかは「（採用）」表示で確認でき、採用されなかった方のプロンプトも2通目に記載されるため手動比較検証が可能。
-
-### Bluesky AT Protocolエンドポイント
-
-| 用途 | エンドポイント |
-| --- | --- |
-| 認証 | `POST https://bsky.social/xrpc/com.atproto.server.createSession` |
-| 画像アップロード | `POST https://bsky.social/xrpc/com.atproto.repo.uploadBlob` |
-| 投稿作成 | `POST https://bsky.social/xrpc/com.atproto.repo.createRecord` |
-
-### Mastodon APIエンドポイント
-
-| 用途 | エンドポイント |
-| --- | --- |
-| 画像アップロード | `POST {MASTODON_INSTANCE_URL}/api/v2/media` |
-| 投稿作成 | `POST {MASTODON_INSTANCE_URL}/api/v1/statuses` |
-
-**認証**: `Authorization: Bearer {MASTODON_ACCESS_TOKEN}` ヘッダー
-
-**画像アップロード**: `multipart/form-data`。`file`フィールドに画像、`description`フィールドにaltテキスト（最大1500文字）。
-
-**投稿作成**: `application/x-www-form-urlencoded`。`status`フィールドにテキスト、`media_ids[]`フィールドにmediaId。重複投稿防止のため`Idempotency-Key: {uuid}`ヘッダーを付与。
-
-**タイムアウト（Bluesky）**: 認証・画像アップロード・投稿作成それぞれ`AbortSignal.timeout(10_000)`（各10秒）。
-
-**タイムアウト（Mastodon）**: アップロード・投稿ともに`AbortSignal.timeout(10_000)`（各10秒）。Workerのwall-clock制限内で収めるため30秒から短縮（2026-04）。
-
-**テキスト**: `buildMastodonText()`で生成した**英語優先・日英二言語テキスト**を使用（`pageUrlEn`含む）。Mastodonはハッシュタグを自動認識するためAT Protocol facetsは不要。`themeEn`未取得時は`buildPostText()`（日本語）にフォールバック。
-
-**シークレット設定**:
-```bash
-wrangler secret put MASTODON_INSTANCE_URL   # 例: https://mstdn.jp（末尾スラッシュなし）
-wrangler secret put MASTODON_ACCESS_TOKEN   # Mastodon設定→開発→アプリ→アクセストークン
-```
-必要スコープ: `write:statuses` + `write:media`
-
-**未設定時の動作**: `MASTODON_INSTANCE_URL` または `MASTODON_ACCESS_TOKEN` が未設定の場合、Mastodon投稿をスキップして`Promise.resolve(null)`を返す。Bluesky単体で動作継続。
+> **詳細は[`.claude/docs/architecture/bot-posting.md`](../docs/architecture/bot-posting.md)に移動した**（2026-10・自動読み込みの軽量化）。この節を参照する指示があったら移動先を読むこと。
+
+平日7:00 JSTのBluesky/Mastodon同時投稿（`runBot()`）。Cron明示チェックと手動実行エンドポイント（Bug#40）、投稿テキスト形式と文字数の安全網、CTAローテーション、セール告知リプライ、altテキスト、Discord通知（2通構成・投稿URL付き）、各SNSのAPIエンドポイント。
+
+移動先に収録している小見出し:
+
+- 設計方針
+- `scheduled()`のCron明示チェック（2026-09追加・Bug#40）
+- 手動実行エンドポイント（`POST /bot/manual-run`・2026-09追加・Bug#40）
+- 投稿フォーマットの選択（short/full・2026-10追加）
+- 投稿テキスト形式
+- テーマタグ正規化（`buildThemeTag`）
+- 画像altテキスト形式
+- Discord通知（`notifyDiscord()`）
+- Discord成功通知フォーマット
+- Bluesky AT Protocolエンドポイント
+- Mastodon APIエンドポイント
 
 ---
 
 ## 月替わり壁紙プレゼント機能（`worker/bot.js` `runMonthlyWallpaperPost()`・2026-09追加）
 
-### 背景
-
-集客診断（Umami/Bluesky/Mastodon実データ）で、ボトルネックはSUZURI導線や価格ではなく「SNS上での露出（リーチ）」だと判明した（詳細は`.claude/future-ideas.md`の「集客・マーケティング診断」参照）。サイト機能・SUZURI化には投資せず、まず「毎月の壁紙プレゼント」という新しいコンテンツ形態がフォロワー増・エンゲージメント増に効くかをSNS単体（Bluesky/Mastodon自動投稿）で安く検証する。X/Instagram/Facebook/mixi2への展開は、Discord通知に含まれる転載用テキストを使った手動コピペ運用とする。
-
-### 月テーマの決定（新規データテーブルなし）
-
-**「対象月」＝JST基準で「今日」が属する月の翌月**（`worker/bot.js` `resolveTargetYearMonth()`）。月末チェック（`"0 15 * * *"`の分岐内で`isLastDayOfMonthJST()`が月末日のみ発火させる。下記「Cron（月末自動生成）」参照）は「今月末に来月分の壁紙を配る」設計のため、例えば9/30発火時は10月の壁紙を生成する。手動再生成エンドポイントも同じ関数を使うため、月初〜月末のどのタイミングで手動実行しても常に「次に来る月」の壁紙になる（当月分を作りたい場合は月初に手動実行する）。
-
-対象月の**末日**の日付文字列（`YYYY-MM-DD`）を既存の`getSeasonalFlower()`/`getSeasonalFlowerVisual()`/`getSeasonalStyleTone()`/`getSeasonalFlowerEn()`（`worker/index.js`）にそのまま渡し、`SEASONAL_FLOWERS`（24エントリ・半月区切り）の該当後半エントリを月テーマとして流用する。全月の末日は必ず後半エントリ（`16日〜末日`区切り）に一致する設計のため、常に安定して選ばれる（例: 10月末日→「金木犀」）。新規の月別テーブルは作らない。
-
-### 画像生成: 既存`handleGenerate()`の拡張利用
-
-新しい生成パイプラインは作らず、既存の2フェーズレース（Gemini→Pollinationsフォールバック）・モデル自動切替・CPU計測をそのまま利用する。
-
-- `handleGenerate()`呼び出し時の`body`: `{ theme, description, visualHint, themeEn, descriptionEn, jstDateISO: <対象月の末日>, reserveCalendarSpace: true }`
-- `jstDateISO`を対象月の末日で明示的に渡すことで、手動再生成が別の日に実行されても季節カラー・花テーマが対象月とズレない（内部の`getSeasonalStyleTone()`は「今日の日付」がデフォルトのため）
-- **ゲストキャラクター（`pickGuestAnimal()`・10%出現）は除外しない**（意図的な仕様判断。「たまに違う動物が混ざる意外性も味」とユーザーが判断）
-- `body.foodItem`を渡さないため`eatingAction`は発生しない（対応不要）
-- `_buildGeminiPrompt()`/`_buildPollinationsPrompt()`に新しい引数`reserveCalendarSpace = false`を追加。`true`のとき以下を構図指示に追加する:
-  - 縦長9:16のアスペクト比指定（日次プロンプトには元々なし。SUZURI用の正方形寄り想定だったため）
-  - 画像下部30%程度を、カレンダー格子を重ねるための平坦で明るい余白帯として残す指示
-  - 画像左上の一角を、月名ラベルを重ねるための平坦な余白として残す指示
-  - 禁止事項に「文字・数字を含めない」を強化（カレンダー数字・月名バッジとの視覚的衝突回避）
-  - AIの構図指示遵守は完全ではない（実測で指示した30%に対し実際は46%の余白ができた例あり）ため、余白の実際の量には依存しない設計にしている。Satoriのオーバーレイパネル自体が半透明背景で可読性を担保するため、ランタイムでの空白帯検出は行わない（下記「設計簡略化」参照）
-
-### カレンダー・月名の合成（`worker/image-utils.js` `compositeMonthlyWallpaper()` + `worker/svg-render.js`）
-
-**設計変更（2026-09）**: 当初はPhotonの`draw_text()`（Roboto固定・色指定不可）＋事前生成バッジPNGのハイブリッド方式で実装しかけたが、ユーザーから「ビットマップテキストは解像度変更等の柔軟性を下げるので避けたい」と明確な差し戻しを受けた。調査の結果、色付き・カスタムフォントのベクターテキストをCloudflare Workersで動的生成する標準パターンとして**Satori（要素ツリー→SVG）+ `@resvg/resvg-wasm`（SVG→PNGラスタライズ）**を採用した（OGP画像生成等で広く使われる組み合わせ）。事前生成の月名バッジPNG（`worker/assets/month-badges/`）は廃止・削除済み。
-
-- `worker/svg-render.js`が共有ローダー（`worker/image-utils.js`のPhotonローダーと同じ「遅延ロード＋`_setXForTest()`」パターン）: `ensureSatori()`（Satori本体＋レイアウトエンジンYoga）、`ensureResvg()`（resvgのWASM本体、約2.4MB）、`renderElementToPng(element, options, deps)`
-- **生の`satori`パッケージではなく`@cf-wasm/satori`（`/workerd`エントリポイント）を使う（2026-09・重要な設計判断）**: 素の`satori`（v0.30以降）はharfbuzzjs（Emscripten生成JS）に依存し、Node専用の`require("fs")`分岐を静的に含むため、`wrangler deploy --dry-run`の時点でビルドが失敗する（`Could not resolve "fs"`）。実機動作の検証以前にデプロイ自体が不可能な状態だった。Cloudflare Workers向けにこの問題を解決済みの`@cf-wasm/satori`（fineshopdesignのcf-wasmモノレポ）に切り替えて解消した。Yoga（レイアウトエンジン、71KB）はこのパッケージが内部でバンドル・import時に自動初期化するため、明示initは不要
-- **resvgのWASM（約2.4MB）はPhotonと同じ「ビルド時ESM静的import」でバンドルする（2026-09・R2実行時fetchから変更・Bug#36）**: 当初はスクリプトサイズ上限（gzip後3MB）を懸念しR2（既存`IMAGE_BUCKET`）に配置して実行時に`fetch()`し`WebAssembly.instantiate(bytes)`でコンパイルする設計だったが、実際に本番デプロイ後の`POST /monthly-wallpaper/regenerate`実行で`WebAssembly.instantiate(): Wasm code generation disallowed by embedder`エラーが発生した。Cloudflare Workersは実行時の動的WASMコンパイル（生バイト列からのコンパイル）をセキュリティ上禁止しており、この設計は原理的に動作しないと判明した（投稿自体は`compositeMonthlyWallpaper()`のフォールバック設計により未加工画像で継続していたため実害は「カレンダー合成なし」にとどまった）。修正はPhoton（`worker/image-utils.js`）が実際に本番稼働している`import wasm from "パッケージ名/xxx.wasm"`（ビルド時に`WebAssembly.Module`としてプリコンパイルされる）と同じ静的import方式に統一した。`@resvg/resvg-wasm`の`initWasm()`は引数が`Response`でない場合`WebAssembly.instantiate(module, imports)`を呼ぶ実装（`node_modules/@resvg/resvg-wasm/index.mjs`で確認）で、これはコンパイル済みモジュールのインスタンス化のみのため動的コード生成の禁止に抵触しない
-- **実測**: `wrangler deploy --dry-run --outdir=...`でビルド成功・Total Upload 6076.36 KiB / gzip 2096.70 KiB（約2.05MB）を確認済み（2026-09・resvg静的バンドル後）。Workers Freeプランのgzip 3MB上限に対し引き続き余裕がある（当初懸念していたサイズ超過は実測では発生しなかった）
-- **`ensureResvg()`はシングルフライトパターンで並行呼び出しに対応する（2026-09・Bug#36追記）**: `compositeMonthlyWallpaper()`がカレンダー版・署名版を`Promise.all()`で並行生成するため`ensureResvg()`も並行に呼ばれる。`@resvg/resvg-wasm`の`initWasm()`は2回目の呼び出しで`Already initialized`例外を投げる一度きりのAPIのため、`_resvgReady`真偽値フラグの早期returnだけでは競合を防げない（静的import化の1回目の修正デプロイ後に実機で発覚）。進行中の初期化`Promise`を共有し実際の`initWasm()`呼び出しを1回に限定する。WASMロード処理自体は`_loadResvg()`として切り出し、`ensureResvg(deps = {})`の`deps.loadResvgFn`で注入可能にすることで、このレースコンディション自体を`scripts/test-bot.mjs`でユニットテスト可能にしている
-- Satoriが描画するのはテキスト・図形のオーバーレイ（カレンダー格子・月名・年・署名）のみで透過PNGとして出力する。**AI生成した猫写真自体をSatoriの要素ツリーに埋め込まない**（SatoriのWorkers上での画像fetchは動作しないことが既知のため）。写真の切り抜き・リサイズ・最終合成（オーバーレイの`watermark()`貼り付け）は引き続きPhotonが担当する
-- カスタムフォント（Gloock・WorkSans、いずれもGoogle FontsのOFLライセンス）は`worker/assets/fonts/`にTTF形式でリポジトリ管理し、Satoriの`options.fonts`にArrayBufferとして渡す
-
-**設計簡略化（2026-09・ランタイム空白帯検出は行わない）**: 当初案は画像下部の空白帯を`_detectCropBox()`同系統のロジックでランタイム検出する想定だったが、Satoriのオーバーレイ自体に半透明の背景パネル（カレンダー帯・左上バッジそれぞれに）を常時描画することで、被写体がどこにあっても可読性を保証できると判断し、検出ロジックは実装しない（旧・月名バッジ案で採用した「バッジPNGにソフトグローを焼き込み、実行時判定を省く」という簡略化と同じ考え方をSatori版にも踏襲）。可動部を減らすことで壊れ方が減り、フォールバックの分岐も単純になる。
-
-**祝日ライブラリの選定**: `@holiday-jp/holiday_jp`（npm、依存パッケージなし・Node組み込みAPI不使用・`isHoliday(date)`が祝日名または`false`を返す純粋な日付テーブル方式）を採用。比較検討した`japanese-holidays`より依存が少なく、内蔵テーブルが2050年まで事前計算済みでランタイムの祝日計算ロジックを持たない点を評価した。
-
-**関数設計**:
-
-- `_buildCalendarOverlayElement(year, month, options)`（`worker/image-utils.js`・純粋関数）: 指定年月のカレンダー格子（曜日見出し・日付数字・日曜/祝日=赤・土曜=青・`@holiday-jp/holiday_jp`で祝日判定）＋左上の月名・年バッジ（月番号を大きく＋月名・年を並べて表示。詳細は下記「月名バッジの構成」参照）を含むSatori要素ツリー（JSX形状のプレーンオブジェクト）を返す。`options`にキャンバスサイズ・フォント名を渡す。**「© nyanmusu」署名はBug#39で事前生成PNGアセット化されたため、この要素ツリーには含まれない（下記「署名を事前生成PNGアセット化」参照）**
-- `compositeMonthlyWallpaper(imageData, year, month, deps = {})`（`worker/image-utils.js`）: `autoCropImage()`と同じ「依存関数を引数で受け取る」テストパターンを踏襲
-
-**月名バッジの構成（2026-09修正）**: 当初の実装は`monthBadge`が月名（`October`）と年（`2026`）のみを描画しており、事前生成バッジPNG時代の元デザイン（「October」＋大きな「10」の月番号を並べる構成）にあった月番号が抜け落ちていた。実機投稿で発覚（ユーザー指摘）し修正した。現在は`monthBadge`を横並び（`flexDirection: "row"`）にし、大きな月番号（`String(month)`・Gloock・大サイズ）を左に、月名＋年を縦積みにしたブロックを右に配置する。
-
-**カレンダーなし版の被写体センタリング（2026-09追加・実機投稿で発覚）**: 当初の実装はカレンダーあり版・なし版とも同一のcover-crop画像を共有していた。`reserveCalendarSpace`のプロンプト指示で画像下部に余白（実測30〜46%）を空けさせているため、カレンダーあり版はカレンダー帯でその余白を覆えるが、カレンダーなし版は覆うものがなく被写体が上寄りに見え、下に不自然な空白が残っていた（ユーザー指摘）。
-
-修正は既存の`_detectCropBox()`（`/generate`の自動トリミング機能・`autoCropImage()`と共通のWASM非依存ロジック）を再利用する。
-
-**設計変更（2026-09・実機でCloudflare error 1102＝Worker強制終了を検知）**: 当初案は検出領域を切り出してから`coverCrop()`（cover-fit：アスペクト比を保って拡大しはみ出た分を対称にクロップする処理）で改めて1080×1920へ**ズームイン**して再フィットする方式だった。デプロイ直後の実機検証で`POST /monthly-wallpaper/regenerate`が`error 1102`を返しDiscord通知も届かない障害が発生した。`query-worker-logs.mjs`で実ログを確認すると、`generate 完了`ログの直後・`カレンダー合成失敗`警告すら出ないまま途切れており、JS例外（`try/catch`で捕捉可能）ではなくCloudflare基盤側の強制終了（CPU/メモリ上限超過）と判明した。Satori×2レンダリング＋resvgラスタライズ×2＋Photon合成×2という元々重い処理に、ズームイン方式が追加の高品質リサイズ（`SamplingFilter.Lanczos3`）を丸ごともう1回加えたことがCPU予算を超過させたと判断し、**リサイズを伴わない「同一スケール内でのシフトのみ」の軽量な再センタリング**に設計変更した:
-
-1. 生成画像をこれまで通りcover-fitで1080×1920のベース画像（`baseImg`/`baseBytes`）を作る際、その手前で使うスケール済み画像（`scaledImg`。目標サイズより一回り大きい）を`compositeMonthlyWallpaper()`のスコープ内に保持しておく（従来は`baseImg`生成直後に解放していたが、なし版のシフトに再利用するため解放を遅らせる）
-2. `baseImg`を64px幅（アスペクト比維持）にダウンサンプルし`_detectCropBox()`で被写体のバウンディングボックスを検出。`maxMarginRatio`は`/generate`用デフォルトの`0.2`ではなく`0.5`を指定する（実測30〜46%の余白量を正しく検出するため）
-3. 検出できた場合、被写体の垂直方向の中心位置を計算し、`scaledImg`内でのクロップ開始位置（`y1`）を「被写体が新しい窓の中心に来る」ようシフトさせる。シフト量は`scaledImg`の余剰分（`scaledImg`の高さ − 1080×1920の高さ）の範囲でクランプする。**リサイズは一切行わず、`scaledImg`から窓をずらして`crop()`するだけ**（ズームなし・平行移動のみ）
-4. シフト量が小さい（4px未満）・検出できない・`scaledImg`に余剰分がなく実質シフトできない場合は`baseImg`をそのまま使う（安全策・`autoCropImage()`と同じ設計方針）
-5. この再センタリング処理全体を個別の`try/catch`で囲み、失敗時は`baseImg`にフォールバックする（カレンダーあり版の生成自体には影響させない。`compositeMonthlyWallpaper()`全体の外側`try/catch`とは別のより狭いフォールバック）
-
-この方式は「AIが生成した画像に元々十分な縦方向の余剰（`scaledImg`が目標サイズより大きい分）がある場合」にのみ被写体を動かせるトレードオフがある（プロンプトが9:16ちょうどで生成させているため余剰が小さいケースでは効果が限定的）。ただしCPU予算超過でリクエストごと失敗する（Discord通知すら届かない）よりは、被写体の位置調整が部分的にとどまる方が実害が小さいと判断した。詳細は`.claude/bugs-history.md`のBug#37追記参照。
-
-**合成処理の流れ**:
-
-1. 生成画像を1080×1920（スマホ壁紙・フルHD縦。実際のデフォルト出力解像度は下記「最終拡大の撤回」参照）へcover-cropでリサイズ（Photon）
-2. `_buildCalendarOverlayElement()`でカレンダー版の要素ツリーを組み立て、`renderElementToPng()`（`worker/svg-render.js`）でオーバーレイPNGを生成
-3. オーバーレイPNGをPhotonの`watermark()`で生成画像に貼り付け、続けて署名アセット（`worker/assets/signature.png`）も`watermark()`で貼り付ける（カレンダー版・Bug#39）
-4. 「カレンダーなし」版も同時に生成する: 上記「カレンダーなし版の被写体センタリング」で得た画像に署名アセットのみを`watermark()`で貼り付けたもの（full-bleed、カレンダー帯・月名バッジなし。Bug#39以前はSatoriの署名オーバーレイを使用していた）
-5. 失敗時（Photon/Satori/resvg読み込み失敗等）は既存`autoCropImage()`と同様、未加工画像にフォールバックし処理全体は失敗させない
-
-**実装状況（2026-09時点）**: `worker/svg-render.js`（`@cf-wasm/satori`ベースのローダー・フォントローダー`ensureFonts()`・`renderElementToPng()`）、`worker/image-utils.js`（`_buildCalendarOverlayElement()`/`compositeMonthlyWallpaper()`/署名アセットローダー`ensureSignatureAsset()`。Bug#39以前は`_buildSignatureOnlyElement()`も存在したが廃止済み）、`worker/index.js`（プロンプト拡張・`isLastDayOfMonthJST()`・Cron分岐・`/monthly-wallpaper/regenerate`）、`worker/bot.js`（`runMonthlyWallpaperPost()`・`createMonthlyWallpaperPost()`・投稿文言関数）まで実装済み。`wrangler.toml`にCron追加済み。ユニットテスト（`scripts/test-bot.mjs`、モック経由）含め`npm test`全件成功。`wrangler deploy --dry-run`でのビルド成功・バンドルサイズ確認済み（上記「実測」参照）。スマートフォン実機でのセーフエリア調整（Bug#38・上記「スマートフォン実機でのセーフエリア調整」参照）も実装済み。署名の可読性修正（Bug#39・上記「署名を事前生成PNGアセット化」参照）はローカルユニットテスト・`wrangler deploy --dry-run`のビルド確認済みだが、実機での可読性確認は次回の手動再生成実行時にユーザーが確認する（本ドキュメント執筆時点で未デプロイ）。
-
-**実機検証の結果（2026-09・2ラウンド実施済み・3ラウンド目待ち）**: デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を`X-Bypass-Token`ヘッダー付きで手動実行。
-
-- **1ラウンド目**: Bluesky/Mastodonへの投稿自体は成功したが、`compositeMonthlyWallpaper()`が失敗し未加工画像にフォールバックしていた（`composited: false`）。`query-worker-logs.mjs`で実ログを確認し、上記「resvgのWASM」項に記載の`Wasm code generation disallowed by embedder`エラーを特定・修正しデプロイ（Bug#36本体）
-- **2ラウンド目**: 修正後に再実行しても依然`composited: false`。再度`query-worker-logs.mjs`で確認したところ、今度は別のエラー`Already initialized. The initWasm() function can be used only once.`に変わっていた。上記「`ensureResvg()`はシングルフライトパターン」項に記載の並行呼び出し競合を特定・修正（Bug#36追記）。**この修正はPR #182として作成済みだが、本ドキュメント執筆時点で未マージ・未デプロイ**
-- **3ラウンド目**: PR #182マージ・デプロイ後に`composited: true`を確認（resvg関連の障害は解消）。ただしBluesky投稿の目視確認で新たに2件の見た目の問題が判明: (1) 月名バッジに月番号「10」が表示されていない、(2) カレンダーなし版で被写体が上寄りになり下に不自然な余白が残る。いずれも上記「月名バッジの構成」「カレンダーなし版の被写体センタリング」で修正済み
-- **4ラウンド目**: PR #183マージ・デプロイ後に`/monthly-wallpaper/regenerate`を再実行したところ`error 1102`（Cloudflare Workers強制終了・CPU/メモリ上限超過）が返りDiscord通知も届かなかった。`query-worker-logs.mjs`でログを確認すると`generate 完了`直後・`カレンダー合成失敗`警告すら出ないまま途切れており、JS例外ではなく基盤側の強制終了と判明。カレンダーなし版センタリング（3ラウンド目の修正）が追加した「検出領域をズームインして再フィット」処理（追加のLanczos3リサイズ）がCPU予算を超過させたと判断し、リサイズを伴わない軽量なシフト方式に設計変更した（Bug#37追記。詳細は上記「カレンダーなし版の被写体センタリング」の「設計変更」参照）
-- **5ラウンド目**: PR #184マージ・デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を2回連続で手動実行。**1回目は`error 1102`が再発、2回目は`composited: true`で完走**（Bluesky/Mastodon投稿・Discord通知とも成功）。`query-worker-logs.mjs`で1回目のログを確認すると、`再センタリング判定完了`の直後で途切れておりオーバーレイ描画（`Promise.all([applyOverlay(カレンダー版), applyOverlay(カレンダーなし版)])`＝Satori×2＋resvg×2＋Photon合成×2）の区間で強制終了していたと判明。Bug#37追記のシフト方式への変更で以前より先まで進むようにはなったが、**真のCPUボトルネックはSatori/resvgのオーバーレイ描画そのもの**（未着手）であり、生成画像の内容による処理時間のばらつき次第で成否が分かれる不安定な状態が続いていた
-- **6ラウンド目（未実施・PR #185）**: 下記「カレンダーなし版のSatori/resvg排除」（error 1102対策）と「スマートフォン実機でのセーフエリア調整」（Bug#38・見切れ対策）の両方をまとめて含むPR #185をデプロイ後、再度`/monthly-wallpaper/regenerate`を複数回実行し、(a) `error 1102`の再現率が実際に下がったか、(b) iPhone/Androidの実機で月名バッジ・カレンダー帯・署名が見切れなくなったかの2点を確認する必要がある（(a)は完全に0%になる保証はない。カレンダー版のSatori/resvgは維持しているため）
-
-**CPU時間の計測追加（2026-09・Bug#37追記の再発防止・PR #184に含む）**: 軽量化の効果を推測ではなく実測で確認できるようにするため、`runMonthlyWallpaperPost()`の`compositeMonthlyWallpaperFn()`呼び出しを`recordCpuCheckpoint("monthly-wallpaper-composite", ..., env.RATE_KV)`で計測しKV集計する（`/cpu-usage`で確認可能。月次1回・手動再生成時のみの低頻度経路のためKV書き込み予算への影響は無視できる）。ただし**この計測値がそのまま信頼できるとは限らない**: `generate-autoCrop`の計測（上記「CPU計測は機能しないことが判明」参照）と同様、`compositeMonthlyWallpaper()`内部はPhoton・Satori・resvgいずれも同期的なWASM呼び出しでI/Oを挟まないため、`performance.now()`が計測区間内で一切進まず差分が0msになる可能性がある。この計測値がゼロや不自然に小さい値を示した場合でも「処理が軽い」と早合点せず、`compositeMonthlyWallpaper()`内部に追加した詳細な`console.log`（下記）とCloudflare側が記録する実タイムスタンプ（`query-worker-logs.mjs`で確認）を併用し、どのステップまで到達してから終了したかで実態を判断する。
-
-`recordCpuCheckpoint()`は`worker/index.js`で定義されており、`worker/image-utils.js`は`worker/index.js`にimportされる側（逆方向importは循環参照になる。`worker/r2-storage.js`と同じ制約）のため、`compositeMonthlyWallpaper()`内部には`recordCpuCheckpoint()`を直接呼ばず、素の`console.log()`（`[monthly-wallpaper-composite]`プレフィックス）を主要ステップ（開始・ベースクロップ完了・再センタリング検出/シフト判定・カレンダー版/カレンダーなし版オーバーレイ描画それぞれの完了）の直後に追加した。計測（`recordCpuCheckpoint`）は呼び出し元の`runMonthlyWallpaperPost()`（`worker/bot.js`、既に`recordCpuCheckpoint`をimport済み）側で全体時間のみラップする。
-
-**カレンダーなし版のSatori/resvg排除（2026-09・5ラウンド目で1102の再発を確認して追加対応）**: 5ラウンド目の実機検証で、シフト方式への軽量化後も`error 1102`が（毎回ではないが）再発することを確認した。`query-worker-logs.mjs`で失敗ログを見ると、`再センタリング判定完了`の直後・`オーバーレイ描画完了`の手前で途切れており、真のCPUボトルネックは`Promise.all([applyOverlay(カレンダー版), applyOverlay(カレンダーなし版)])`区間（Satori×2＋resvgラスタライズ×2＋Photon合成×2）にあると判明した。
-
-カレンダー版は日付ごとの色分け（日曜/祝日=赤・土曜=青）とカスタムフォントが必須のためSatori/resvgを維持するしかないが、**カレンダーなし版（「© nyanmusu」署名のみ）はSatoriの表現力を必要としない**。3案を比較した:
-
-1. **署名をPhotonの`draw_text_with_border()`に置き換える（採用）**: Satori render・resvgラスタライズ・オーバーレイ用のPhoton合成（`watermark()`＋PNGデコード2回）を丸ごと1セット削除できる。削減効果が最も大きく確実
-2. カレンダー要素数（日付セル等）を削減してSatoriのレイアウト計算コストを削る: resvgのラスタライズ（解像度依存）が支配的コストである可能性が高く効果が不確実。カレンダー版は引き続き必要なため実装リスクの割に効果が薄い
-3. オーバーレイの出力解像度を下げてPhotonで拡大: ラスタライズコストは下がるが追加のリサイズで一部相殺し、カレンダーの文字視認性が落ちるリスクがある
-
-1を採用し、`compositeMonthlyWallpaper()`はSatori/resvgをカレンダー版の1回のみ呼び出す（従来の2回から半減）。カレンダーなし版は`noCalendarBaseBytes`をデコードしたPhoton画像に`draw_text_with_border(img, "© nyanmusu", x, y, fontSize)`を直接描画し（オーバーレイPNGの生成・合成が不要になる）、そのまま`get_bytes()`する。
-
-**署名の黒背景パネルは削除（2026-09・ユーザー指摘で判明した実装ミス）**: `_buildSignatureOnlyElement()`は当初から`backgroundColor: "rgba(0,0,0,0.35)"`の半透明黒背景パネルを描画していたが、これは最初から不要という指定だったにもかかわらず実装時に反映されていなかった（`.claude/bugs-history.md`の別機能・フロントエンドCanvas watermarkの黒背景仕様と混同したとみられる）。`_buildSignatureOnlyElement()`から背景パネルを削除し、白文字のみにした。この時点ではカレンダー版（Satori継続使用）・カレンダーなし版（Photon `draw_text_with_border()`）の両方に適用されたが、この対応は後にBug#39で置き換えられている（下記「署名を事前生成PNGアセット化」参照）。
-
-### 署名を事前生成PNGアセット化（2026-09・Bug#39）
-
-上記の「黒背景パネル削除」後、実機投稿の目視確認で署名（© nyanmusu）が判読できない問題が2種類見つかった（詳細は`.claude/bugs-history.md`のBug#39参照）。
-
-1. **カレンダー版（Satori描画）**: 背景パネルを削除した結果、白文字のみ（縁取りなし）になっており、明るい背景色の上では文字が完全に溶けて見えなくなっていた
-2. **カレンダーなし版（Photon `draw_text_with_border()`）**: 本セッションでPhotonの実際のWASMをローカルで動かして検証したところ、`draw_text_with_border()`の「縁取り」は文字の輪郭に沿ったストロークではなく、**文字からわずかにずれた位置に描かれる塗りつぶし矩形（実装上の癖/バグ）** であることが判明した。フォントサイズが小さい（540×960化に伴い13px相当まで縮小済み）とこの矩形が文字を覆い尽くし、黒い塊にしか見えなくなる
-
-**根本原因**: Photonの文字描画API（`draw_text()`＝色固定（白）・縁取りなし、`draw_text_with_border()`＝縁取り部分に上記の癖がある）はどちらも色や縁取りの見た目を自由に制御できない。Satori側も白文字色のみで縁取りの仕組みを使っていなかった。**背景（AI生成イラスト）の明暗を問わず安定して読ませるには、色や縁取りを自在にデザインできる方法が必要**だった。
-
-**採用した方式**: 「© nyanmusu」は**内容が変化しない固定テキスト**である（カレンダーの日付・月名のように月ごとに変わらない）。月替わり壁紙のカレンダー部分をSatori動的描画にした理由（`CLAUDE.md`の「変えてはいけない設計判断」参照）は「内容が変わるものを事前生成PNGにすると柔軟性を失う」というものだったが、これは固定テキストの署名には当てはまらない。そこで**署名だけを事前に1枚の透過PNG（白文字＋柔らかいドロップシャドウ）として作成し、`worker/assets/signature.png`にコミット**した。実行時はSatori/resvgでの動的テキストレンダリングを一切行わず、既存の`watermark()`（カレンダーオーバーレイの合成に使っているPhoton関数と同一）で画像に貼り付けるだけにする。
-
-- **デザイン検討**: ユーザーとPython/PILでのシミュレーションを繰り返し、単色（縁取り・影なし）→縁取り（複数の太さ・不透明度）→ドロップシャドウの順で比較した。「ウォーターマークらしい控えめさ」の観点から、最終的に**柔らかいドロップシャドウ**（白文字・不透明度235/255、影は黒・不透明度140/255・オフセット1px・ガウスぼかし1.2px）を採用した
-- **フォントウェイトをBoldに変更（2026-09追加）**: 初版はWorkSans-Regular 18pxで作成したが、ユーザーから「目立つ必要はないが読みにくい」と指摘を受けた。カレンダー本体（月番号・曜日見出し等）で既に使っている`worker/assets/fonts/WorkSans-Bold.ttf`（新規アセット追加不要）に差し替え、他のパラメータ（フォントサイズ18px・不透明度・ドロップシャドウの設定）は変更しなかった。実際に合成した画像でPIL比較を行いユーザー承認済み。文字のバウンディングボックスに対する内側パディング（左端約8px・上端約7px、旧Regular版は左9px・上8px）はほぼ変わらないため、`SIGNATURE_X_OFFSET_PX`（下記参照）の再計測・変更は不要と判断した
-- **実装**: `_buildCalendarOverlayElement()`からSatoriの`signature`子要素を削除し、`_buildSignatureOnlyElement()`自体を廃止した（もう呼び出し元がないため）。`compositeMonthlyWallpaper()`は`worker/assets/signature.png`を`watermark()`でカレンダーあり版・なし版の両方に貼り付ける共通処理に統一した（従来は描画方式が2種類に分かれていたが、1種類に統一されたことでコードもシンプルになった）
-- **アセットの読み込み**: フォント（`.ttf`）と同じ「ビルド時ESM静的importをData型としてArrayBuffer化する」パターンを踏襲する。`wrangler.toml`の`[[rules]]`に`**/*.png`のglobを追加し、`worker/image-utils.js`内で遅延importする（Photon/フォントローダーと同じ「`_setXForTest()`」パターンでテスト時に差し替え可能にする）
-- **既知の制約**: PNGアセットは`compositeMonthlyWallpaper()`の出力解像度（現状540×960）を前提に固定サイズでデザインしている。将来`width`/`height`を1080×1920へ戻す場合（例: Workers Paidプランへの移行時）、このアセットは自動的にはスケールしない（Satoriの`elementScale`とは異なる仕組みのため）。解像度を変更する際はアセットを再生成する必要がある
-
-**署名の左端インデントがカレンダー・月名バッジとズレていた問題（2026-09・実機投稿で発覚）**: 上記デプロイ後の実機投稿画像をユーザーが目視確認したところ、署名（© nyanmusu）のテキストがカレンダー帯・月名バッジ（10 October）の文字開始位置より左に寄って見えることが判明した。
-
-- **原因**: `calendarPanel`・`monthBadge`（Satori要素）はいずれも`padding`（`px(28)`・`px(26)`、`elementScale = width / 1080`でスケールする）を内側に持つため、ボックスの左端と実際に見える文字の開始位置がキャンバス幅に応じて一定の比率でズレる。一方、署名PNG（`worker/assets/signature.png`）は`stampSignature()`内で`x = Math.round(width * CALENDAR_MARGIN_RATIO)`（＝`calendarPanel`のボックス左端と同一）にそのまま貼り付けており、画像自体に焼き込まれた内側余白（デザイン時の固定ピクセル値でキャンバス幅に応じてスケールしない）が`calendarPanel`のスケールする`padding`より小さいため、署名の可視テキストがカレンダーの可視テキストより左に寄って見えていた
-- **1回目の修正とその不備（2026-09）**: 当初、`calendarPanel`の`padding`（スケール後）とPNGアセット単体の内側余白（実測約9px）の**差分のみ**（約5px）を補正量として実装したが、実際に合成済みの出力画像（`540×960`）をユーザーがPaint.NETで直接ピクセル計測し、目視でも約22px程度ズレて見えると指摘を受けた。実際に合成画像をPythonで直接解析したところ、カレンダー「sun」の可視テキスト開始位置は`x=96`、署名の可視テキスト開始位置は`x=75`で、**実際のズレは21px**だった。理論値の5pxとの乖離は、**WorkSansフォント自体が持つ左サイドベアリング（文字の輪郭がテキストボックスの内側からさらに内側にある分。パディングの計算だけでは考慮できない）**を見落としていたため
-- **修正（実測ベース）**: パディングの理論計算をやめ、実際に合成した出力画像を直接ピクセル解析して得た実測差分をそのまま補正量の定数として使う方式に変更した。`SIGNATURE_X_OFFSET_PX = 21`（`width=540`の実機出力で計測。カレンダー「sun」の可視開始位置`x=96`と署名の旧可視開始位置`x=75`の差）を新設し、`stampSignature()`のx座標に`Math.round(width * CALENDAR_MARGIN_RATIO) + SIGNATURE_X_OFFSET_PX`として加算する。`CALENDAR_PANEL_PADDING_PX`・`SIGNATURE_ASSET_PADDING_PX`という理論値ベースの2定数は削除した（フォントのside-bearingまで含めた実測値1つに統合した方がシンプルかつ正確なため）
-- **この修正が解決しないこと**: `SIGNATURE_X_OFFSET_PX`は`width=540`の実際の出力画像を直接計測して得た値であり、フォント・アセットを変更した場合や、キャンバス幅（`width`）を1080に戻した場合（上記「既知の制約」参照）は、実際に出力画像を生成し直して再計測する必要がある（理論計算では正確な値を導けないことが今回判明したため、次回変更時も必ず実機/実出力画像での直接計測を行うこと）
-
-- **投稿URLのDiscord通知記載（2026-09追加・PR #182に含む）**: 上記の実機検証を繰り返す過程で、投稿の成否確認・テスト投稿の手動削除のたびにログからURLを手動組み立てる手間が発生したため、`buildBlueskyPostUrl()`とMastodon Status APIの`url`フィールドを使い、Discord通知の成否行に投稿URLを直接記載するようにした（日次Bot・月替わり壁紙の両方に適用。詳細は「Discord通知」節の「投稿URLの記載」参照）
-
-**スマートフォン実機でのセーフエリア調整（2026-09・iPhone 17 Pro実機テストで発覚・Bug#38）**: 実際に投稿された壁紙画像をiPhone 17 Proの待受に設定したところ、左上の月名バッジ・下部のカレンダー帯・署名が、画面の曲面（ディスプレイ端の湾曲）やシステムUI（時計・ホームインジケーター等）に隠れて見切れることが判明した（ユーザーが実機で目視確認）。それまでの配置（`monthBadge`は`top: 56`・`calendarPanel`は`left/right: 40, bottom: 64`・署名は`left: 32, bottom: 32`）は、Cloudflare Workers上の画像処理として動作確認はできても、実際のスマートフォン端末の画面形状までは考慮していなかった。
-
-修正方針（Geminiとの壁打ちを経てユーザーが確定した数値仕様）: イラスト自体の構図（テイスト・フォント・解像度・被写体の位置）は変更せず、オーバーレイ要素（月名バッジ・カレンダー帯・署名）の配置のみを画面中央寄りに調整する。背景側の左右マージン（キャラクターの登場位置に影響する余白）はこの調整の対象外（ユーザーが明示的に許容）。
-
-- **上下セーフエリア**: 全高の約9%を上下それぞれの余白として確保する（`SAFE_AREA_RATIO = 0.09`・1080×1920基準で約173px）。`monthBadge`の`top`をこの値に、`calendarPanel`・署名の`bottom`基準をこの値に変更し、オーバーレイ全体をわずかに中央寄りにシフトする
-- **カレンダー帯の横幅・左右マージン**: カレンダーブロックの横幅を全幅の約75.5%に収め、左右に均等なマージンを確保して中央に配置する。ユーザーが提示した2つの数値（横幅75.5%・左右マージン各11%）はそのままでは合計97.5%になり厳密には矛盾するため、より安全側（マージンが広くなる側）の解釈を採用し、横幅75.5%を厳密値として左右マージンを逆算した（`CALENDAR_MARGIN_RATIO = 0.1225`・約132px、約12.25%）。指定の11%よりマージンが広がる方向の丸めなので、要求された「スマートフォンのバー等と干渉しない浮き」の意図には反しない
-- **署名の左端をカレンダー帯の左端に揃える**: 従来署名は`left: 32`とカレンダー帯の左端（旧`left: 40`）と微妙にずれていた。`CALENDAR_MARGIN_RATIO`を`calendarPanel`・署名で共有することで左端が自動的に揃うようにした
-- **月名バッジの位置は実機フィードバックの具体的な座標指定を優先する（2026-09追加）**: 当初`monthBadge`も`calendarPanel`と同じ`CALENDAR_MARGIN_RATIO`/`SAFE_AREA_RATIO`（左132px・上173px相当）を暫定的に適用していたが、ユーザーから「160px, 260pxの位置に置く」という具体的な座標指定を受けたため、`monthBadge`のみ`MONTH_BADGE_LEFT_RATIO`（160/1080）・`MONTH_BADGE_TOP_RATIO`（260/1920）という独立した比率定数に切り替えた。`calendarPanel`・署名の左端とは意図的に完全一致しない（バッジは実機の曲面・カメラアイランド等を避けるためカレンダー帯よりもやや内側・下に配置する方が安全という判断）
-- **カレンダー帯と署名の縦の余白**: 署名（コピーライト）を画面最下部のセーフエリア境界（`SAFE_AREA_RATIO`基準）に配置し、カレンダー帯はその上に既存デザインと同じ32pxの間隔を保って浮かせる（`calendarPanel`の`bottom`＝署名の`bottom` + 32px）。底面ギリギリに張り付かない設計は従来から踏襲済みだったため、セーフエリアの基準点を「画面下端」から「セーフエリア境界」に置き換えるだけで対応できた
-
-**実装箇所（2026-09時点）**: `worker/image-utils.js` `_buildCalendarOverlayElement()`（`monthBadge`・`calendarPanel`）・`compositeMonthlyWallpaper()`内の`stampSignature()`（署名の貼り付け位置、同じ比率を独立に計算）。いずれも同一の`SAFE_AREA_RATIO`・`CALENDAR_MARGIN_RATIO`定数（`width`/`height`引数から動的に計算する比率であり固定px値ではない）を参照するため、キャンバスサイズを変更しても比率は保たれる。**当初は`_buildSignatureOnlyElement()`・`drawSignature()`の2関数がこの役割を担っていたが、Bug#39で署名が事前生成PNGアセット化されたことに伴い両関数は廃止され、`stampSignature()`に統一されている（詳細は上記「署名を事前生成PNGアセット化」参照）。**
-
-**未検証（2026-09時点）**: この修正はローカルのユニットテスト（要素ツリー・Photon描画呼び出しの数値アサーション）でのみ検証済み。実際のiPhone/Android実機での見切れ解消は、次回`POST /monthly-wallpaper/regenerate`実行後にユーザーが目視確認する。
-
-**低解像度合成＋Photon Lanczos3での最終拡大（2026-09追加・error 1102の追加対策）**: PR #186（カレンダーなし版のSatori/resvg排除）デプロイ後も、`query-worker-logs.mjs`で実機ログを確認すると`error 1102`が断続的に再発していた。失敗地点は毎回`再センタリング判定完了`の直後〜`カレンダー版オーバーレイ描画完了`の前後に集中しており、**カレンダー版1回分のSatori/resvg描画＋Photonでの複数回の画像デコード/エンコードだけでも、Workers Free上限のCPU予算を超過しうる**ことが判明した（詳細は`.claude/bugs-history.md`のBug#37追記参照）。
-
-resvgのラスタライズコスト・Photonのデコード/エンコードコストはいずれも処理するピクセル数にほぼ比例する。そこで、**カレンダー合成のパイプライン全体（ベースクロップ・再センタリング・Satori/resvg描画・Photon合成）を縮小解像度（`RENDER_SCALE = 0.5`・540×960相当、面積で1/4）で実行し、最後にPhotonの`resize()`（`SamplingFilter.Lanczos3`）で目標解像度（1080×1920）へ拡大**する方式に変更した。
-
-**なぜfal.ai（ESRGAN）ではなくPhotonのLanczos3を使うか**: 当初「fal.aiで最後に高解像度化する」案も検討したが却下した。fal.aiのESRGAN 2xは「AIが生成した猫イラスト（写真的な質感）の高精細化」を想定して選定したモデルであり（`CLAUDE.md`の「変えてはいけない設計判断」参照）、月替わり壁紙の最終画像はそこに**Satori/resvgで描いたフラットなベクター文字（カレンダーの数字・月名）が重なった合成物**である。AI超解像モデルを平坦な色面上のシャープな文字に適用すると、エッジのぼやけ・歪み・ノイズ（ハルシネーション）が生じやすく、カレンダーの可読性という本機能の核心を損なうリスクが高いと判断した。Photonの`Lanczos3`は単純な補間拡大でハルシネーションが起きないため、多少のソフト化はあっても文字が破綻しにくい。事前にPython/PILで簡易シミュレーション（低解像度描画→Lanczos拡大 vs フル解像度ネイティブ描画の比較）を行い、ユーザーが劣化度合いを確認したうえで採用した。
-
-**実装**:
-
-- `_buildCalendarOverlayElement(year, month, options)`・`_buildSignatureOnlyElement(options)`内の固定px値（フォントサイズ・パディング・角丸・マージン等）を、基準幅1080に対する`width`の比率（`scale = width / 1080`）でスケールするよう変更した。`width=1080`指定時は`scale=1`となり従来と完全に同じ値になるため、既存の呼び出し・テストへの後方互換を保っている
-- `compositeMonthlyWallpaper(imageData, year, month, deps = {})`は、`renderWidth = Math.round(width * RENDER_SCALE)`・`renderHeight = Math.round(height * RENDER_SCALE)`を算出し、ベースクロップ・再センタリング判定・`_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`の呼び出し・Satori/resvg描画・Photon合成のすべてを`renderWidth`/`renderHeight`基準で行う。カレンダーあり版・なし版それぞれの合成が完了した最後の1ステップとして、Photonの`resize(img, width, height, SamplingFilter.Lanczos3)`で目標解像度へ拡大してから`get_bytes()`/base64エンコードする
-- 診断用の`console.log`（`[monthly-wallpaper-composite]`プレフィックス）に拡大ステップの完了ログを追加する
-
-**実機再検証（2026-09・撤回）**: デプロイ後にユーザーが`POST /monthly-wallpaper/regenerate`を3回実行したところ**3回とも`error 1102`**という結果になった。`query-worker-logs.mjs`でログを相関させると、(1) カレンダー版オーバーレイ描画（Satori/resvg＋Lanczos3拡大）は完走したがその直後で失敗、(2) 合成・R2保存まで完全に成功（`composited=true`）したにもかかわらずその後（Bluesky/Mastodon投稿またはDiscord通知の段階と推測）で失敗、(3) 合成開始直後に失敗、という3パターンが混在していた。このプロジェクトの過去の記録（Bug#37: 「追加のLanczos3リサイズを1回上乗せしただけでCPU予算を超過させた」）に照らすと、**今回追加したカレンダーあり版・なし版それぞれ1回ずつ計2回のLanczos3拡大呼び出しが、縮小解像度化で浮いた分を相殺・悪化させた可能性が高い**と判断し、この最終拡大ステップ自体を撤回した（詳細は下記「最終拡大の撤回」参照）。
-
-### 最終拡大の撤回・540×960のまま配信（2026-09追加）
-
-上記の実機再検証結果を受け、**Lanczos3による目標解像度（1080×1920）への最終拡大処理を撤去し、縮小解像度（540×960）のまま2版を返す**方式に変更した。
-
-- `compositeMonthlyWallpaper()`の`width`/`height`デフォルト値を`1080`/`1920`から`540`/`960`へ変更し、`renderWidth`/`renderHeight`・`RENDER_SCALE`・`upscaleToTarget()`は廃止して、ベースクロップから合成・エンコードまで単一の`width`/`height`基準で行う（PR #186時点の実装に戻す形だが、目標解像度の値だけが540×960に変わっている）
-- `_buildCalendarOverlayElement()`/`_buildSignatureOnlyElement()`のフォントサイズ等のスケーリング機構（`elementScale = width / 1080`）は維持する（`width=540`指定時に自動的に半分のフォントサイズになるため、追加のスケーリング計算は不要）
-- **画質とのトレードオフ**: 540×960はフルHD（1080×1920）の1/4の画素数であり、高精細ディスプレイでは壁紙としてのシャープさが劣る。ただし「文字が読めないほどではないがフル解像度よりは粗い」という許容範囲と判断し、確実にCPU予算内へ収める方を優先した。将来Workers Paidプラン（CPU上限引き上げ）へ移行する場合は、`width`/`height`のデフォルトを1080/1920へ戻すだけで元の解像度に復帰できる
-- **実機再検証の結果（2026-09・解消確認）**: デプロイ後、ユーザーが`POST /monthly-wallpaper/regenerate`を3回実行し、**3回とも成功**（`error 1102`の再現なし）を確認した。低解像度合成パイプライン自体（540×960・拡大処理なし）に絞ったことで、error 1102は解消したと判断する。Satori/resvgの処理コストがピクセル数に強く依存するという仮説（Bug#37の記録）、および「追加のLanczos3リサイズが逆効果になる」という過去の教訓が、今回もそのまま当てはまる結果となった
-
-### 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
-
-`runBot()`と同じ構造を踏襲する。`deps.compositeMonthlyWallpaperFn`（省略時`compositeMonthlyWallpaper`）はSatori/resvgという重いWASM処理を伴うためテスト時に必ずモック可能にしている（`_pollFalAndGetTexture()`と同じ「依存関数を引数で受け取る」パターン）。
-
-1. `resolveTargetYearMonth()`で対象年月（翌月）を決定 → 月テーマ取得 → `handleGenerate()` → `compositeMonthlyWallpaperFn()`でカレンダーあり・なし2版を生成
-2. R2保存: `monthly-wallpaper/YYYY-MM/calendar.png` + `no-calendar.png` + `meta.json`。**手動再生成は同一年月のキーを上書きする**（Bot投稿の`bot/YYYY-MM-DD-n`スロット方式とは異なり、意図的な再実行が主目的のため上書きでよい）
-3. Bluesky投稿: **カレンダーあり・なし2枚を同一投稿に添付**する。既存`createPost()`は単一画像専用のため、新規関数`createMonthlyWallpaperPost()`（`worker/bot.js`内・同一モジュールスコープの既存プライベート関数`createBlueskySession()`/`uploadBlob()`を再利用）で`app.bsky.embed.images`の画像配列（2件・altテキストをそれぞれ設定）を組み立てる
-4. Mastodon投稿: 既存`uploadMediaToMastodon()`を2回呼び、`postStatusToMastodon()`の`media_ids[]`に2件渡す
-5. 投稿文言: `buildMonthlyWallpaperPostText()`（Bluesky・日本語のみ、既存`buildPostText()`と同じ方針）・`buildMonthlyWallpaperMastodonText()`（Mastodon・英語優先の日英二言語、既存`buildMastodonText()`と同じ方針）。ハッシュタグ例: `#壁紙 #猫壁紙 #AIart #cat #にゃんバーサリー`（Bluesky）・`#wallpaper #cat #AIart #にゃんバーサリー`（Mastodon）
-6. Discord通知（`notifyDiscord()`流用・2通構成）: **成否ステータスは1通目のみに記載し、2通目では再掲しない**（日次Botと異なる点）。月次は頻度が低く「1通目が届かない」こと自体が異常のシグナルになるため、再掲の必要性が薄いと判断した
-   - 1通目: 成否ステータス（投稿URL付き。日次Botと同じ`buildBlueskyPostUrl()`/Mastodon Status APIの`url`フィールドを使う）＋テーマ＋Geminiプロンプト全文
-   - 2通目: Bluesky投稿テキスト＋Mastodon投稿テキスト（いずれもX/Instagram/Facebook/mixi2等への手動転載用）
-
-### 手動再生成エンドポイント
-
-`POST /monthly-wallpaper/regenerate`。`X-Bypass-Token`ヘッダーを既存`BYPASS_TOKEN`シークレットと照合（不一致は403）。一致したら`runMonthlyWallpaperPost(env, handleGenerate, ctx)`を呼び出し結果をJSONで返す。Cron発火時と全く同じ関数を呼ぶため実装・テストは1箇所に集約される。自動のバックアップCronチェックは今回実装しない（ユーザー判断・手動再生成のみで信頼性を担保する）。
-
-### Cron（月末自動生成）
-
-**設計変更（2026-09・デプロイ後に判明）**: 当初は独立Cron`"0 3 * * *"`（03:00 UTC = 12:00 JST）を新設する設計だったが、実際にデプロイしたところCloudflare APIが`10072`エラー（Cron Trigger上限超過）で拒否した。原因はCron Triggerの上限が**Worker単位ではなくCloudflareアカウント単位**（Workers Freeは5本/アカウント）であり、同一アカウント内の別プロジェクト（`yobiko`・`yobiko-staging`、各1本使用）と本Workerの既存3本を合わせてすでに5本に達していたため。ステージング環境も本番と同一のCron挙動を維持する必要があるとの理由で`yobiko-staging`側の削減は見送り、代わりに独立Cronを新設せず**既存の`"0 15 * * *"`に相乗り**させる設計に変更した。
-
-これにより実行時刻はユーザー当初希望の12:00 JST頃から**0:00 JSTへ変更**になっている（`"0 15 * * *"`は元々リサーチプール生成用の毎日Cron）。`scheduled()`の`"0 15 * * *"`分岐:
-
-```js
-if (event.cron === "0 15 * * *") {
-  ctx.waitUntil(generateResearchPool(env, ctx));
-  ctx.waitUntil((async () => {
-    const jstDateISO = toJSTDateStringWorker(new Date());
-    if (!isLastDayOfMonthJST(jstDateISO)) return; // 月末以外は即return
-    await runMonthlyWallpaperPost(env, handleGenerate, ctx);
-  })());
-  return;
-}
-```
-
-`generateResearchPool()`・月末チェックはどちらも`ctx.waitUntil()`に個別登録され、互いに待ち合わせない（片方が遅延・失敗してももう片方に影響しない）。
-
-`isLastDayOfMonthJST(dateStr)`は新規の小さな純粋関数（翌日の日付を計算し、月が変わっていれば月末と判定）。大半の日はここで即returnするため、既存Cronへの負荷影響はごく僅か。
-
-### 公開後フォローアップ（運用ルール）
-
-初回投稿から5日後を目安に、Bluesky/Mastodonの公開API（`public.api.bsky.app`・対象Mastodonインスタンスの`/api/v1/accounts/.../statuses`、いずれも認証不要）で反響（いいね・リポスト・返信）を確認し、簡単な総括と次月に向けた改善案をまとめる。手順は集客診断セッションで実施した手法と同じ（`.claude/future-ideas.md`の「集客・マーケティング診断」参照）。
+> **詳細は[`.claude/docs/architecture/monthly-wallpaper.md`](../docs/architecture/monthly-wallpaper.md)に移動した**（2026-10・自動読み込みの軽量化）。この節を参照する指示があったら移動先を読むこと。
+
+月末にカレンダー付き/なしの壁紙2枚をBluesky/Mastodonへ投稿する機能。Satori+resvgによるカレンダー合成、署名PNGアセット、セーフエリア調整、error 1102対策（540×960で配信）、手動再生成エンドポイント、`0 15 * * *`への相乗りCron。
+
+移動先に収録している小見出し:
+
+- 背景
+- 月テーマの決定（新規データテーブルなし）
+- 画像生成: 既存`handleGenerate()`の拡張利用
+- カレンダー・月名の合成（`worker/image-utils.js` `compositeMonthlyWallpaper()` + `worker/svg-render.js`）
+- 署名を事前生成PNGアセット化（2026-09・Bug#39）
+- 最終拡大の撤回・540×960のまま配信（2026-09追加）
+- 投稿本体（`worker/bot.js` `runMonthlyWallpaperPost(env, handleGenerate, ctx = null, deps = {})`）
+- 手動再生成エンドポイント
+- Cron（月末自動生成）
+- 公開後フォローアップ（運用ルール）
 
 ---
 

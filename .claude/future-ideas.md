@@ -1,5 +1,21 @@
 # 将来拡張メモ
 
+## 目次（2026-10追加）
+
+見出しの括弧内の状態（未着手・議論中断・完了等）で探す。
+
+- Cloudflare Workers AI移行調査（2026-05・完了・保留）
+- リファクタリング候補（テスト容易性の改善）
+- 将来の拡張に関する設計方針メモ
+- 未使用だが将来有用な機能
+- かなモード（ふりがな表示）設計メモ（2026-05・実装待ち）
+- Playwright MCPによるUI検証・suzuri.jp調査の自動化（未着手・2026-06）
+- health-check.jsへのFAL_KEY検証追加（未着手・2026-06）
+- メインキャラクター「ニャンばー」「サリー」の導入（未着手・Issue #160・2026-08）
+- fal.aiポーリングをCloudflare Queuesに移行する案（未着手・2026-08）
+- 集客・マーケティング診断（2026-09）
+- SUZURIセール関連: 自動反映ルール導入＋SNSセール告知バナー（2026-09・議論中断・未承認）
+
 ## Cloudflare Workers AI移行調査（2026-05・完了・保留）
 
 ### 調査の背景
@@ -427,144 +443,6 @@ ctx.waitUntil()が途中終了した稀なケース向け。フロントの60秒
 
 - 判定基準: R2 meta.jsonの`products`フィールドの有無（SUZURIのAPIは「登録済み確認」エンドポイント非提供）
 - `data.products?.length > 0`の場合はグッズ生成ボタンを非表示にする
-
----
-
-## 未使用だが将来有用な機能
-
-### 1. `products/exemplaryItemVariantId`（Material Create/Update）
-
-「サンプル表示」に使うバリアント（色×サイズの組み合わせ）を指定するパラメーター。
-未指定の場合はSUZURI側がデフォルトを選ぶ（TシャツはホワイトSサイズになることが多い）。
-
-```json
-{
-  "products": [
-    {
-      "itemId": 1,
-      "exemplaryItemVariantId": 151,
-      "published": true
-    }
-  ]
-}
-```
-
-`itemVariantId`は`GET /api/v1/items`のレスポンスの`variants[].id`で確認できる。
-**現状の実装では未指定**。SUZURI側のデフォルトに任せている。
-
----
-
-### 3. 背面印刷（`products/sub_materials`）
-
-Tシャツの背面に別画像を印刷するオプション。
-
-```json
-{
-  "products": [
-    {
-      "itemId": 1,
-      "published": true,
-      "sub_materials": [
-        {
-          "texture": "https://example.com/back-image.png",
-          "printSide": "back",
-          "enabled": true
-        }
-      ]
-    }
-  ]
-}
-```
-
-**活用場面**: Tシャツ背面に記念日テキストや別デザインを入れる場合。
-**注意**: 追加画像生成が必要になるため実装コストが高い。現状は不要。
-
----
-
-### 4. `PUT /api/v1/materials/{material_id}`（Material Update）
-
-マテリアルの情報を更新するエンドポイント。削除せずにタイトル・価格・商品構成を変更できる。
-
-```bash
-curl -X PUT /api/v1/materials/$MATERIAL_ID \
-  -H "Authorization: Bearer $SUZURI_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"title": "新しいタイトル", "price": 200}'
-```
-
-**活用場面**: 将来的にトリブン（価格）を動的に変えたい場合や、タイトルを更新したい場合。
-**現状**: 価格は`SUZURI_TORIBUN`定数で固定しており更新不要。
-
----
-
-### 5. `GET /api/v1/products?materialId={id}`（Product List + materialIdフィルター）
-
-特定マテリアルIDに紐づく商品一覧を取得できる。
-
-```bash
-curl -n /api/v1/products?materialId=31106
-```
-
-**活用場面**: R2メタデータなしに「このマテリアルの商品が存在するか」をSUZURI APIから直接確認できる。
-**現状**: 重複チェックはR2メタデータの`products`フィールド有無で判定しているため、このエンドポイントは不要。
-
----
-
-### 6. `GET /api/v1/products/{product_id}`（Product Info）
-
-個別商品の詳細情報。リスト取得と異なり、**全バリアント（色×サイズ）**の情報が`itemVariants[]`として取得できる。
-
-リスト系エンドポイント（`GET /api/v1/products`等）は`sampleItemVariant`（1件）しか返さないが、このエンドポイントは`itemVariants`（全件）を返す。
-
-**活用場面**: 特定商品のカラー展開・サイズ展開を調べたい場合。現状は不要。
-
----
-
-### 7. `GET /api/v1/materials`（Material List）
-
-自分のマテリアル一覧（デフォルト20件）を取得。
-
-```bash
-curl -n "/api/v1/materials?limit=30&offset=0" \
-  -H "Authorization: Bearer $SUZURI_API_KEY"
-```
-
-**活用場面**: 過去に登録したマテリアルの棚卸しや、孤立したマテリアルの削除。
-`scripts/audit-suzuri-materials.mjs`（2026-06追加）で実際に使用している。
-
----
-
-### 8. Choice API（キュレーションコレクション）
-
-複数の商品をグループ化して「特集」として公開できる機能。
-
-```bash
-# Choiceを作成
-POST /api/v1/choices
-{
-  "title": "にゃんバーサリー 人気グッズまとめ",
-  "description": "..."
-}
-
-# 商品を追加
-POST /api/v1/choices/{choice_id}
-{ "productId": 1, "itemVariantId": 1 }
-```
-
-**活用場面**: 季節ごと・テーマごとに商品コレクションを作りSUZURIトップに特集として掲載できる。
-**現状**: 商品数がまだ少ないため優先度低。売上が増えてから検討。
-
----
-
-### 9. `GET /api/v1/user`（自分の情報確認）
-
-認証済みユーザー自身の情報を返す。APIキーが正しく機能しているか確認するのに便利。
-
-```bash
-curl -n /api/v1/user -H "Authorization: Bearer $SUZURI_API_KEY"
-```
-
-**活用場面**: `scripts/test-suzuri-api.mjs`のStep 0として「APIキー疎通確認」に追加できる。
 
 ---
 
@@ -1191,6 +1069,12 @@ const KANJI_FONT_STACK = '"Hiragino Mincho ProN", "Yu Mincho", "游明朝", "Not
 
 ---
 
+## 未使用だが将来有用な機能
+
+> **本文は[`.claude/docs/suzuri-api-unused-features.md`](docs/suzuri-api-unused-features.md)に移動した**（2026-10）。SUZURI APIのうち、このプロジェクトでまだ使っていない（または一部だけ使っている）機能の一覧。
+
+---
+
 ## かなモード（ふりがな表示）設計メモ（2026-05・実装待ち）
 
 ### 概要
@@ -1491,22 +1375,38 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 
 「秋のBIGセール」の`_currentSale`反映漏れ（検知から9日間未反映）をきっかけに、2つの議論が並行して進んでいたが、ユーザーの指示で中断した。次回セッションはここから再開する。
 
-### A. `_currentSale`自動反映ルールの導入（Plan提示済み・未承認）
+### A. `_currentSale`自動反映ルールの導入（2026-09-30・新設計を検討中・未承認）
 
-**背景**: `checkForNewSale()`は検知・Discord通知までは自動だが、`_currentSale`への反映は意図的に人間レビュー必須（`CLAUDE.md`の「変えてはいけない設計判断」参照）。今回その反映が9日間漏れ、フロントのセールバナー非表示・Bot投稿後のセール告知リプライ未発火という実害が出た。ユーザーは「事前に予告(Discord通知)することで、拒否しなければ自動更新する」というルールに変更したいと表明した。
+**背景**: `checkForNewSale()`は検知・Discord通知までは自動だが、`_currentSale`への反映は意図的に人間レビュー必須（`CLAUDE.md`の「変えてはいけない設計判断」参照）。今回その反映が9日間漏れ、フロントのセールバナー非表示・Bot投稿後のセール告知リプライ未発火という実害が出た。
 
-**技術的制約**: `_currentSale`はgit管理下のJSコード定数のため、Workerが自分でコミット・デプロイすることはできない。反映には必ずClaude Codeセッションの実行が必要。
+**設計の変遷**:
 
-**合意済みの設計方針**（AskUserQuestionで確認済み・実装はまだ未着手）:
+1. 旧案（2026-09・破棄）: 検知結果をKV・専用エンドポイント・リポジトリ内の状態ファイルに保存し、24時間待機してからClaudeの定期セッション（Routine）が反映する。可動部が多く複雑
+2. 中間案（2026-09-29）: Workerの検知（1時）は残し、深夜2時にClaudeのRoutineがプルリクエストを作る。ユーザーがマージ＝承認、閉じる＝拒否
+3. 現行案（2026-09-30）: **検知・読み取り・Discord通知・プルリクエスト作成をすべてGitHub Actionsに移す**。Claudeのセッションは使わない。Cloudflareの`0 16 * * *`のCronを廃止して2本に減らす
 
-1. **拒否の意思表示**: ユーザーが任意のセッションでClaudeに「このセールは反映しないで」と伝える（Discord上でのリアクション等ではなく、会話ベース）
-2. **待機時間**: 検知から翌日の検知Cron相当（約24時間後）
-3. **拒否記録の保存先**: リポジトリ内の状態ファイル（例: `.claude/sale-check-state.json`。`reflectedArticleUrl`・`rejectedArticleUrls`を保持する案）
-4. **自動反映の実行主体**: 毎日1回起動する新規Routine（Claude Code Remoteの`create_trigger`機能）が、起動したセッションに「未反映・拒否記録なし・検知から24h経過のセールがあれば`_currentSale`を更新する」よう指示する
-5. **Worker側の追加実装**: `checkForNewSale()`が検知時、記事URLだけでなく抽出済みの構造化データ（セール名・期間・商品別割引）もKVに保存するよう拡張。Routine起動セッションがこれを取得するための読み取り専用エンドポイント（例: `GET /sale-check/latest`、認証なしの診断系エンドポイント）を新設する
-6. **PR運用**: 自動反映後はPR作成まで行う。**マージは人間が手動で行う**（自動マージはしない）
+**現行案の構成**（方法A）:
 
-**未着手の理由**: Plan提示までは完了したが、正式な承認（`進めて`等の明示的な合意語）を得る前に別件（バナーの見た目調整・Bot障害調査）へ話が移ったため、Docsフェーズへは入っていない。次回はこのPlanの最終承認から再開する。
+- Actions（毎日1回・時刻は「毎時0分」を避ける）が、(1) `POST /cleanup`（新設・`BYPASS_TOKEN`保護・1回20件まで）を`curl`で叩いて期限切れR2/SUZURIエントリを削除、(2) セール検知スクリプトを実行、の2つを行う
+- セール検知スクリプト: ニュース一覧取得→新しいセール記事を検出→Geminiで読み取り→`worker/sale.js`を書き換え→プルリクエスト作成→Discord通知
+- 削除処理をActionsから直接動かす案（方法B・R2のS3互換API）は、新しい秘密情報が増え書き直しも大きいため見送り。方法Aで外部通信の回数超過（Bug#41）が起きた場合の次の手段として残す
+- 削除する物: `worker/sale-check.js`・`0 16 * * *`のCron・関連テスト・ドキュメント
+
+**実装前に詰める点**（Planで提示済み・回答待ち）:
+
+| 論点 | 案 |
+| --- | --- |
+| Geminiのモデル名（固定すると廃止で404になる。Actionsにはworkerの`selectBestModel()`がない） | スクリプト内でモデル一覧を取得して選ぶ。workerの`_selectFromCandidates()`（純粋関数）をNodeから読み込めるか要確認 |
+| 重複防止（ActionsにはKVがない） | 記事スラッグをブランチ名（`sale-<スラッグ>`）にし、同名ブランチや`_currentSale.id`がすでにあればスキップ |
+| 日時の形式（今のGemini出力は「10月4日」のような文字列） | Geminiに日本時間のISO形式で出させ、コードで`Date.UTC`用の数値に変換。読めなければプルリクエスト本文に「要確認」と書く |
+| 商品ごとの割引（`sale.js`は割引額を1つしか持てない） | プルリクエスト本文に商品ごとの内訳を書き、`discountYen`は最大額を入れる。細かい判断はマージ前にユーザーが確認 |
+| プルリクエスト作成の許可 | リポジトリ設定で「Actionsによるプルリクエスト作成」の許可が必要。Actionsが作ったプルリクエストではヘルスチェックが自動で走らない場合がある（知識にもとづく・公式は未確認） |
+| 切り替え順（Actionsは`main`のファイルからしか動かない） | 1回目のマージで「Actionsと`/cleanup`を追加」→`workflow_dispatch`で手動確認→2回目のマージで「Cloudflare側を削除」 |
+| 秘密情報 | `GEMINI_API_KEY`・`DISCORD_WEBHOOK_URL`は登録済み。`WORKER_URL`・`BYPASS_TOKEN`は任意扱いで登録状況を要確認 |
+
+**Cron枠について**: 上限はアカウント単位（Workers Freeは5本）。現在3本、廃止後2本。GitHub Actionsのスケジュール実行は本数無制限・公開リポジトリなら無料だが、時刻が10〜30分以上ずれる、まれに飛ばされる、`main`からしか動かない、60日間リポジトリの更新がないと停止する、という制約がある（知識にもとづく・公式は未確認）。朝7時のBot投稿は時刻ずれの影響が大きいためCloudflareに残す。
+
+**未着手の理由**: Plan提示までは完了したが、ユーザー発言が「考えてます」（検討・壁打ち）の段階で、明示的な承認語（`進めて`等）はまだない。次回は下記の回答を得て、承認から再開する。
 
 ### B. SNSセール告知バナー（ビジュアル方向性・議論中）
 
@@ -1528,6 +1428,90 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 - どの日のBot生成イラストをバナーに使うかという運用ルール（セール検知時点の最新投稿を使う案が有力・未確定）は前回セッションで指摘済みで、まだ結論が出ていない
 - モックアップ自体はコミットされておらず、次回セッションで再現する場合は`worker/assets/fonts/`にフォントを追加し`/thumb/bot/YYYY-MM-DD`から実イラストを取得するスクリプトを再度書く必要がある（このセッションでのPythonスクリプトは`/tmp`スクラッチパッド内で消える）
 
+**上記の残課題のうち、Tシャツの質感・フォント・イラスト選定は下記「C. Gemini×Satori分業方式」でおおむね方向性が出た（2026-09-29）。**
+
+### C. Gemini×Satori分業方式（2026-09-29・パターン1の試作でユーザー評価「かなり魅力的になった」）
+
+**経緯**: 同じ要件をGemini（無料版アプリ）に4パターン（1: ポップ・賑やか、2: 秋の季節感、3: 猫が宣伝、4: 上品・ミニマル）で描かせたところ、Claudeのモックアップより楽しげな雰囲気が大きく増した。ただしGeminiは文字・商品の正確さに欠けた（実際の誤り: 扱っていないリュックを描く、「最大」を二重に書く、缶バッジに猫でない柄を描く）。ユーザーは1・2を好み、まずパターン1で分業方式を試した。
+
+**分業の役割（合意済み）**:
+
+| 担当 | 内容 | 理由 |
+| --- | --- | --- |
+| Gemini | 完成図の草案 → 草案から文字と商品を消した背景（猫・紙吹雪・落ち葉等を残す）＋文字の配置情報（JSON） | 絵の演出・構図の発想はGeminiが得意。正確さが不要な部分 |
+| SUZURI実画像 | セール対象グッズ（R2メタの`products[].previewImageUrl`） | 実物なので商品の取り違えが起きない |
+| Satori（+resvg） | 割引額・締切・ショップ名・URL・値札の描画と、背景・グッズとの合成 | 指定どおりの文字を一字も間違えずに描ける |
+
+**試作で確認できたこと**:
+
+- **Geminiの文字・商品消去**: 背景に消し跡は見当たらず、そのまま使えた（無料版アプリで手動実行）
+- **グッズ画像の取得**: `GET /meta/bot/YYYY-MM-DD`（認証なし）の`products[].previewImageUrl`（`lens.suzuri.jp`、500×500の透過PNG）を、MCPサーバーやSUZURI APIキーなしにクラウドセッションから取得できた。URL内の`500x500`を変えると大きい画像が取れる可能性があるが未検証
+- **Satoriで再現できた表現**（Node.jsで`@cf-wasm/satori/dist/node.js`＋`@resvg/resvg-wasm`を使用、1080×1080で1枚約7秒）:
+  - アーチ状の見出し: 1文字ずつ`transform: rotate()`して円弧上に絶対配置。文字幅が一律だと「I」「ッ」の前後が空くため、文字ごとに幅係数を持たせて補正した
+  - グラデーション文字＋二重の縁取り: `backgroundClip: "text"`のグラデーションは縁取り（`textShadow`）と同じ要素で併用できないため、「焦げ茶の縁取り層」「白の縁取り層」「グラデーション層」の3枚を同じ位置に重ねた。縁取りは`textShadow`を円周16方向に並べて太さを出す
+  - 両端に切り込みのあるリボン: CSSの三角形（`border`の透明色トリック）はSatoriで描けなかったため、SVGを`data:`URIの`<img>`として敷いた
+- **白Tシャツが白背景に溶ける問題**: 色付きの円（Tシャツはオレンジ`#F4A259`、ステッカーは緑`#8FC1A9`）に白フチ・影を付けた台座に載せて解決。SUZURIプレビューURLの`white`を別色に変える案は、実際に販売していない色を見せることになるため不採用
+- **値札**: 商品ごとに「Tシャツ 1,000円OFF」「ステッカー 100円OFF」の赤い丸バッジを付けた。見出しの「最大1,000円OFF」だけだと、ステッカーも1,000円引きと誤解されるため
+
+**パターン2（秋の季節感）の試作結果（2026-09-29）**:
+
+- Geminiの背景は草案（クリーム色の紙＋下半分の木の棚）と構図が異なり、画面全体が木の板の背景に描き直されていた。「消して」と頼んでも描き直されることがある
+- 木の板が中間色のため、白いTシャツ・ステッカーは台座なしで目立った
+- 初回は配置情報（JSON）の書式どおりに作ったところ、見出しが草案と違って見えるとユーザーから指摘があった。JSONは「白文字＋焦げ茶の縁取り」だったが、草案は逆の「焦げ茶の文字＋白の縁取り」で、アーチ配置・「最大」の縦書き・「円／OFF」の縦積みもJSONに含まれていなかった。Claudeが草案の画像を直接見て書式を合わせ直し（フォントも草案に近い極太の丸ゴシック＝Zen丸ゴシック Blackに統一）、草案にかなり近づいた
+- 教訓: **配置情報（JSON）の書式情報（色・縁取りの向き・アーチ等）は当てにならない。位置の目安にとどめ、書式はClaudeが草案の画像を見て合わせる**。信頼度の一覧は`.claude/skills/sale-announcement/reference.md`の「配置情報（JSON）の信頼度」参照
+
+**Google AI Studio版の作成と実投稿（2026-09-29）**:
+
+- ユーザーの判断で、パターン1の方向性をGoogle AI Studio（Nano Banana＝`gemini-2.5-flash-image`＋APIキー）で作り直した。AI Studioの画像生成モデルはすべて有料で、Playgroundで使うにはGoogle AI PlanかAPIキーが必要だった
+- 配置情報（JSON）は頼まず、草案と背景の2枚だけを用意してもらった。グッズは草案に使われたイラスト（`bot/2026-09-29`招き猫の日）の実物画像を`fetch-assets.sh`で取得した
+- 背景は同じ会話で編集を頼んでも描き直され、文字の余白がなかったため、場面を切り出して縮小・下寄せする組み直しを合成側で行った。右下の硬貨1枚はユーザーの判断で手作業で消した
+- 完成版を`compose-aistudio.mjs`として保存（投稿画像とバイト単位で同一の出力を再現確認済み）。JPEG（約300KB）に変換してユーザーがBluesky・Mastodonに手動投稿した。手順・設定・投稿文は`.claude/skills/sale-announcement/`参照
+- **反響の確認**: セール終了翌日（2026-10-05）に、Bluesky（`public.api.bsky.app`の`getAuthorFeed`・`nyanmusu.bsky.social`）とMastodon（`mastodon.social/@nyanmusu`）の公開APIで、この投稿のいいね・リポスト（ブースト）・返信を確認する。同じ週の通常のBot投稿の反響と比べ、告知バナーに効果があったかを判断する材料にする
+
+**Bluesky・Mastodonへの自動投稿とDiscord送信（2026-09-29・実運用で成功）**:
+
+- ユーザーの希望で、告知の投稿を手動からGitHub Actions経由の自動投稿に切り替えた（`.github/workflows/sale-announcement.yml`＋`scripts/post-sale-announcement.mjs`）。Discordには「両SNSの成否（投稿URL付き）」「X・Instagram等への転載用の本文（ハッシュタグ5つまで）」「Mastodon用の本文」「共通の代替テキスト」を送る
+- 実投稿: Bluesky `https://bsky.app/profile/nyanmusu.bsky.social/post/3mwnyup3ahd2n`、Mastodon `https://mastodon.social/@nyanmusu/117354716984838537`（いずれも2026-09-29 23:07 JST。公開APIで1件ずつ投稿されたことを確認）
+- ユーザーによる手動転載（2026-09-29、Discordの転載用テキストを使用）:
+  - X: `https://x.com/hiroshikuze/status/2104949230502809603`（ユーザー個人のアカウント）
+  - Instagram: `https://www.instagram.com/p/Dd4B_mpvpzb/`
+  - Facebook: `https://www.facebook.com/share/p/19dQHjSkjS/`
+  - mixi2: `https://mixi.social/@nyanmusu/posts/939f5f0a-44dc-4b58-8043-73e88afc61c0`
+  - Discord（自動投稿の結果・転載用テキストの通知。ユーザーの非公開サーバー内のため、閲覧にはそのサーバーへの参加が必要）: `https://discordapp.com/channels/1390567808148045907/1480490867600134164/1554513631847125075`
+  - 反響の確認方法: Bluesky・Mastodonは公開APIで取得できる。X・Instagram・Facebookは認証や有料APIが必要で、Claude Codeからは取得できないため、ユーザーに各アプリの数字（いいね・リポスト等）を教えてもらう。mixi2の公開APIの有無は未確認
+- 途中で起きたこと:
+  - GitHub Actionsに`MASTODON_*`が未登録だった（Workerにのみ登録）。ユーザーが登録したが、`MASTODON_INSTANCE_URL`の値の誤り（最初は接続不可、次は`/@nyanmusu`付きでHTMLが返る）でHealth Checkが2回失敗し、`https://mastodon.social`に直して通過した
+  - 本番の1回目のpushで、お試し用フォルダから本番用フォルダへのファイルの入れ直しをgitが「名前の変更」と判定し、「追加」だけを探すワークフローが投稿を飛ばした。`git diff --no-renames`で修正し、やり直して投稿できた
+- 手順全体（誰が何をするか）はスキル`sale-announcement`（`.claude/skills/sale-announcement/SKILL.md`）の「手順」にまとめた。次回はそこから始める
+
+**Geminiの配置情報をそのまま使えなかった点**（パターン1のSatori合成時に手動で補正した）:
+
+- 見出し「SUZURI 秋のビッグセール 開催中！」を1行・58pxで指定してきたが、1080px幅に収まらないため「開催中！」を右下に分けた
+- 見出しの位置が猫のパーティー帽と重なった
+- 締切リボンが割引額に近すぎ、「1,000」のカンマの尾が隠れて「1.000」に見えた
+- グッズの配置は情報に含まれていなかった
+
+→ 本番化するなら、配置情報を人間（またはレビューするClaude Codeセッション）が確認する工程か、重なりを自動補正する仕組みが要る。
+
+**セール対象商品の確認結果（秋のビッグセール 2026-09）**: SUZURIのセール記事（`https://suzuri.jp/media/journal_autumn_big_sale_202609/`、サンドボックスの`curl`で直接取得）によると、このショップの4商品のうち対象は**スタンダードTシャツ（1,000円引き）とステッカー（100円引き）のみ**。缶バッジ・アクリルキーホルダーは対象一覧に載っていない。最初の試作は4商品すべてを載せており、ユーザーの指摘で判明した。このショップのTシャツがスタンダードTシャツであることは未確認。
+
+**運用フロー（合意済み・未実装）**:
+
+- Geminiの呼び出しはGitHub Actions経由（`GEMINI_API_KEY`はActionsシークレットに登録済み）。セッションへのキー登録は「別セッションに引き継げない」「使い捨てキーの管理が負担」のためユーザーが却下
+- Actionsの成果物はプレビュー専用ブランチにコミットし、Claude Codeセッションが取得してチャットに表示する（Discordからのコピペ往復は手間が大きいためユーザーが却下）
+- Satori合成はキー不要なので、Claude Codeセッション内で待ち時間なしに何度でも作り直す。Actionsの1分待ちは「背景を描き直すとき」だけにする
+- Workerでの自動生成はしない。月替わり壁紙でSatori/resvgがCPU上限を超え`error 1102`を繰り返したため（詳細は`architecture.md`の「月替わり壁紙プレゼント機能」参照）
+- 本番ではGoogle AI Studio（API）で背景を作り直す必要がある（今回はGemini無料版アプリの出力で試した）
+
+**残課題（未解決）**:
+
+- 台座の下側がオレンジの帯に隠れる。要素の重なり順が指定どおりにならない原因は未調査
+- Tシャツの値札が「1,000」の左下に少し重なっている
+- 対象商品・値引き額をどこから取るか。`checkForNewSale()`がすでに商品ごとの`included`/`discountYen`を抽出しているので、人間が確認して`worker/sale.js`へ反映した値をバナーでも使う案が有力（Aの自動反映ルールと関係する）
+- Geminiへの指示文のうち「文字と商品を消す」「配置情報をJSONで出す」の2つは、ユーザーが実際に入力した文面が記録されていない（`.claude/skills/sale-announcement/`にClaudeの再構成案を置いた）
+
+**スキル一式の保存先**（2026-09-29に`.claude/prototypes/sale-banner/`から移動し、正式なスキル`sale-announcement`にした）: `.claude/skills/sale-announcement/`（合成スクリプト`compose-aistudio.mjs`〔実投稿版〕・`compose.mjs`〔パターン1〕・`compose-pattern2.mjs`〔パターン2〕・素材取得`fetch-assets.sh`・手順`SKILL.md`・参考情報`reference.md`・Geminiへの指示文`prompts.md`）。本番コードではない。新しい作業ディレクトリで`fetch-assets.sh`→`compose.mjs`を実行し、ユーザー評価済みの画像とバイト単位で同一の出力が再現できることを確認済み（2026-09-29）。素材（背景・グッズ画像・フォント約12MB）はコミットしていない。
+
 ### 次のアクション
 
-次回セッション冒頭で、このセクションを読んでからA・Bどちらから再開するかユーザーに確認する。Aは技術設計がほぼ固まっているため実装に進みやすい。Bはまだビジュアルの方向性合意中のため、追加のモックアップ往復が必要な見込み。
+次回セッション冒頭で、このセクションを読んでからA・B/Cどちらから再開するかユーザーに確認する。Aは2026-09-30に現行案（Actionsに集約）へ設計変更済み。再開時に、上の「実装前に詰める点」への回答（とくに`WORKER_URL`・`BYPASS_TOKEN`の登録状況とプルリクエスト作成の許可設定）と承認を得る。Cは2026-09-29にAI Studio版を自動投稿の仕組みで実投稿済み。2026-10-05に反響を確認し、結果をこの節に追記する（Claude Code Remoteの`send_later`で予約済み）。次のセールではスキル`sale-announcement`（`.claude/skills/sale-announcement/SKILL.md`）の「手順」から始める。
