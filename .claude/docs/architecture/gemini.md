@@ -22,6 +22,8 @@ const KNOWN_IMAGE_CANDIDATES = [
 
 `scripts/health-check.js`は`KNOWN_IMAGE_CANDIDATES`と同期させた独立コピーを保持し、`checkImageModels()`で配列の先頭エントリをE2Eチェックする（配列が古い場合は`warn`のみでCI失敗にはしない）。下記の自動切替・記憶機構とは独立しており、実際にKVへ記憶されている稼働モデルではなく配列の静的な内容を見ている点に注意。
 
+**現状確認（2026-10・Issue #204）:** `GET /usage`の直近30日分で`imageModel=gemini-2.5-flash-image`・`imageModelResolved=gemini-2.5-flash-image`が一貫しており、先頭候補が404にならず正常稼働中（モデル切替Discord通知も発生していない）。配列自体の更新は不要と判断。参考として、Discovery API（`GET /models`）には`gemini-3.1-flash-lite-image`という画像生成対応の新しい軽量モデルも存在することを確認した（`generateContent`対応）。現時点では**候補への追加・切替は行わない**（コスト・品質の実測比較をしていないため）。将来`gemini-2.5-flash-image`が廃止された場合の代替候補の当たりとして記録のみ残す。
+
 ### 画像生成モデルの自動切替・記憶（`_resolveImageModel()`・2026-06追加）
 
 `tryGemini()`は`KNOWN_IMAGE_CANDIDATES`を毎回先頭から順に試すのではなく、`RATE_KV`（既存のレート制限用KVを再利用、新規namespaceは作成しない）のキー`image-model:active`に**現在有効なモデル名を記憶**し、次回以降はそのモデルを最優先で試す。
@@ -65,18 +67,27 @@ const ver = name.match(/gemini-(\d+)\.(\d+)/);
 if (ver) score -= parseInt(ver[1]) * 3 + parseInt(ver[2]);  // 低バージョン優先（低コスト）
 ```
 
-**モデル別スコア例（2026-06時点・公式料金ページ確認済み）:**
+**モデル別スコア例（2026-10時点・[公式料金ページ](https://ai.google.dev/gemini-api/docs/pricing)で直接確認済み・Issue #204での再検証）:**
 
 | モデル | スコア | 有料出力/100万token | 備考 |
 | --- | --- | --- | --- |
-| `gemini-2.5-flash-lite` | 24 | $0.40 | 最安値・最優先 |
-| `gemini-2.5-flash` | 19 | $2.50 | flash-lite廃止時のfallback |
+| `gemini-flash-lite-latest` | 35 | （「最新」を指すエイリアス。実体は下記`gemini-3.5-flash-lite`） | バージョン番号を含まないため`score -= ...`の減点を一切受けず、**常に他の全候補より高スコアになる**（下記「`-latest`エイリアスの優先」参照） |
+| `gemini-3.1-flash-lite` | 25 | $1.50 | バージョン表記のある候補の中では最安・最高スコア |
+| `gemini-2.5-flash-lite` | 24 | （不明・提供終了につき料金ページ未掲載） | 2026-10時点で新規ユーザーには提供終了（404）。Discovery APIには依然掲載されており候補に残る場合がある |
+| `gemini-3.5-flash-lite` | 21 | $2.50 | 2026-10時点で`gemini-flash-lite-latest`の実体 |
+| `gemini-2.5-flash` | 19 | $2.50 | flash-lite系が全滅した場合のfallback |
 | `gemini-3.5-flash` | 16 | $9.00 | 思考トークン含む・高コスト |
 | `gemini-2.5-pro` | -1 | $10.00 | flashでないため低スコア |
 
-- `gemini-2.5-flash-lite`はGoogle Search grounding対応（無料枠500 RPD・flashと共有）
+- Google Search grounding対応は`flash`/`flash-lite`系であれば世代を問わず利用可能（無料枠はモデルにより異なる）
 - 旧スコア式（`score += major*3+minor`）は「高バージョン=高コスト優先」になっていたため修正した
 - `-exp$`で終わるモデルは無料枠クォータが0のため除外フィルターを維持する
+
+**`-latest`エイリアスの優先（2026-10・Issue #204で判明）:** スコア式の`ver`正規表現（`/gemini-(\d+)\.(\d+)/`）は`gemini-flash-lite-latest`のようなバージョン番号を含まないエイリアス名にはマッチしないため、このエイリアスだけは「低バージョン優先」の減点を一切受けない。結果として**バージョン表記を持つ候補が束で負ける**（`flash`+`lite`の基礎点35から、バージョンがあれば必ず10点以上減点されるため）。これは意図した設計ではなく、たまたまAPIが候補に`-latest`系の名前を含めていることによる副作用。
+
+- **実害は確認されていない**: `-latest`は命名からしてGoogle側が「現時点での推奨・最新版」を指す意図のエイリアスのため、たまたま今は低コスト最適化の意図とも大きく矛盾していない（2026-10時点の実体は`gemini-3.5-flash-lite`で、最安の`gemini-3.1-flash-lite`より1世代新しいが極端に高コストではない）
+- **本番確認（2026-10・`GET /usage`で実測）**: `textModel=gemini-flash-lite-latest`・`textModelResolved=gemini-3.5-flash-lite`が直近30日分すべてで一致して記録されており、動的選択自体は安定して機能している（Issue #204の確認事項1に対応）
+- 将来`-latest`エイリアスの実体がさらに高コストな世代に進んだ場合、このスコアリング式は追従できない（エイリアスが常に勝つため）。コスト最小化を厳密に保証したい場合は、エイリアス名に対しても`textModelResolved`相当の実体解決を行ってから評価する改修が必要だが、`selectBestModel()`のホットパス（2フェーズレースのレイテンシ予算内）にその追加呼び出しを入れる余地があるかは未検討
 
 **KV記憶・Discord通知（`TEXT_MODEL_KV_KEY = "text-model:active"`）:**
 
