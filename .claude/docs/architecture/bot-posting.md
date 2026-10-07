@@ -57,6 +57,7 @@ Cloudflareダッシュボードの手動Scheduled送信は、Cronイベントロ
 - 本実装前に`scripts/test-theme-hook.mjs`（ワンオフ検証スクリプト。`GEMINI_API_KEY=xxx node scripts/test-theme-hook.mjs`で実行、npm testには含めない）で品質を検証済み（[Issue #203](https://github.com/hiroshikuze/anniversary-cat-worker/issues/203)）。同一テーマでも試行ごとに表現が変化し、問いかけ・ボケ調が安定して得られることを確認した
 - 検証時に`gemini-2.5-flash-lite`が新規ユーザーに提供終了（404）していることが判明し、`gemini-3.1-flash-lite`/`gemini-3.5-flash-lite`で検証した（[Issue #204](https://github.com/hiroshikuze/anniversary-cat-worker/issues/204)で別途フォローアップ）。本番実装では固定モデル名を書かず、既存の`selectBestModel()`（Discovery API・コストスコアリング・KV記憶・モデル廃止時の自動フォールバック）を流用する
 - `stripHtmlTags()`サニタイズ対象に追加済み（`.claude/docs/architecture/gemini.md`の「プレーンテキストフィールドのサニタイズ」参照）
+- **季節補充フォールバック由来のエントリ（`generateResearchPool()`が当日のリサーチ結果3件未満時に`SEASONAL_FLOWERS`から組み立てる合成エントリ）は、当初`themeHook`を持たず常にfullへフォールバックしていた（2026-10・実機投稿2日連続でfullになり発覚）**。`_generateFallbackThemeHook()`（`.claude/docs/architecture/gemini.md`の「季節補充フォールバックの`themeHook`/`themeHookEn`は例外的にGemini呼び出しで生成する」参照）で解消済み
 
 ### 投稿テキスト形式
 
