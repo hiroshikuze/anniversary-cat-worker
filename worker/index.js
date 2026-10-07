@@ -525,7 +525,7 @@ export function pickFromPool(pool, rand = Math.random) {
  * short指定でもfullにフォールバックする仕組み）に委ねるため、この関数自体に
  * 追加のリトライ・フォールバック文言は持たせない。
  */
-export async function _generateFallbackThemeHook(theme, description, apiKey, env = null) {
+export async function _generateFallbackThemeHook(theme, description, apiKey, env = null, ctx = null) {
   try {
     const model = await selectBestModel(apiKey, env?.RATE_KV, env?.DISCORD_WEBHOOK_URL);
     const prompt =
@@ -562,6 +562,13 @@ export async function _generateFallbackThemeHook(theme, description, apiKey, env
     const rawText = data.candidates?.[0]?.content?.parts?.find(p => p.text && !p.thought)?.text
       ?? data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
     const parsed = JSON.parse(rawText.replace(/```json\s*|\s*```/g, "").trim());
+
+    const totalTokens = data.usageMetadata?.totalTokenCount ?? 0;
+    await _deferOrAwait(
+      incrementUsageKv(env?.RATE_KV, "text", totalTokens, model, data.modelVersion ?? null),
+      ctx
+    );
+
     return {
       themeHook:   typeof parsed.themeHook   === "string" ? stripHtmlTags(parsed.themeHook)   : undefined,
       themeHookEn: typeof parsed.themeHookEn === "string" ? stripHtmlTags(parsed.themeHookEn) : undefined,
@@ -621,7 +628,7 @@ export async function generateResearchPool(env, ctx = null) {
     // themeHookのみ例外的にGemini呼び出しで生成する（kana/en/visual/styleは静的・Gemini呼び出しなし）。
     // 理由: 固定の一言だと同じ花が複数回選ばれた際に同じボケの繰り返しになり、
     // themeHook機能の核心的な品質基準（試行ごとに表現が変化すること）を満たせないため
-    const fallbackHook = await _generateFallbackThemeHook(fallbackTheme, fallbackDescription, apiKey, env);
+    const fallbackHook = await _generateFallbackThemeHook(fallbackTheme, fallbackDescription, apiKey, env, ctx);
     entries = [...entries, {
       theme:              fallbackTheme,
       themeEn:            `${flowerEn} Season`,

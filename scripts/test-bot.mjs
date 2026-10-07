@@ -3506,6 +3506,75 @@ console.log("\n[_generateFallbackThemeHook]");
   assert("2回の呼び出しが固定文言に内部キャッシュされず、それぞれ別の応答を反映する", r1.themeHook === "一言A" && r2.themeHook === "一言B");
   globalThis.fetch = origFetch;
 }
+{
+  // トークン使用量の記録（handleResearch()と同じパターン・2026-10追加）
+  // ctxなし: 応答が返るまでにusage KVへ書き込まれている
+  function makeHookFetchMockWithTokens(totalTokenCount) {
+    return async (url) => {
+      if (String(url).includes("/models?key=")) {
+        return { ok: true, text: async () => JSON.stringify({
+          models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
+        }) };
+      }
+      return { ok: true, text: async () => JSON.stringify({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({ themeHook: "一言", themeHookEn: "hook" }) }] } }],
+        usageMetadata: { totalTokenCount },
+      }) };
+    };
+  }
+
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeHookFetchMockWithTokens(80);
+  _resetModelCacheForTest();
+  const kv = makeKvMock();
+  await _generateFallbackThemeHook("金木犀の季節", "今の季節を彩る金木犀", "dummy-key", { RATE_KV: kv });
+  globalThis.fetch = origFetch;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const usageStored = JSON.parse(kv.store[`usage:${today}`] ?? "{}");
+  assert("ctxなし: 応答が返るまでにusage KVへトークン数が記録される", usageStored.textTokens === 80);
+  assert("ctxなし: textCallsが1になる", usageStored.textCalls === 1);
+}
+{
+  // ctxあり: usage KVの書き込みがctx.waitUntil()に委譲され、応答をブロックしない
+  function makeHookFetchMockWithTokens(totalTokenCount) {
+    return async (url) => {
+      if (String(url).includes("/models?key=")) {
+        return { ok: true, text: async () => JSON.stringify({
+          models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
+        }) };
+      }
+      return { ok: true, text: async () => JSON.stringify({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({ themeHook: "一言", themeHookEn: "hook" }) }] } }],
+        usageMetadata: { totalTokenCount },
+      }) };
+    };
+  }
+
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeHookFetchMockWithTokens(80);
+  _resetModelCacheForTest();
+
+  // usage:キーのput()だけ永久にpendingにする（text-model:active書き込みは即解決させる）
+  const hangingKv = {
+    async get() { return null; },
+    async put(key) {
+      if (key.startsWith("usage:")) return new Promise(() => {});
+    },
+  };
+  const waited = [];
+  const mockCtx = { waitUntil(p) { waited.push(p); } };
+
+  let threw = false;
+  const result = await (async () => {
+    try { return await _generateFallbackThemeHook("金木犀の季節", "今の季節を彩る金木犀", "dummy-key", { RATE_KV: hangingKv }, mockCtx); }
+    catch { threw = true; return null; }
+  })();
+  globalThis.fetch = origFetch;
+
+  assert("ctxあり: put()が解決しなくてもハングせず返る", !threw && result?.themeHook === "一言");
+  assert("ctxあり: ctx.waitUntil()にusage書き込みが委譲される", waited.length === 1);
+}
 
 // ---------------------------------------------------------------------------
 // generateResearchPool: 季節補充フォールバック分岐でのthemeHook配線（2026-10追加）

@@ -307,11 +307,12 @@ Only the cat(s) described above should have a face, eyes, or expression. Do not 
 
 上記の`kana`/`en`フィールドは「静的な人手管理（Gemini呼び出し追加なし）」方針だが、`themeHook`（テーマ連動のウィットに富んだ一言）は同じ方針を適用しない。実機投稿で同じ花（季節補充フォールバック由来）が複数回選ばれた際に静的な固定一言だと同じボケの繰り返しになり、`themeHook`機能の核心的な品質基準（「同一テーマでも試行ごとに表現が変化する」こと。`scripts/test-theme-hook.mjs`での検証時に確認済み・Issue #203）を満たせないと判断したため。
 
-- `_generateFallbackThemeHook(theme, description, apiKey, env)`（`worker/index.js`・export）を新設し、`generateResearchPool()`の季節補充フォールバック分岐（`entries.length < 3`時）でのみ呼ぶ。通常のリサーチ結果は`handleResearch()`のメインJSON出力に`themeHook`が既に含まれるため、この関数は呼ばない
+- `_generateFallbackThemeHook(theme, description, apiKey, env, ctx = null)`（`worker/index.js`・export）を新設し、`generateResearchPool()`の季節補充フォールバック分岐（`entries.length < 3`時）でのみ呼ぶ。通常のリサーチ結果は`handleResearch()`のメインJSON出力に`themeHook`が既に含まれるため、この関数は呼ばない
 - プロンプトは`scripts/test-theme-hook.mjs`の`buildHookPrompt()`で検証済みのものを本番に移植する（テーマ・説明文を渡し、問いかけ・つぶやき調の一言＋英語版をJSONで取得）
 - モデルは固定文字列で書かず既存の`selectBestModel()`を流用する（Issue #204の教訓: 固定モデル名はモデル廃止時に404を招く）
 - **失敗時（API障害・JSON解析失敗等）は`themeHook`/`themeHookEn`を`undefined`のままにし、呼び出し元の`generateResearchPool()`自体は失敗させない**。`themeHook`欠落時は既存の安全網（`buildPostText()`/`buildMastodonText()`がshort指定でもfullにフォールバックする仕組み）に委ねるため、この関数自体に追加のリトライ・フォールバック文言は持たせない
 - 季節補充フォールバックは1日あたり最大1回しか発生しない（`entries.length < 3`の判定後に1エントリのみ追加するため）ため、追加するGemini呼び出しも1日最大1回。既存のリサーチプール生成（10並列）・コスト最適化の方針と矛盾しない
+- **トークン使用量も`handleResearch()`と同じパターンで記録する**: `data.usageMetadata.totalTokenCount`・`data.modelVersion`を`incrementUsageKv(env?.RATE_KV, "text", totalTokens, model, resolvedModel)`で記録する（`kind: "text"`、`handleResearch()`の計測と同じ`usage:YYYY-MM-DD`キーに積み上がる）。`ctx`が渡された場合は`_deferOrAwait()`でバックグラウンド化し、呼び出し元の応答を遅らせない（`handleResearch()`と同じ設計）。これを入れない場合、この経路でのGemini呼び出しが`/usage`の集計に反映されず、将来のコスト調査（Issue #204のような）で見落とされるリスクがある
 
 ### visualHintの役割（2026-05変更）
 
