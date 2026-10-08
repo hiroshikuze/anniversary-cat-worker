@@ -5026,6 +5026,79 @@ console.log("\n[runBot: 投稿フォーマット・themeHookの配線]");
 }
 
 // ---------------------------------------------------------------------------
+// runBot: Bug#43再発防止 - R2保存でpageUrlがSITE_URLと異なる値になった状態で
+// short形式が選ばれたとき、Bluesky/Mastodon投稿本文にpageUrl（?id=付き）が
+// 実際に反映されることを統合テストで確認する（pickPostFormat()は確率的なため、
+// short形式が選ばれるまで最大30回リトライする。80%確率なので30回中一度も
+// 選ばれない確率は無視できるほど小さい）
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: R2保存後のpageUrlがshort形式投稿本文に反映される（Bug#43再発防止）]");
+{
+  function makeBucketMock() {
+    return {
+      async get() { return null; },
+      async put() {},
+      async head() { return null; },
+    };
+  }
+
+  let blueskyPostText = null, mastoStatusText = null, formatSeen = null;
+  for (let attempt = 0; attempt < 30 && formatSeen !== "short"; attempt++) {
+    blueskyPostText = null;
+    mastoStatusText = null;
+    const bucket = makeBucketMock();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("discord")) {
+        const body = JSON.parse(opts?.body ?? "{}").content ?? "";
+        const m = body.match(/🎲 フォーマット: (short|full)/);
+        if (m) formatSeen = m[1];
+        return { ok: true, status: 204, text: async () => "" };
+      }
+      if (u.includes("createSession")) return { ok: true, status: 200, text: async () => JSON.stringify({ accessJwt: "jwt", did: "did:plc:test" }) };
+      if (u.includes("uploadBlob"))   return { ok: true, status: 200, text: async () => JSON.stringify({ blob: { ref: { $link: "ref" }, mimeType: "image/png", size: 100 } }) };
+      if (u.includes("createRecord")) {
+        const body = JSON.parse(opts?.body ?? "{}");
+        blueskyPostText = body?.record?.text ?? null;
+        return { ok: true, status: 200, text: async () => JSON.stringify({ uri: "at://test", cid: "cid" }) };
+      }
+      if (u.includes("/api/v2/media"))    return { ok: true, status: 200, text: async () => JSON.stringify({ id: "media1" }) };
+      if (u.includes("/api/v1/statuses")) {
+        // postStatusToMastodon()はapplication/x-www-form-urlencodedで送信するためJSON.parseではなくURLSearchParamsで読む
+        mastoStatusText = new URLSearchParams(opts?.body ?? "").get("status");
+        return { ok: true, status: 200, text: async () => JSON.stringify({ id: "status1", url: "https://mstdn.example/@user/1" }) };
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({}) };
+    };
+
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: "https://mstdn.example", MASTODON_ACCESS_TOKEN: "masto-token",
+        IMAGE_BUCKET: bucket,
+      },
+      async () => ({
+        theme: "国際協力の日", description: "説明文",
+        themeEn: "International Cooperation Day", descriptionEn: "desc",
+        themeHook: "一言テスト", themeHookEn: "Hook text",
+      }),
+      async () => ({ imageData: "aW1h", mimeType: "image/png", source: "gemini" })
+    );
+    globalThis.fetch = origFetch;
+  }
+
+  assert("30回以内にshort形式が選ばれる", formatSeen === "short");
+  assert("short選択時: Bluesky投稿本文にR2保存後のpageUrl（?id=）が含まれる", blueskyPostText?.includes("?id=bot/"));
+  assert("short選択時: Bluesky投稿本文に裸のサイトURLで終わらない（pageUrlに置き換わっている）",
+    !blueskyPostText?.includes("https://hiroshikuze.github.io/anniversary-cat-worker/\n"));
+  assert("short選択時: Mastodon投稿本文にR2保存後のpageUrl（?id=）が含まれる", mastoStatusText?.includes("?id=bot/"));
+  assert("short選択時: Mastodon投稿本文に裸のサイトURLで終わらない（pageUrlに置き換わっている）",
+    !mastoStatusText?.includes("https://hiroshikuze.github.io/anniversary-cat-worker/\n"));
+}
+
+// ---------------------------------------------------------------------------
 // buildPostText: guestSnsTag
 // ---------------------------------------------------------------------------
 console.log("\n[buildPostText: guestSnsTag]");
@@ -5149,6 +5222,16 @@ console.log("\n[buildPostText: short形式]");
   const graphemes = [...new Intl.Segmenter().segment(text)].length;
   assert(`short形式: 長いthemeHookでも300 grapheme以内 (実測: ${graphemes})`, graphemes <= 300);
 }
+{
+  // Bug#43: short形式はSITE_URL固定ではなくpageUrl（個別作品URL）を使う。
+  // 既存テストはすべてpageUrl省略（=SITE_URLと同値）のケースのみでこのバグを検出できなかったため、
+  // SITE_URLと異なるカスタムpageUrlを明示的に渡して検証する。
+  const pageUrl = "https://hiroshikuze.github.io/anniversary-cat-worker/?id=bot/2026-10-09";
+  const text = buildPostText("国際協力の日", "説明文", pageUrl, null, undefined, "一言テスト", "short");
+  assert("short形式: pageUrl（?id=付き個別作品URL）が含まれる", text.includes(pageUrl));
+  assert("short形式: 裸のSITE_URLは含まれない（pageUrlに置き換わっている）",
+    !text.includes("https://hiroshikuze.github.io/anniversary-cat-worker/\n"));
+}
 
 // ---------------------------------------------------------------------------
 // buildMastodonText: short形式（themeHookEn/themeHook＋URL＋タグのみ・2026-10追加）
@@ -5190,6 +5273,25 @@ console.log("\n[buildMastodonText: short形式]");
     undefined, null, undefined, "一言テスト");
   assert("format省略時はfull形式のまま（後方互換）", text.includes('Today is "International Cooperation Day"!'));
   assert("format省略時はthemeHookが使われない", !text.includes("一言テスト"));
+}
+{
+  // Bug#43: Mastodon short形式も日英どちらのURL行もpageUrlを使う（SITE_URL固定ではない）。
+  // pageUrlはすでに?id=を持つため、full形式のenArtworkLineと同じく区切りは"&lang=en"（"?lang=en"ではない）。
+  const pageUrl = "https://hiroshikuze.github.io/anniversary-cat-worker/?id=bot/2026-10-09";
+  const text = buildMastodonText("国際協力の日", "説明文", "International Cooperation Day", "desc",
+    pageUrl, null, undefined, "一言テスト", "Hook text", "short");
+  assert("short形式: 英語URL行がpageUrl+&lang=en", text.includes(`${pageUrl}&lang=en`));
+  assert("short形式: 日本語URL行がpageUrl", text.includes(`\n${pageUrl}\n`));
+  assert("short形式: 裸のSITE_URLは含まれない（pageUrlに置き換わっている）",
+    !text.includes("https://hiroshikuze.github.io/anniversary-cat-worker/\n") &&
+    !text.includes("https://hiroshikuze.github.io/anniversary-cat-worker/?lang=en\n"));
+}
+{
+  // pageUrl省略（=SITE_URLと同値）の場合は従来通り"?lang=en"（query文字列がまだないため）。
+  const text = buildMastodonText("国際協力の日", "説明文", "International Cooperation Day", "desc",
+    undefined, null, undefined, "一言テスト", "Hook text", "short");
+  assert("short形式: pageUrl省略時は英語URLが?lang=en", text.includes("https://hiroshikuze.github.io/anniversary-cat-worker/?lang=en"));
+  assert("short形式: pageUrl省略時は日本語URLがSITE_URL単体", text.includes("https://hiroshikuze.github.io/anniversary-cat-worker/\n"));
 }
 
 // ---------------------------------------------------------------------------

@@ -58,6 +58,7 @@ Cloudflareダッシュボードの手動Scheduled送信は、Cronイベントロ
 - 検証時に`gemini-2.5-flash-lite`が新規ユーザーに提供終了（404）していることが判明し、`gemini-3.1-flash-lite`/`gemini-3.5-flash-lite`で検証した（[Issue #204](https://github.com/hiroshikuze/anniversary-cat-worker/issues/204)で別途フォローアップ）。本番実装では固定モデル名を書かず、既存の`selectBestModel()`（Discovery API・コストスコアリング・KV記憶・モデル廃止時の自動フォールバック）を流用する
 - `stripHtmlTags()`サニタイズ対象に追加済み（`.claude/docs/architecture/gemini.md`の「プレーンテキストフィールドのサニタイズ」参照）
 - **季節補充フォールバック由来のエントリ（`generateResearchPool()`が当日のリサーチ結果3件未満時に`SEASONAL_FLOWERS`から組み立てる合成エントリ）は、当初`themeHook`を持たず常にfullへフォールバックしていた（2026-10・実機投稿2日連続でfullになり発覚）**。`_generateFallbackThemeHook()`（`.claude/docs/architecture/gemini.md`の「季節補充フォールバックの`themeHook`/`themeHookEn`は例外的にGemini呼び出しで生成する」参照）で解消済み
+- **short版が正しく選ばれても、投稿内のURLが個別作品URL（`pageUrl`）ではなく常にトップページ（`SITE_URL`）になっていた（2026-10・実機投稿で発覚・Bug#43）**。`buildPostText()`/`buildMastodonText()`のshort分岐が`pageUrl`引数を使わず`SITE_URL`を直書きしていた実装漏れが原因。下記「投稿テキスト形式」のshort版に修正済みの仕様を記載
 
 ### 投稿テキスト形式
 
@@ -85,12 +86,13 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 
 ```text
 {themeHook}
-https://hiroshikuze.github.io/anniversary-cat-worker/
+{pageUrl}                         ← R2保存成功時は?id=bot/YYYY-MM-DD付き個別作品URL、失敗時はSITE_URL
 
 #{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー #{guestSnsTag}
 ```
 
-- 説明文・CTA行・📸作品URL行は**含めない**（画像自体は添付済みのため作品URLは冗長。CTA文言を毎回付けないことで宣伝ポストっぽさを下げる）
+- 説明文・CTA行は**含めない**（CTA文言を毎回付けないことで宣伝ポストっぽさを下げる）
+- URLは`pageUrl`（full版の📸行と同じ変数）を使う。**2026-10当初実装ではここが`SITE_URL`固定にハードコードされており、short版の投稿リンクが常にトップページになってしまうバグがあった（Bug#43）**。full版は📸行＋CTA行の2URL構成だが、short版はURL行が1本しかないため、その1本を`pageUrl`にする（`SITE_URL`には戻さない）
 - `{guestSnsTag}`はfull版と同様に残す（2026-10・ユーザー確認済み: テーマタグで既に「何の日か」が明示される前提のため、ゲスト動物タグの有無による「URLを踏むまで分からない」性への影響は小さいと判断）
 - `themeHook`が空の場合はfull版にフォールバックする（上記「投稿フォーマットの選択」参照）
 
@@ -102,16 +104,18 @@ https://hiroshikuze.github.io/anniversary-cat-worker/
 
 ```text
 {themeHookEn}
-https://hiroshikuze.github.io/anniversary-cat-worker/?lang=en
+{pageUrl}&lang=en                 ← pageUrl=SITE_URLのまま（R2保存失敗時）は"?lang=en"（区切り文字が異なる点に注意）
 
 {themeHook}
-https://hiroshikuze.github.io/anniversary-cat-worker/
+{pageUrl}                         ← R2保存成功時は?id=bot/YYYY-MM-DD付き個別作品URL、失敗時はSITE_URL
 
 #{theme正規化} #AIart #cat #kitten #ほのぼの #猫 #Nyaniversary #にゃんバーサリー #{guestSnsTag}
 ```
 
-- Blueskyのshort版と同じ方針（説明文・CTA行・📸作品URL行を省略）を英日二言語に適用する
-- `themeHookEn`が空の場合は`themeHook`＋日本語サイトURLのみ（Blueskyと同一テキスト）にフォールバック。`themeHook`自体が空の場合はfull版にフォールバックする（上記「投稿フォーマットの選択」参照）
+- Blueskyのshort版と同じ方針（説明文・CTA行を省略）を英日二言語に適用する
+- URLは`pageUrl`（full版の📸行と同じ変数）を使う。**2026-10当初実装ではここも`SITE_URL`固定にハードコードされており、英語・日本語どちらのURL行も個別作品URLにならないバグがあった（Bug#43・Bluesky側と同一原因）**
+- 英語URL行の区切り文字は`pageUrl`がすでに`?id=...`を持つかどうかで変わる（full版`enArtworkLine`と同じロジック）: `pageUrl !== SITE_URL`なら`${pageUrl}&lang=en`、`pageUrl === SITE_URL`（R2保存失敗時のフォールバック）なら`${SITE_URL}?lang=en`
+- `themeHookEn`が空の場合は`themeHook`＋`pageUrl`のみ（Blueskyと同一テキスト）にフォールバック。`themeHook`自体が空の場合はfull版にフォールバックする（上記「投稿フォーマットの選択」参照）
 
 **full版:**
 
