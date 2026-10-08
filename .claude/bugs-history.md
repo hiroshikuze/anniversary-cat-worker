@@ -48,6 +48,7 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 | 40 | ダッシュボードの手動Scheduled送信が監査ログ・Cronイベントログいずれにも残らず、想定外の本番投稿が発生し実行者を特定できなかった（2026-09） | このファイル |
 | 41 | 期限切れエントリのクリーンアップとBot投稿generate()が同一Cron・同一サブリクエスト予算を共有し、GeminiとPollinations両方が同時タイムアウトして投稿失敗（2026-09） | このファイル |
 | 42 | Tシャツ背面画像のSUZURIマテリアルが14日後の自動削除から漏れ、142件蓄積していた（2026-10） | このファイル |
+| 43 | short形式のBot投稿URLがpageUrl（個別作品URL）を無視しSITE_URL（トップページ）固定になっていた（2026-10） | このファイル |
 
 ## 過去に修正した問題（再発防止）
 
@@ -254,5 +255,13 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 - **対応**: 既存の残存分180件はSUZURI MCPの`delete_material`で手動削除（販売中のTシャツが参照する9/21以降の背面素材11件は除外）。再発防止として`cleanupOrphanBackTextureMaterials()`を新設し、`cleanupExpiredEntries()`の末尾で「自アカウント・タイトルなし・非公開・15日以上経過」の素材を毎日削除する。棚卸しスクリプトも同じ判定（`isOrphanBackTextureMaterial()`）で削除対象に含める。詳細は`.claude/rules/architecture.md`の「Tシャツ背面画像マテリアルの一括削除」参照
 - **場所**: `worker/suzuri.js`（`listSuzuriMaterials()`・`isOrphanBackTextureMaterial()`新設）、`worker/index.js`（`cleanupOrphanBackTextureMaterials()`新設）、`scripts/audit-suzuri-materials.mjs`
 - **教訓**: 外部APIに「付属データ」（今回は`sub_materials`）を渡す機能を追加した際、それが外部サービス側で独立したリソースとして作られるかどうかを確認しないと、削除・課金・上限の管理から漏れる。作成系APIを使う機能を追加したら、実際に作られたリソースをSUZURI MCP等で一覧確認する
+
+### 43. short形式のBot投稿URLがpageUrl（個別作品URL）を無視しSITE_URL（トップページ）固定になっていた（2026-10）
+
+- **症状**: 実機投稿（例: `https://bsky.app/profile/nyanmusu.bsky.social/post/3mxfhkfe7rf26`）のリンクが`https://hiroshikuze.github.io/anniversary-cat-worker/`（トップページ）のままで、`?id=bot/YYYY-MM-DD`（その日の記念日・画像が直接表示される個別作品URL）になっていなかった。ユーザーが何の日の投稿か確認するのに手間がかかる状態だった
+- **原因**: `buildPostText()`・`buildMastodonText()`はどちらも`pageUrl`引数（R2保存成功時は`?id=bot/YYYY-MM-DD`付きURL、失敗時はSITE_URLにフォールバック）を受け取る設計で、full形式では`📸 ${pageUrl}`として正しく使っていた。しかしshort形式の分岐（PR #205で新設）だけは`pageUrl`を使わず`SITE_URL`を直書きしていた。`runBot()`側は`pageUrl`を正しく渡しており、呼び出し元ではなく`buildPostText()`/`buildMastodonText()`内部のshort分岐のみの実装漏れだった
+- **対応**: short形式の該当3箇所（Bluesky用1箇所・Mastodon用の日本語/英語URL各1箇所）で`SITE_URL`を`pageUrl`に置き換えた。`pageUrl`はR2保存失敗時はSITE_URLと同値にフォールバックするため後方互換は保たれる。Mastodon英語URL行は`pageUrl`がすでに`?id=...`を持つため、full形式の`enArtworkLine`と同じく区切り文字を`&lang=en`にする必要があり、単純な文字列置換ではなく`pageUrl !== SITE_URL`かどうかで`&lang=en`/`?lang=en`を切り替える条件分岐にした。再発防止として、`pageUrl`にSITE_URLと異なる値（`?id=...`付き）を渡した状態でshort形式のURLが正しく反映されることを確認するテストを追加した（既存テストはすべて`pageUrl`省略＝SITE_URLと同値のケースのみで、このバグを検出できなかった）
+- **場所**: `worker/bot.js` `buildPostText()` `buildMastodonText()`
+- **教訓**: 新しい分岐（full/short等）を追加する際、既存分岐がすでに使っている引数（ここでは`pageUrl`）を新分岐でも確実に使っているか確認する。テストを書く際も「デフォルト値のまま」のケースだけでなく、デフォルト値と異なる値を明示的に渡すケースを用意しないと、引数の配線漏れが検出できない
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）

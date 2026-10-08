@@ -175,10 +175,11 @@ export function buildPostText(theme, description, pageUrl = SITE_URL, guestSnsTa
   const allTags     = guestSnsTag ? `${baseTags} ${guestSnsTag}` : baseTags;
   const tags        = `\n\n${allTags}`;
 
-  // short形式: テーマ連動の一言＋サイトURL＋タグのみ（説明文・CTA・作品URL行は省略）。
-  // themeHookが空の場合はshort指定でもfullにフォールバックする（short版はthemeHook必須）。
+  // short形式: テーマ連動の一言＋pageUrl（個別作品URL。R2保存失敗時はSITE_URL）＋タグのみ
+  // （説明文・CTA行は省略）。themeHookが空の場合はshort指定でもfullにフォールバックする
+  // （short版はthemeHook必須）。Bug#43: ここでSITE_URL固定にしていたためpageUrlが無視されていた。
   if (format === "short" && themeHook) {
-    return truncateToGraphemes(`${themeHook}\n${SITE_URL}` + tags, BLUESKY_MAX_GRAPHEMES);
+    return truncateToGraphemes(`${themeHook}\n${pageUrl}` + tags, BLUESKY_MAX_GRAPHEMES);
   }
 
   const header      = theme.endsWith("の日")
@@ -223,10 +224,14 @@ export function buildMastodonText(theme, description, themeEn = "", descriptionE
 
   // short形式: themeHookEn＋英語URL（ある場合）＋themeHook＋日本語URL＋タグのみ。
   // themeHookが空の場合はshort指定でもfullにフォールバックする（short版はthemeHook必須）。
+  // Bug#43: ここでSITE_URL固定にしていたためpageUrlが無視されていた。
+  // pageUrlがすでに?id=...を持つ場合（R2保存成功時）はenArtworkLineと同じく&lang=enで連結し、
+  // SITE_URLと同値のまま（R2保存失敗時）は従来通り?lang=enにする。
   if (format === "short" && themeHook) {
     const safeHookEn = (themeHookEn ?? "").replace(/[^\x20-\x7E]/g, "").trim();
-    const enHookBlock = safeHookEn ? `${safeHookEn}\n${SITE_URL}?lang=en\n\n` : "";
-    return truncateToGraphemes(`${enHookBlock}${themeHook}\n${SITE_URL}\n\n${tagStr}`, MASTODON_MAX_GRAPHEMES);
+    const enPageUrl   = pageUrl !== SITE_URL ? `${pageUrl}&lang=en` : `${SITE_URL}?lang=en`;
+    const enHookBlock = safeHookEn ? `${safeHookEn}\n${enPageUrl}\n\n` : "";
+    return truncateToGraphemes(`${enHookBlock}${themeHook}\n${pageUrl}\n\n${tagStr}`, MASTODON_MAX_GRAPHEMES);
   }
 
   const artworkLine   = pageUrl !== SITE_URL ? `\n\n📸 ${pageUrl}` : "";

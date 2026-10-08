@@ -517,10 +517,73 @@ export function pickFromPool(pool, rand = Math.random) {
 }
 
 /**
+ * 季節補充フォールバック専用のthemeHook/themeHookEn生成（2026-10追加）。
+ * kana/en/visual/styleと異なり、固定文言だと同じ花が複数回選ばれた際に
+ * 同じボケの繰り返しになるため、例外的にGemini呼び出しで生成する。
+ * 失敗時（API障害・JSON解析失敗等）は{}を返し、呼び出し元を失敗させない。
+ * themeHook欠落時は既存の安全網（buildPostText()/buildMastodonText()が
+ * short指定でもfullにフォールバックする仕組み）に委ねるため、この関数自体に
+ * 追加のリトライ・フォールバック文言は持たせない。
+ */
+export async function _generateFallbackThemeHook(theme, description, apiKey, env = null, ctx = null) {
+  try {
+    const model = await selectBestModel(apiKey, env?.RATE_KV, env?.DISCORD_WEBHOOK_URL);
+    const prompt =
+      `あなたは「にゃんバーサリー」という、猫のイラストで日本の記念日を紹介するSNSアカウントの中の人です。\n` +
+      `以下のテーマについて、猫目線で呟くような、ウィットに富んだ一言をひとつ考えてください。\n\n` +
+      `テーマ: ${theme}\n` +
+      `説明: ${description}\n\n` +
+      `条件:\n` +
+      `- 説明文の内容をそのまま要約しない（事実説明ではなく問いかけ・つぶやき・ボケ寄りのトーン）\n` +
+      `- 猫が話している/思っているていで書く（「〜かな？」「〜してみたい」等の口語）\n` +
+      `- 日本語は20〜30文字程度、短く\n` +
+      `- 絵文字は使わない\n` +
+      `- 英語版（themeHookEn）も用意する。直訳ではなく英語として自然な短いフレーズにする\n\n` +
+      `回答は以下のJSONのみ（マークダウン・説明文は不要）:\n` +
+      `{"themeHook":"日本語の一言","themeHookEn":"English one-liner"}`;
+
+    const res = await fetchWithRetry(
+      `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.9 },
+        }),
+      }
+    );
+    const resText = await res.text();
+    if (!res.ok) {
+      console.warn(`[pool] themeHook生成失敗（fullにフォールバックされる）: status=${res.status}`);
+      return {};
+    }
+    const data = JSON.parse(resText);
+    const rawText = data.candidates?.[0]?.content?.parts?.find(p => p.text && !p.thought)?.text
+      ?? data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+    const parsed = JSON.parse(rawText.replace(/```json\s*|\s*```/g, "").trim());
+
+    const totalTokens = data.usageMetadata?.totalTokenCount ?? 0;
+    await _deferOrAwait(
+      incrementUsageKv(env?.RATE_KV, "text", totalTokens, model, data.modelVersion ?? null),
+      ctx
+    );
+
+    return {
+      themeHook:   typeof parsed.themeHook   === "string" ? stripHtmlTags(parsed.themeHook)   : undefined,
+      themeHookEn: typeof parsed.themeHookEn === "string" ? stripHtmlTags(parsed.themeHookEn) : undefined,
+    };
+  } catch (e) {
+    console.warn(`[pool] themeHook生成失敗（fullにフォールバックされる）: ${e.message}`);
+    return {};
+  }
+}
+
+/**
  * 当日分のリサーチプールを生成してR2に保存し、Discord通知を送る。
  * Cron `0 15 * * *`（毎日0:00 JST）から呼ばれる。
  */
-async function generateResearchPool(env, ctx = null) {
+export async function generateResearchPool(env, ctx = null) {
   const apiKey = env.GEMINI_API_KEY;
   if (!apiKey || !env.IMAGE_BUCKET) {
     console.log("[pool] スキップ: GEMINI_API_KEY または IMAGE_BUCKET 未設定");
@@ -560,14 +623,22 @@ async function generateResearchPool(env, ctx = null) {
     const flowerName = getSeasonalFlower(todayJst);
     const flowerEn    = getSeasonalFlowerEn(todayJst);
     const flowerKana  = getSeasonalFlowerKana(todayJst);
+    const fallbackTheme       = `${flowerName}の季節`;
+    const fallbackDescription = `今の季節を彩る${flowerName}`;
+    // themeHookのみ例外的にGemini呼び出しで生成する（kana/en/visual/styleは静的・Gemini呼び出しなし）。
+    // 理由: 固定の一言だと同じ花が複数回選ばれた際に同じボケの繰り返しになり、
+    // themeHook機能の核心的な品質基準（試行ごとに表現が変化すること）を満たせないため
+    const fallbackHook = await _generateFallbackThemeHook(fallbackTheme, fallbackDescription, apiKey, env, ctx);
     entries = [...entries, {
-      theme:              `${flowerName}の季節`,
+      theme:              fallbackTheme,
       themeEn:            `${flowerEn} Season`,
-      description:        `今の季節を彩る${flowerName}`,
+      description:        fallbackDescription,
       descriptionEn:      `${flowerEn} is the highlight of this season.`,
       themeKana:          `${flowerKana}の<ruby>季節<rt>きせつ</rt></ruby>`,
       descriptionKana:    `<ruby>今<rt>いま</rt></ruby>の<ruby>季節<rt>きせつ</rt></ruby>を<ruby>彩<rt>いろど</rt></ruby>る${flowerKana}`,
       visualHint:         getSeasonalFlowerVisual(todayJst),
+      themeHook:          fallbackHook.themeHook,
+      themeHookEn:        fallbackHook.themeHookEn,
       foodItem:           null,
       kanjiChar:          null,
       sourceUrl:          "",

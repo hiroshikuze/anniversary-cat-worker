@@ -28,7 +28,7 @@ import {
 import { _setSaleForTest } from "../worker/sale.js";
 import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale } from "../worker/sale-check.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST, _isBotCronEvent, cleanupExpiredEntries, cleanupOrphanBackTextureMaterials } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST, _isBotCronEvent, cleanupExpiredEntries, cleanupOrphanBackTextureMaterials, _generateFallbackThemeHook, generateResearchPool } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 import { renderElementToPng, ensureResvg, _setSatoriForTest, _setResvgForTest } from "../worker/svg-render.js";
@@ -3396,6 +3396,267 @@ console.log("\n[handleResearch: themeHook生成指示]");
 }
 
 // ---------------------------------------------------------------------------
+// _generateFallbackThemeHook（季節補充フォールバック専用のthemeHook生成・2026-10追加）
+// 季節補充フォールバックは静的な人手管理（kana/en/visual/style）ではなく、
+// 同一テーマでも表現が変化する品質基準を満たすため例外的にGemini呼び出しで生成する
+// ---------------------------------------------------------------------------
+console.log("\n[_generateFallbackThemeHook]");
+{
+  // 正常系: Geminiが返したthemeHook/themeHookEnがそのまま返る
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/models?key=")) {
+      return { ok: true, text: async () => JSON.stringify({
+        models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
+      }) };
+    }
+    return { ok: true, text: async () => JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({
+        themeHook: "この匂い、ボクのおやつかにゃ？", themeHookEn: "Is this smell my treat?",
+      }) }] } }],
+    }) };
+  };
+  _resetModelCacheForTest();
+  const result = await _generateFallbackThemeHook("金木犀の季節", "今の季節を彩る金木犀", "dummy-key");
+  assert("themeHookが返る", result.themeHook === "この匂い、ボクのおやつかにゃ？");
+  assert("themeHookEnが返る", result.themeHookEn === "Is this smell my treat?");
+  globalThis.fetch = origFetch;
+}
+{
+  // 正常系: HTMLタグが誤って混入していても除去される（stripHtmlTags対象）
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/models?key=")) {
+      return { ok: true, text: async () => JSON.stringify({
+        models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
+      }) };
+    }
+    return { ok: true, text: async () => JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({
+        themeHook: "<ruby>金木犀<rt>きんもくせい</rt></ruby>って甘いにゃ？", themeHookEn: "<b>Sweet</b>, right?",
+      }) }] } }],
+    }) };
+  };
+  _resetModelCacheForTest();
+  const result = await _generateFallbackThemeHook("金木犀の季節", "今の季節を彩る金木犀", "dummy-key");
+  assert("themeHookのHTMLタグが除去される", result.themeHook === "金木犀って甘いにゃ？");
+  assert("themeHookEnのHTMLタグが除去される", result.themeHookEn === "Sweet, right?");
+  globalThis.fetch = origFetch;
+}
+{
+  // エラー系: API障害時はthemeHook/themeHookEnがundefinedで例外を投げない
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/models?key=")) {
+      return { ok: true, text: async () => JSON.stringify({
+        models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
+      }) };
+    }
+    return { ok: false, status: 500, text: async () => "Internal Server Error" };
+  };
+  _resetModelCacheForTest();
+  let threw = false;
+  let result;
+  try { result = await _generateFallbackThemeHook("金木犀の季節", "今の季節を彩る金木犀", "dummy-key"); }
+  catch { threw = true; }
+  assert("API障害時は例外を投げない", !threw);
+  assert("themeHookはundefined", result?.themeHook === undefined);
+  assert("themeHookEnはundefined", result?.themeHookEn === undefined);
+  globalThis.fetch = origFetch;
+}
+{
+  // エラー系: fetch自体が例外を投げても呼び出し元には伝播しない
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/models?key=")) {
+      return { ok: true, text: async () => JSON.stringify({
+        models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
+      }) };
+    }
+    throw new Error("network down");
+  };
+  _resetModelCacheForTest();
+  let threw = false;
+  let result;
+  try { result = await _generateFallbackThemeHook("金木犀の季節", "今の季節を彩る金木犀", "dummy-key"); }
+  catch { threw = true; }
+  assert("fetch例外時も例外を投げない", !threw);
+  assert("themeHookはundefined（fetch例外時）", result?.themeHook === undefined);
+  globalThis.fetch = origFetch;
+}
+{
+  // 境界値: 2回の試行で異なる文言を返せる（固定文言にメモ化・キャッシュされていないことの確認）
+  const origFetch = globalThis.fetch;
+  let call = 0;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/models?key=")) {
+      return { ok: true, text: async () => JSON.stringify({
+        models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
+      }) };
+    }
+    call++;
+    const hook = call === 1 ? "一言A" : "一言B";
+    return { ok: true, text: async () => JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({ themeHook: hook, themeHookEn: `hook ${call}` }) }] } }],
+    }) };
+  };
+  _resetModelCacheForTest();
+  const r1 = await _generateFallbackThemeHook("金木犀の季節", "今の季節を彩る金木犀", "dummy-key");
+  const r2 = await _generateFallbackThemeHook("金木犀の季節", "今の季節を彩る金木犀", "dummy-key");
+  assert("2回の呼び出しが固定文言に内部キャッシュされず、それぞれ別の応答を反映する", r1.themeHook === "一言A" && r2.themeHook === "一言B");
+  globalThis.fetch = origFetch;
+}
+{
+  // トークン使用量の記録（handleResearch()と同じパターン・2026-10追加）
+  // ctxなし: 応答が返るまでにusage KVへ書き込まれている
+  function makeHookFetchMockWithTokens(totalTokenCount) {
+    return async (url) => {
+      if (String(url).includes("/models?key=")) {
+        return { ok: true, text: async () => JSON.stringify({
+          models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
+        }) };
+      }
+      return { ok: true, text: async () => JSON.stringify({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({ themeHook: "一言", themeHookEn: "hook" }) }] } }],
+        usageMetadata: { totalTokenCount },
+      }) };
+    };
+  }
+
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeHookFetchMockWithTokens(80);
+  _resetModelCacheForTest();
+  const kv = makeKvMock();
+  await _generateFallbackThemeHook("金木犀の季節", "今の季節を彩る金木犀", "dummy-key", { RATE_KV: kv });
+  globalThis.fetch = origFetch;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const usageStored = JSON.parse(kv.store[`usage:${today}`] ?? "{}");
+  assert("ctxなし: 応答が返るまでにusage KVへトークン数が記録される", usageStored.textTokens === 80);
+  assert("ctxなし: textCallsが1になる", usageStored.textCalls === 1);
+}
+{
+  // ctxあり: usage KVの書き込みがctx.waitUntil()に委譲され、応答をブロックしない
+  function makeHookFetchMockWithTokens(totalTokenCount) {
+    return async (url) => {
+      if (String(url).includes("/models?key=")) {
+        return { ok: true, text: async () => JSON.stringify({
+          models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
+        }) };
+      }
+      return { ok: true, text: async () => JSON.stringify({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({ themeHook: "一言", themeHookEn: "hook" }) }] } }],
+        usageMetadata: { totalTokenCount },
+      }) };
+    };
+  }
+
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeHookFetchMockWithTokens(80);
+  _resetModelCacheForTest();
+
+  // usage:キーのput()だけ永久にpendingにする（text-model:active書き込みは即解決させる）
+  const hangingKv = {
+    async get() { return null; },
+    async put(key) {
+      if (key.startsWith("usage:")) return new Promise(() => {});
+    },
+  };
+  const waited = [];
+  const mockCtx = { waitUntil(p) { waited.push(p); } };
+
+  let threw = false;
+  const result = await (async () => {
+    try { return await _generateFallbackThemeHook("金木犀の季節", "今の季節を彩る金木犀", "dummy-key", { RATE_KV: hangingKv }, mockCtx); }
+    catch { threw = true; return null; }
+  })();
+  globalThis.fetch = origFetch;
+
+  assert("ctxあり: put()が解決しなくてもハングせず返る", !threw && result?.themeHook === "一言");
+  assert("ctxあり: ctx.waitUntil()にusage書き込みが委譲される", waited.length === 1);
+}
+
+// ---------------------------------------------------------------------------
+// generateResearchPool: 季節補充フォールバック分岐でのthemeHook配線（2026-10追加）
+// ---------------------------------------------------------------------------
+console.log("\n[generateResearchPool: 季節補充フォールバックのthemeHook配線]");
+
+function makeAllNoneResearchFetchMock(themeHookResult) {
+  return async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/models?key=")) {
+      return { ok: true, text: async () => JSON.stringify({
+        models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
+      }) };
+    }
+    const promptText = JSON.parse(opts.body).contents[0].parts[0].text;
+    if (promptText.includes("ウィットに富んだ一言")) {
+      // _generateFallbackThemeHook() からの呼び出し
+      return themeHookResult();
+    }
+    // handleResearch()の10並列呼び出し → 全件sourceUrlKind=noneにして補充フォールバックを強制発火させる
+    return { ok: true, text: async () => JSON.stringify({
+      candidates: [{
+        content: { parts: [{ text: JSON.stringify({ theme: "x", description: "y", sourceUrl: "" }) }] },
+        groundingMetadata: { groundingChunks: [], webSearchQueries: [] },
+      }],
+    }) };
+  };
+}
+
+function makeResearchPoolBucketMock() {
+  const puts = {};
+  return {
+    puts,
+    async get() { return null; }, // 当日プール未生成
+    async put(key, val) { puts[key] = val; },
+  };
+}
+
+{
+  // 正常系: フォールバックエントリにthemeHook/themeHookEnが設定される
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeAllNoneResearchFetchMock(() => ({
+    ok: true, text: async () => JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({
+        themeHook: "この匂い、ボクのおやつかにゃ？", themeHookEn: "Is this smell my treat?",
+      }) }] } }],
+    }),
+  }));
+  _resetModelCacheForTest();
+  const bucket = makeResearchPoolBucketMock();
+  await generateResearchPool({ GEMINI_API_KEY: "key", IMAGE_BUCKET: bucket });
+  globalThis.fetch = origFetch;
+
+  const savedKey = Object.keys(bucket.puts).find(k => k.startsWith("research-pool/"));
+  const saved = JSON.parse(bucket.puts[savedKey]);
+  const fallbackEntry = saved.entries.find(e => e.isSeasonalFallback);
+  assert("フォールバックエントリが存在する", !!fallbackEntry);
+  assert("フォールバックエントリにthemeHookが設定される", fallbackEntry?.themeHook === "この匂い、ボクのおやつかにゃ？");
+  assert("フォールバックエントリにthemeHookEnが設定される", fallbackEntry?.themeHookEn === "Is this smell my treat?");
+}
+{
+  // エラー系: themeHook生成が失敗してもプール生成全体は成功する（themeHookはundefinedのまま）
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = makeAllNoneResearchFetchMock(() => ({ ok: false, status: 500, text: async () => "error" }));
+  _resetModelCacheForTest();
+  const bucket = makeResearchPoolBucketMock();
+
+  let threw = false;
+  try {
+    await generateResearchPool({ GEMINI_API_KEY: "key", IMAGE_BUCKET: bucket });
+  } catch { threw = true; }
+  globalThis.fetch = origFetch;
+
+  assert("themeHook生成失敗時も例外を投げない", !threw);
+  const savedKey = Object.keys(bucket.puts).find(k => k.startsWith("research-pool/"));
+  assert("themeHook生成失敗時もプールは保存される", !!savedKey);
+  const saved = JSON.parse(bucket.puts[savedKey]);
+  const fallbackEntry = saved.entries.find(e => e.isSeasonalFallback);
+  assert("themeHook生成失敗時: フォールバックエントリは存在するがthemeHookはundefined", !!fallbackEntry && fallbackEntry.themeHook === undefined);
+}
+
+// ---------------------------------------------------------------------------
 // 【回帰】runBot - R2メタに kanjiChar が保存される
 // ボット画像の初回訪問者がSUZURI登録する際に漢字が🐾にならないための保証
 // ---------------------------------------------------------------------------
@@ -4765,6 +5026,79 @@ console.log("\n[runBot: 投稿フォーマット・themeHookの配線]");
 }
 
 // ---------------------------------------------------------------------------
+// runBot: Bug#43再発防止 - R2保存でpageUrlがSITE_URLと異なる値になった状態で
+// short形式が選ばれたとき、Bluesky/Mastodon投稿本文にpageUrl（?id=付き）が
+// 実際に反映されることを統合テストで確認する（pickPostFormat()は確率的なため、
+// short形式が選ばれるまで最大30回リトライする。80%確率なので30回中一度も
+// 選ばれない確率は無視できるほど小さい）
+// ---------------------------------------------------------------------------
+console.log("\n[runBot: R2保存後のpageUrlがshort形式投稿本文に反映される（Bug#43再発防止）]");
+{
+  function makeBucketMock() {
+    return {
+      async get() { return null; },
+      async put() {},
+      async head() { return null; },
+    };
+  }
+
+  let blueskyPostText = null, mastoStatusText = null, formatSeen = null;
+  for (let attempt = 0; attempt < 30 && formatSeen !== "short"; attempt++) {
+    blueskyPostText = null;
+    mastoStatusText = null;
+    const bucket = makeBucketMock();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("discord")) {
+        const body = JSON.parse(opts?.body ?? "{}").content ?? "";
+        const m = body.match(/🎲 フォーマット: (short|full)/);
+        if (m) formatSeen = m[1];
+        return { ok: true, status: 204, text: async () => "" };
+      }
+      if (u.includes("createSession")) return { ok: true, status: 200, text: async () => JSON.stringify({ accessJwt: "jwt", did: "did:plc:test" }) };
+      if (u.includes("uploadBlob"))   return { ok: true, status: 200, text: async () => JSON.stringify({ blob: { ref: { $link: "ref" }, mimeType: "image/png", size: 100 } }) };
+      if (u.includes("createRecord")) {
+        const body = JSON.parse(opts?.body ?? "{}");
+        blueskyPostText = body?.record?.text ?? null;
+        return { ok: true, status: 200, text: async () => JSON.stringify({ uri: "at://test", cid: "cid" }) };
+      }
+      if (u.includes("/api/v2/media"))    return { ok: true, status: 200, text: async () => JSON.stringify({ id: "media1" }) };
+      if (u.includes("/api/v1/statuses")) {
+        // postStatusToMastodon()はapplication/x-www-form-urlencodedで送信するためJSON.parseではなくURLSearchParamsで読む
+        mastoStatusText = new URLSearchParams(opts?.body ?? "").get("status");
+        return { ok: true, status: 200, text: async () => JSON.stringify({ id: "status1", url: "https://mstdn.example/@user/1" }) };
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({}) };
+    };
+
+    await runBot(
+      {
+        GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook",
+        BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "pass",
+        MASTODON_INSTANCE_URL: "https://mstdn.example", MASTODON_ACCESS_TOKEN: "masto-token",
+        IMAGE_BUCKET: bucket,
+      },
+      async () => ({
+        theme: "国際協力の日", description: "説明文",
+        themeEn: "International Cooperation Day", descriptionEn: "desc",
+        themeHook: "一言テスト", themeHookEn: "Hook text",
+      }),
+      async () => ({ imageData: "aW1h", mimeType: "image/png", source: "gemini" })
+    );
+    globalThis.fetch = origFetch;
+  }
+
+  assert("30回以内にshort形式が選ばれる", formatSeen === "short");
+  assert("short選択時: Bluesky投稿本文にR2保存後のpageUrl（?id=）が含まれる", blueskyPostText?.includes("?id=bot/"));
+  assert("short選択時: Bluesky投稿本文に裸のサイトURLで終わらない（pageUrlに置き換わっている）",
+    !blueskyPostText?.includes("https://hiroshikuze.github.io/anniversary-cat-worker/\n"));
+  assert("short選択時: Mastodon投稿本文にR2保存後のpageUrl（?id=）が含まれる", mastoStatusText?.includes("?id=bot/"));
+  assert("short選択時: Mastodon投稿本文に裸のサイトURLで終わらない（pageUrlに置き換わっている）",
+    !mastoStatusText?.includes("https://hiroshikuze.github.io/anniversary-cat-worker/\n"));
+}
+
+// ---------------------------------------------------------------------------
 // buildPostText: guestSnsTag
 // ---------------------------------------------------------------------------
 console.log("\n[buildPostText: guestSnsTag]");
@@ -4888,6 +5222,16 @@ console.log("\n[buildPostText: short形式]");
   const graphemes = [...new Intl.Segmenter().segment(text)].length;
   assert(`short形式: 長いthemeHookでも300 grapheme以内 (実測: ${graphemes})`, graphemes <= 300);
 }
+{
+  // Bug#43: short形式はSITE_URL固定ではなくpageUrl（個別作品URL）を使う。
+  // 既存テストはすべてpageUrl省略（=SITE_URLと同値）のケースのみでこのバグを検出できなかったため、
+  // SITE_URLと異なるカスタムpageUrlを明示的に渡して検証する。
+  const pageUrl = "https://hiroshikuze.github.io/anniversary-cat-worker/?id=bot/2026-10-09";
+  const text = buildPostText("国際協力の日", "説明文", pageUrl, null, undefined, "一言テスト", "short");
+  assert("short形式: pageUrl（?id=付き個別作品URL）が含まれる", text.includes(pageUrl));
+  assert("short形式: 裸のSITE_URLは含まれない（pageUrlに置き換わっている）",
+    !text.includes("https://hiroshikuze.github.io/anniversary-cat-worker/\n"));
+}
 
 // ---------------------------------------------------------------------------
 // buildMastodonText: short形式（themeHookEn/themeHook＋URL＋タグのみ・2026-10追加）
@@ -4929,6 +5273,25 @@ console.log("\n[buildMastodonText: short形式]");
     undefined, null, undefined, "一言テスト");
   assert("format省略時はfull形式のまま（後方互換）", text.includes('Today is "International Cooperation Day"!'));
   assert("format省略時はthemeHookが使われない", !text.includes("一言テスト"));
+}
+{
+  // Bug#43: Mastodon short形式も日英どちらのURL行もpageUrlを使う（SITE_URL固定ではない）。
+  // pageUrlはすでに?id=を持つため、full形式のenArtworkLineと同じく区切りは"&lang=en"（"?lang=en"ではない）。
+  const pageUrl = "https://hiroshikuze.github.io/anniversary-cat-worker/?id=bot/2026-10-09";
+  const text = buildMastodonText("国際協力の日", "説明文", "International Cooperation Day", "desc",
+    pageUrl, null, undefined, "一言テスト", "Hook text", "short");
+  assert("short形式: 英語URL行がpageUrl+&lang=en", text.includes(`${pageUrl}&lang=en`));
+  assert("short形式: 日本語URL行がpageUrl", text.includes(`\n${pageUrl}\n`));
+  assert("short形式: 裸のSITE_URLは含まれない（pageUrlに置き換わっている）",
+    !text.includes("https://hiroshikuze.github.io/anniversary-cat-worker/\n") &&
+    !text.includes("https://hiroshikuze.github.io/anniversary-cat-worker/?lang=en\n"));
+}
+{
+  // pageUrl省略（=SITE_URLと同値）の場合は従来通り"?lang=en"（query文字列がまだないため）。
+  const text = buildMastodonText("国際協力の日", "説明文", "International Cooperation Day", "desc",
+    undefined, null, undefined, "一言テスト", "Hook text", "short");
+  assert("short形式: pageUrl省略時は英語URLが?lang=en", text.includes("https://hiroshikuze.github.io/anniversary-cat-worker/?lang=en"));
+  assert("short形式: pageUrl省略時は日本語URLがSITE_URL単体", text.includes("https://hiroshikuze.github.io/anniversary-cat-worker/\n"));
 }
 
 // ---------------------------------------------------------------------------
