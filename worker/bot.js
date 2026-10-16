@@ -273,7 +273,7 @@ function enMonthDay(month, day) {
  */
 export function buildSaleReplyTextJa(sale) {
   const { month, day, weekdayJa } = sale.endDisplay;
-  return `🛍️ 今なら${sale.url}で最大${sale.discountYen}円OFF中！（${month}/${day}(${weekdayJa})まで）\n\n${sale.url}`;
+  return `🛍️ 今なら${sale.url}で最大${sale.discountYen}円OFF中！（ステッカーを除く・${month}/${day}(${weekdayJa})まで）\n\n${sale.url}`;
 }
 
 /**
@@ -282,8 +282,8 @@ export function buildSaleReplyTextJa(sale) {
  */
 export function buildSaleReplyTextBilingual(sale) {
   const { month, day } = sale.endDisplay;
-  return `🛍️ SUZURI Sale! Up to ¥${sale.discountYen} off until ${enMonthDay(month, day)}\n${sale.url}\n\n` +
-         `🛍️ 今なら最大${sale.discountYen}円OFF中！（${month}/${day}まで）\n${sale.url}`;
+  return `🛍️ SUZURI Sale! Up to ¥${sale.discountYen} off until ${enMonthDay(month, day)} (stickers excluded)\n${sale.url}\n\n` +
+         `🛍️ 今なら最大${sale.discountYen}円OFF中！（ステッカーを除く・${month}/${day}まで）\n${sale.url}`;
 }
 
 /**

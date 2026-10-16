@@ -10,13 +10,15 @@
  */
 
 let _currentSale = {
-  id:          "autumn-big-sale-2026-09",
-  startUtcMs:  Date.UTC(2026, 8, 25, 3, 0),
-  endUtcMs:    Date.UTC(2026, 9, 4, 14, 59),
-  discountYen: 1000,
-  endDisplay:  { month: 10, day: 4, weekdayJa: "日" },
+  id:          "ninnin-sale-2026-10",
+  startUtcMs:  Date.UTC(2026, 9, 23, 3, 0),
+  endUtcMs:    Date.UTC(2026, 9, 27, 14, 59),
+  discountYen: 700,
+  endDisplay:  { month: 10, day: 27, weekdayJa: "火" },
   url:         "https://suzuri.jp/nyanmusu",
 }; // セールがない期間は null に書き換える
+// discountYenは代表値（Tシャツ基準）。ステッカーはこのセール対象外
+// （一次情報: https://suzuri.jp/media/journal_ninnin-sale_202610/ 2026-10-16確認）
 
 export function isSaleActive(now = Date.now()) {
   return !!_currentSale && now >= _currentSale.startUtcMs && now <= _currentSale.endUtcMs;
