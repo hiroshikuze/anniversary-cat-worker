@@ -14,6 +14,13 @@
 - [2026-04〜2026-07のミスパターン](archive/revision_log_2026-04-07.md)も参照すること
 - [2026-08のミスパターン](archive/revision_log_2026-08.md)も参照すること
 
+### 2026-10 | セール告知の障害通知を、実ログを確認せず過去の「修正済み」バグの再発と決めつけずに済んだが、最初は推測だけでワークアラウンドして終えるところだった
+
+- **状況**: Discordに「⚠️ SUZURIセール候補を検知しましたが構造化抽出に失敗しました」の通知が届いた。記事URLは2026-08に同じ文言で発生し「修正済み」と記録されていたインシデントと同一記事（ニンニンSALE）だった
+- **最初の対応**: 原因調査をせず、記事本文を`WebFetch`で直接取得してユーザーと相談のうえ手動で`_currentSale`へ反映し、SNS告知まで進めた。ユーザーから「ドキュメントとテストを含め抜けないか」と聞かれて初めて、障害の実原因を確認していないことに気づいた
+- **確認して判明した点**: `query-worker-logs.mjs`で実ログを見ると、2026-08の原因（モデル404）とは別の`status=400 User location is not supported for the API use`（地域制限）だった。`/research`・`/generate`など通常のBot投稿には影響しておらず、実害はsale-check.jsの検知通知が1回遅れた程度だった
+- **教訓**: 本番環境からのDiscord通知（エラー・警告）を受けたら、**過去に同じ文言の通知が記録されていても、実ログ（`query-worker-logs.mjs`等）で原因を確認してからワークアラウンド・報告に進む**。「過去に直したはず」という思い込みで原因を決めつけると、実際には別の障害（今回は影響範囲の確認まで必要な地域制限エラー）を見落としたまま手動対応だけで終えてしまうリスクがある。詳細は`.claude/docs/architecture/sale-check-and-cleanup.md`の「2回目の構造化抽出失敗」参照
+
 ### 2026-10 | 古いローカル`main`からブランチを切ったため、無関係なワークフロー変更を含むとしてpushを拒否された
 
 - **状況**: Bug#42の修正ブランチを、`git fetch`せずにローカルの`main`から作成してpushしたところ、`refusing to allow a Personal Access Token to create or update workflow .github/workflows/health-check.yml without workflow scope`で拒否された
