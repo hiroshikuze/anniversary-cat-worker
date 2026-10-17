@@ -89,6 +89,8 @@ if (ver) score -= parseInt(ver[1]) * 3 + parseInt(ver[2]);  // 低バージョ�
 - **本番確認（2026-10・`GET /usage`で実測）**: `textModel=gemini-flash-lite-latest`・`textModelResolved=gemini-3.5-flash-lite`が直近30日分すべてで一致して記録されており、動的選択自体は安定して機能している（Issue #204の確認事項1に対応）
 - 将来`-latest`エイリアスの実体がさらに高コストな世代に進んだ場合、このスコアリング式は追従できない（エイリアスが常に勝つため）。コスト最小化を厳密に保証したい場合は、エイリアス名に対しても`textModelResolved`相当の実体解決を行ってから評価する改修が必要だが、`selectBestModel()`のホットパス（2フェーズレースのレイテンシ予算内）にその追加呼び出しを入れる余地があるかは未検討
 
+**切替通知の往復（2026-10-16〜17・実害なし）:** Discordに「テキストモデルを切替: gemini-2.5-flash → gemini-flash-lite-latest」が短時間に何度も届いた。`selectBestModel()`はWorkerのisolateごとに`_modelCache`（1時間）を持つため、呼び出し元やisolateが違うと、同じ時間帯でも別の候補（`gemini-2.5-flash`と`gemini-flash-lite-latest`）が選ばれ、KV記憶（`text-model:active`）との比較で切替通知が出る。その後の`リサーチプール生成完了`は成功しており、モデルはどちらも動作している。このため現時点では改修せず、通知のノイズとして扱う。通知が頻発して運用上の妨げになった場合は、(1) 切替通知を一定時間内の重複抑制、(2) `_modelCache`をKVへ移す、のいずれかを検討する。
+
 **KV記憶・Discord通知（`TEXT_MODEL_KV_KEY = "text-model:active"`）:**
 
 - 選択されたモデルを`RATE_KV`の`text-model:active`キーに保存（既存namespaceを再利用）
