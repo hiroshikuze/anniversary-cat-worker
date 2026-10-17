@@ -89,7 +89,7 @@ if (ver) score -= parseInt(ver[1]) * 3 + parseInt(ver[2]);  // 低バージョ�
 - **本番確認（2026-10・`GET /usage`で実測）**: `textModel=gemini-flash-lite-latest`・`textModelResolved=gemini-3.5-flash-lite`が直近30日分すべてで一致して記録されており、動的選択自体は安定して機能している（Issue #204の確認事項1に対応）
 - 将来`-latest`エイリアスの実体がさらに高コストな世代に進んだ場合、このスコアリング式は追従できない（エイリアスが常に勝つため）。コスト最小化を厳密に保証したい場合は、エイリアス名に対しても`textModelResolved`相当の実体解決を行ってから評価する改修が必要だが、`selectBestModel()`のホットパス（2フェーズレースのレイテンシ予算内）にその追加呼び出しを入れる余地があるかは未検討
 
-**切替通知の往復（2026-10-16〜17・実害なし）:** Discordに「テキストモデルを切替: gemini-2.5-flash → gemini-flash-lite-latest」が短時間に何度も届いた。`selectBestModel()`はWorkerのisolateごとに`_modelCache`（1時間）を持つため、呼び出し元やisolateが違うと、同じ時間帯でも別の候補（`gemini-2.5-flash`と`gemini-flash-lite-latest`）が選ばれ、KV記憶（`text-model:active`）との比較で切替通知が出る。その後の`リサーチプール生成完了`は成功しており、モデルはどちらも動作している。このため現時点では改修せず、通知のノイズとして扱う。通知が頻発して運用上の妨げになった場合は、(1) 切替通知を一定時間内の重複抑制、(2) `_modelCache`をKVへ移す、のいずれかを検討する。
+**切替通知の往復（2026-10-16〜17・実害なし）:** Discordに「テキストモデルを切替: gemini-2.5-flash → gemini-flash-lite-latest」が短時間に何度も届いた。`selectBestModel()`はWorkerのisolateごとに`_modelCache`（1時間）を持つため、呼び出し元やisolateが違うと、同じ時間帯でも別の候補（`gemini-2.5-flash`と`gemini-flash-lite-latest`）が選ばれ、KV記憶（`text-model:active`）との比較で切替通知が出る。その後の`リサーチプール生成完了`は成功しており、モデルはどちらも動作している。このため現時点では改修せず、通知のノイズとして扱う。（2026-10-17追記: 2.5-flashへの切替の多くは、Discovery候補が空のときの固定フォールバックによるもので、この経路はその後の改修で切替通知やKV書き換えを起こさなくなった。）
 
 **KV記憶・Discord通知（`TEXT_MODEL_KV_KEY = "text-model:active"`）:**
 
@@ -99,12 +99,25 @@ if (ver) score -= parseInt(ver[1]) * 3 + parseInt(ver[2]);  // 低バージョ�
 - KV操作は`selectBestModel()`内でtry/catchし、失敗してもモデル選択自体はブロックしない
 - 同時並行リクエストで通知が数通重複する可能性がある（画像モデルと同じ設計判断・許容）
 
-**Discovery API呼び出し自体が失敗した場合の最終フォールバック（2026-08修正）:**
+**Discovery API失敗時のフォールバック（2026-10改修・旧仕様の誤りを修正）:**
 
-`selectBestModel()`はDiscovery API（`GET /models`）へのfetch自体がネットワークエラー・タイムアウト等で失敗した場合、`catch`節で`_modelCache.name ?? FALLBACK_TEXT_MODEL`を返す。KVキャッシュ（1時間TTL）が空のコールドスタート直後にDiscovery API呼び出しが失敗するという稀なケース限定の保険。`_selectFromCandidates([])`（候補が0件の場合）も同じ定数を返す。
+`selectBestModel()`は次の場合にDiscovery API（`GET /models`）の結果を「失敗」として扱い、固定値を選ばずに直前の有効モデルを使う。
 
-- この定数は`FALLBACK_TEXT_MODEL`としてモジュールスコープに切り出し、2箇所で共有する（sale-check.jsのGeminiモデル404障害の調査で、この保険用の値自体も廃止済みモデルを指していたと判明したため。`.claude/archive/revision_log_2026-08.md`参照）
-- **通常運用ではこの保険には到達しない**（Discovery API呼び出しが成功する限り、動的スコアリングが常に現行モデルから選ぶため、廃止されたモデルが再度選ばれることはない）。この保険はあくまで「動的選択アルゴリズム自体が動かせない」という別の障害モードに対するものであり、次回モデル廃止時に自動更新される仕組みではない点に注意
+- fetchがネットワークエラー・タイムアウトで失敗した
+- 応答が`ok`でない（HTTPエラー）
+- 応答に`models`の配列がない、またはgenerateContent対応の候補が0件
+
+フォールバックの優先順位は次のとおり。
+
+1. KVの`text-model:active`（直前に有効と記憶したモデル。候補選択の結果としてKVに書かれるため、通常運用中は最新の有効値が入っている）
+2. メモリ上の`_modelCache`（1時間TTL）
+3. `FALLBACK_TEXT_MODEL`（最後の手段。KVもキャッシュも空のコールドスタート直後に限る）
+
+失敗時はエラー本文の先頭を`console.warn`でログに出す（原因の特定に使う）。失敗時の結果はキャッシュしないため、次の呼び出しで再度Discovery APIを試す。
+
+**旧仕様の誤り（2026-10-16〜17のsale-check失敗で判明）:** 旧仕様では候補が0件のとき`FALLBACK_TEXT_MODEL`（固定の`gemini-2.5-flash`）を返していた。Discovery応答がエラーJSON（地域制限等）で候補ゼロになった回に、このフォールバックが選ばれ、そのモデルへの生成リクエストが`400 User location is not supported`で失敗した。旧版の「通常運用ではこの保険には到達しない」という記述は誤りだった。
+
+- 固定値は今後も「KVもキャッシュも空」の最後の手段としてのみ使う。次回モデル廃止時に自動で更新される仕組みではない点に注意
 
 **`handleResearch()`シグネチャ更新:**
 

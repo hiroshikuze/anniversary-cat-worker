@@ -129,6 +129,10 @@ export async function selectBestModel(apiKey, kv = null, webhookUrl = null) {
       throw new Error(`[model-select] 非JSONレスポンス: status=${res.status} body=${resText.slice(0, 120)}`);
     }
 
+    if (!res.ok) {
+      throw new Error(`[model-select] Discovery失敗: status=${res.status} body=${resText.slice(0, 120)}`);
+    }
+
     const shortNames = (data.models ?? [])
       .filter(m => (m.supportedGenerationMethods ?? []).includes("generateContent"))
       .filter(m => m.name.includes("gemini"))
@@ -136,6 +140,10 @@ export async function selectBestModel(apiKey, kv = null, webhookUrl = null) {
       // -exp 単体モデルは無料枠クォータが0のため除外（-exp-image-generation は別途扱う）
       .filter(m => !/models\/.*-exp$/.test(m.name))
       .map(m => m.name.replace("models/", ""));
+
+    if (shortNames.length === 0) {
+      throw new Error(`[model-select] generateContent対応の候補が0件: status=${res.status} body=${resText.slice(0, 120)}`);
+    }
 
     const selected = _selectFromCandidates(shortNames);
 
@@ -179,8 +187,20 @@ export async function selectBestModel(apiKey, kv = null, webhookUrl = null) {
     return selected;
   } catch (e) {
     console.warn("[model-select] fallback due to:", e.message);
-    return _modelCache.name ?? FALLBACK_TEXT_MODEL;
+    return (await _lastKnownTextModel(kv)) ?? FALLBACK_TEXT_MODEL;
   }
+}
+
+async function _lastKnownTextModel(kv) {
+  if (kv) {
+    try {
+      const remembered = await kv.get(TEXT_MODEL_KV_KEY);
+      if (remembered) return remembered;
+    } catch (e) {
+      console.warn("[model-select] KV読み取り失敗:", e.message);
+    }
+  }
+  return _modelCache.name;
 }
 
 // ---------------------------------------------------------------------------
