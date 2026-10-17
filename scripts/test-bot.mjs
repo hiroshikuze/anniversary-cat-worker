@@ -2700,6 +2700,78 @@ console.log("\n[_selectFromCandidates]");
 }
 
 {
+  // 正常系: Discovery応答が正常ならスコアリングで選び、KVに記憶する（改修後も従来どおり）
+  _resetModelCacheForTest();
+  const kv = makeKvMock();
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ models: [
+    { name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] },
+    { name: "models/gemini-2.5-flash-lite", supportedGenerationMethods: ["generateContent"] },
+  ] }) });
+  const result = await selectBestModel("test-key", kv, null);
+  globalThis.fetch = origFetch;
+  assert("Discovery正常時: スコアリングで選ばれる（flash-lite）", result === "gemini-2.5-flash-lite");
+  assert("Discovery正常時: KVに記憶される", kv.store["text-model:active"] === "gemini-2.5-flash-lite");
+}
+
+{
+  // 【2026-10回帰】Discovery応答がエラーJSON（地域制限等・models無し）のとき、固定の
+  // FALLBACK_TEXT_MODELではなくKVに記憶した直前の有効モデルを使う
+  _resetModelCacheForTest();
+  const kv = makeKvMock();
+  kv.store["text-model:active"] = "gemini-flash-lite-latest";
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 400, text: async () => JSON.stringify({ error: { message: "User location is not supported for the API use." } }) });
+  const result = await selectBestModel("test-key", kv, null);
+  globalThis.fetch = origFetch;
+  assert("Discovery 400エラー時: KVの直前有効モデルを使う", result === "gemini-flash-lite-latest");
+  assert("Discovery 400エラー時: FALLBACK_TEXT_MODELを使わない", result !== FALLBACK_TEXT_MODEL);
+}
+
+{
+  // 境界値: Discovery応答がokでもmodelsが空（generateContent対応0件）なら失敗扱い → KVを使う
+  _resetModelCacheForTest();
+  const kv = makeKvMock();
+  kv.store["text-model:active"] = "gemini-flash-lite-latest";
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ models: [] }) });
+  const result = await selectBestModel("test-key", kv, null);
+  globalThis.fetch = origFetch;
+  assert("Discovery models空: KVの直前有効モデルを使う", result === "gemini-flash-lite-latest");
+}
+
+{
+  // 境界値: 失敗時にKVもキャッシュも空なら、最後の手段としてFALLBACK_TEXT_MODEL
+  _resetModelCacheForTest();
+  const kv = makeKvMock();
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 500, text: async () => "{}" });
+  const result = await selectBestModel("test-key", kv, null);
+  globalThis.fetch = origFetch;
+  assert("Discovery失敗・KV空・キャッシュ空: FALLBACK_TEXT_MODELを最後の手段として返す", result === FALLBACK_TEXT_MODEL);
+}
+
+{
+  // 境界値: KVが空でも、直前の成功によるメモリキャッシュがあればそれを使う（KVより後の優先順位）
+  // キャッシュの有効期限（1時間）を過ぎてから失敗させ、失敗パスでキャッシュに戻ることを検証する
+  _resetModelCacheForTest();
+  const origFetch = globalThis.fetch;
+  const origNow = Date.now;
+  const t0 = origNow();
+  Date.now = () => t0;
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ models: [
+    { name: "models/gemini-2.5-flash-lite", supportedGenerationMethods: ["generateContent"] },
+  ] }) });
+  await selectBestModel("test-key", null, null);
+  Date.now = () => t0 + 2 * 60 * 60 * 1000;
+  globalThis.fetch = async () => ({ ok: false, status: 400, text: async () => "{}" });
+  const result = await selectBestModel("test-key", null, null);
+  globalThis.fetch = origFetch;
+  Date.now = origNow;
+  assert("Discovery失敗・KV空・キャッシュ期限切れ: 期限切れでも直前の有効モデル（キャッシュ）を使う", result === "gemini-2.5-flash-lite");
+}
+
+{
   // 【回帰】旧スコア式（score += major*3+minor）では gemini-3.5-flash(44) が gemini-2.5-flash(41) に勝っていた
   // 新スコア式では gemini-2.5-flash が勝つことを確認
   const result = _selectFromCandidates(["gemini-3.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash"]);

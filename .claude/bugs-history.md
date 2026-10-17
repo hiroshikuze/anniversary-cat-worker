@@ -49,6 +49,7 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 | 41 | 期限切れエントリのクリーンアップとBot投稿generate()が同一Cron・同一サブリクエスト予算を共有し、GeminiとPollinations両方が同時タイムアウトして投稿失敗（2026-09） | このファイル |
 | 42 | Tシャツ背面画像のSUZURIマテリアルが14日後の自動削除から漏れ、142件蓄積していた（2026-10） | このファイル |
 | 43 | short形式のBot投稿URLがpageUrl（個別作品URL）を無視しSITE_URL（トップページ）固定になっていた（2026-10） | このファイル |
+| 44 | Discovery応答が地域制限等でエラーになると候補0件となり、固定の旧モデル（gemini-2.5-flash）に落ちて生成が400で失敗、sale-checkの構造化抽出が2日連続で止まった（2026-10） | このファイル |
 
 ## 過去に修正した問題（再発防止）
 
@@ -263,5 +264,15 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 - **対応**: short形式の該当3箇所（Bluesky用1箇所・Mastodon用の日本語/英語URL各1箇所）で`SITE_URL`を`pageUrl`に置き換えた。`pageUrl`はR2保存失敗時はSITE_URLと同値にフォールバックするため後方互換は保たれる。Mastodon英語URL行は`pageUrl`がすでに`?id=...`を持つため、full形式の`enArtworkLine`と同じく区切り文字を`&lang=en`にする必要があり、単純な文字列置換ではなく`pageUrl !== SITE_URL`かどうかで`&lang=en`/`?lang=en`を切り替える条件分岐にした。再発防止として、`pageUrl`にSITE_URLと異なる値（`?id=...`付き）を渡した状態でshort形式のURLが正しく反映されることを確認するテストを追加した（既存テストはすべて`pageUrl`省略＝SITE_URLと同値のケースのみで、このバグを検出できなかった）
 - **場所**: `worker/bot.js` `buildPostText()` `buildMastodonText()`
 - **教訓**: 新しい分岐（full/short等）を追加する際、既存分岐がすでに使っている引数（ここでは`pageUrl`）を新分岐でも確実に使っているか確認する。テストを書く際も「デフォルト値のまま」のケースだけでなく、デフォルト値と異なる値を明示的に渡すケースを用意しないと、引数の配線漏れが検出できない
+
+### 44. Discovery応答が空・エラーのとき固定の旧モデルに落ち、地域制限で生成が失敗した（2026-10）
+
+- **症状**: SUZURIセール自動検知Cronの構造化抽出が、2026-10-16 16:00 UTCと10-17 16:00 UTCの2日連続で`400 User location is not supported for the API use.`で失敗し、Discordに「構造化抽出に失敗しました」通知が届いた。同じ日の15:00 UTC（リサーチプール生成）は成功していた
+- **原因**: `selectBestModel()`はDiscovery API（`GET /models`）の応答に`models`がない（エラーJSON）場合、候補0件として`_selectFromCandidates([])`を呼び、固定の`FALLBACK_TEXT_MODEL`（`gemini-2.5-flash`）を返していた。`[model-select] selected: gemini-2.5-flash | top candidates:`（候補一覧が空）のログがその証拠。そのモデルへの生成リクエストが地域制限で失敗した
+- **調査の経緯**: 当初は「主流モデルの一時的な地域ルーティングの揺らぎ」と判断したが、連日の再発で誤りと分かった。候補一覧が空のログを見て初めて、固定値への落ち方が原因と特定できた
+- **対応**: Discovery応答が`ok`でない・generateContent対応の候補が0件のときは失敗として扱い、フォールバックをKVの直前有効モデル（`text-model:active`）→メモリキャッシュ→固定値の順にした。失敗時はエラー本文を`console.warn`に出す
+- **テスト**: `scripts/test-bot.mjs`に、Discovery 400応答・models空・正常時の記憶・キャッシュ期限切れ後の失敗、の各ケースを追加。改修前のコードで回帰テストが失敗することを確認
+- **場所**: `worker/index.js` `selectBestModel()` `_lastKnownTextModel()`（新設）
+- **教訓**: 外部APIの応答が想定外の形（エラーJSON）になったとき、「候補が0件」を正常系の延長として固定値で埋めると、その固定値自体が障害の原因になりうる。フォールバック先は「最後に確実に動いた値」を優先し、固定値は最後の手段にする
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
