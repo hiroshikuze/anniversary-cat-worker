@@ -79,6 +79,34 @@ Fill the removed areas naturally with the surrounding background. Do not redraw 
 Keep the upper half and the left and right sides clear enough to place large text and product photos later.
 ```
 
+## 猫も消す背景（2026-10追加・ニンニンSALEで使用）
+
+対象商品が3点以上で、`SKILL.md`の「商品点数が多いときの背景」に該当する場合、上記の背景用プロンプトで猫を消したあと、同じ会話でさらにもう一段、猫も消すよう頼む。
+
+```text
+Edit the background image (the one with the cat removed) once more. Now also remove the cat character itself.
+Keep the cosmos flower field, grass, sky, confetti, sparkles and decorations exactly as they are, in the same position and size.
+Fill the area where the cat was with the surrounding flower field / grass naturally, as if no cat had ever been there.
+Do not add anything new. Do not change the overall color palette or composition otherwise.
+```
+
+背景のモチーフ（コスモス畑など）は固有名詞なので、Bot作品の背景に合わせて書き換える。
+
+## 予告版の文言パターン（2026-10追加・ニンニンSALEで使用）
+
+セール開始前に投稿する場合、上記「草案用」の`Text that must appear exactly`を次のように書き換える（「開催中！」ではなく「開催予告」、締切行を開始日時にする）。
+
+```text
+Text that must appear exactly (Japanese, no other text):
+- SUZURI ニンニンSALE 開催予告
+- 最大700円OFF
+- 10/23（金）12:00スタート！
+- 10/27（火）23:59まで開催・お楽しみに！
+- にゃんバーサリー　suzuri.jp/nyanmusu
+```
+
+開催中版へ差し替えるとき（セール開始日）は、元の「開催中！」パターン（本ファイル冒頭の「草案用」）に戻し、締切行も終了日時のみに戻す。
+
 ## 2. 文字と商品を消した背景
 
 **2026-09にユーザーが実際に入力した指示文は記録されていない。** 以下はClaudeが再構成した案。実際に使った文面がわかれば差し替えること。
