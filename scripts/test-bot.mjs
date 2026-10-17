@@ -2753,16 +2753,22 @@ console.log("\n[_selectFromCandidates]");
 
 {
   // 境界値: KVが空でも、直前の成功によるメモリキャッシュがあればそれを使う（KVより後の優先順位）
+  // キャッシュの有効期限（1時間）を過ぎてから失敗させ、失敗パスでキャッシュに戻ることを検証する
   _resetModelCacheForTest();
   const origFetch = globalThis.fetch;
+  const origNow = Date.now;
+  const t0 = origNow();
+  Date.now = () => t0;
   globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ models: [
     { name: "models/gemini-2.5-flash-lite", supportedGenerationMethods: ["generateContent"] },
   ] }) });
   await selectBestModel("test-key", null, null);
+  Date.now = () => t0 + 2 * 60 * 60 * 1000;
   globalThis.fetch = async () => ({ ok: false, status: 400, text: async () => "{}" });
   const result = await selectBestModel("test-key", null, null);
   globalThis.fetch = origFetch;
-  assert("Discovery失敗・KV空: メモリキャッシュの直前有効モデルを使う", result === "gemini-2.5-flash-lite");
+  Date.now = origNow;
+  assert("Discovery失敗・KV空・キャッシュ期限切れ: 期限切れでも直前の有効モデル（キャッシュ）を使う", result === "gemini-2.5-flash-lite");
 }
 
 {
