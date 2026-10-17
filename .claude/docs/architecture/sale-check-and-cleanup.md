@@ -76,3 +76,13 @@ Tシャツの`sub_materials`がSUZURI側に作る背面画像マテリアル（�
 - **実際の失敗原因**: 実装時に固定文字列で書いた`gemini-2.5-flash-lite`が「新規ユーザーには提供終了」というエラーで404になっていた（`.claude/archive/revision_log_2026-08.md`参照）。`worker/index.js`には既にこの種のモデル廃止に対応する`selectBestModel()`（Discovery API・スコアリング・KV記憶・切替時Discord通知）が存在していたが、実装時に見落として固定文字列を書いてしまっていた
 - **修正**: `selectBestModel()`を`worker/index.js`からexportし、`sale-check.js`の`extractSaleInfoWithGemini()`が固定モデル名の代わりにこれを呼ぶよう変更した。これにより将来同種のモデル廃止が起きても`handleResearch()`と同じ自動フォールバック・Discord通知が働く
 - **設計した安全網が実際に機能した点**: KVへの「通知済みURL」書き込みをDiscord通知の後に行う設計（notify→mark-seenの順）だったため、この404失敗時点ではKVは更新されておらず、翌日以降のCronで同じ記事URLに対して自動的に再試行される状態を保っていた
+
+### 2回目の構造化抽出失敗（2026-10・2026-08のモデル404とは別原因）
+
+2026-10-16のCron発火で、同じ記事（ニンニンSALE・`journal_ninnin-sale_202610`）に対して再び「⚠️ SUZURIセール候補を検知しましたが構造化抽出に失敗しました」がDiscordに届いた。2026-08の記録を見ると同一文言の通知が「修正済み」とされていたため、当初は同じ原因（モデル廃止による404）の再発を疑ったが、`query-worker-logs.mjs`で実ログを確認したところ原因は別だった。
+
+- **実際のエラー**: `[sale-check] Geminiエラー: status=400 message=User location is not supported for the API use.`（地域制限エラー。404のモデル廃止ではない）
+- **影響範囲の確認**: 同じ72時間のログを`--grep "User location"`で検索したところ、該当は`sale-check`の1件のみで、`/research`・`/generate`（通常のBot投稿・ユーザーの画像生成）には同じ時間帯に発生していなかった。**本番のBot投稿・ユーザー向け機能への影響はない**と確認できた
+- **推測される原因**: `extractSaleInfoWithGemini()`は`handleResearch()`と同じ`selectBestModel()`を呼ぶが、呼び出すタイミングが異なるため毎回同じモデルが選ばれるとは限らない。この回はたまたま地域制限のかかるモデル（プレビュー版等）が選ばれ、`/research`側は別のタイミングで別モデルを使っていたために影響を受けなかったとみられる。モデル名そのものはこの時点のログに含まれておらず未特定
+- **対応**: Cronの自己修復設計（KV未更新→翌日再試行）により実害はなく、今回は手動でセール記事本文を直接取得し人間が`_currentSale`へ反映した（詳細は`CLAUDE.md`の「変えてはいけない設計判断」の運用どおり）
+- **教訓**: 同一の通知文言でも原因が異なることがあるため、**過去に「修正済み」と記録された通知であっても、実ログを確認せずに同じ原因と決めつけない**。`query-worker-logs.mjs`は数分で実行でき、`--grep`でエラーメッセージ自体の変化・影響範囲（他のGemini呼び出し経路に同じエラーが出ていないか）を確認できる
