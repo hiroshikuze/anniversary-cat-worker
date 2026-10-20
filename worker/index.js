@@ -10,7 +10,7 @@
  */
 
 import { runBot, repostBot, notifyDiscord, runMonthlyWallpaperPost } from "./bot.js";
-import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2, collectMaterialIds } from "./r2-storage.js";
+import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2, collectMaterialIds, getRecentThemes } from "./r2-storage.js";
 import { createSuzuriProducts, deleteSuzuriMaterial, listSuzuriMaterials, isOrphanBackTextureMaterial } from "./suzuri.js";
 import { submitFalJob, getFalResult } from "./fal.js";
 import { fetchWithRetry } from "./http-utils.js";
@@ -493,6 +493,24 @@ export function getSeasonalFlowerKana(dateStr) {
 }
 
 /**
+ * 季節補充フォールバック用に、直近のテーマと重ならない季節の花のエントリを返す（2026-10追加）。
+ * 当日の窓の花（`${name}の季節`）が直近テーマに含まれていれば、前の窓→次の窓の順に隣の花へ切り替える。
+ * 隣もすべて直近テーマなら当日の花を返す（補充自体は止めない）。窓は年初と年末で循環する。
+ * @param {string} dateStr - "YYYY-MM-DD"
+ * @param {Set<string>|null} [recentThemes]
+ * @returns {{ name: string, en: string, kana: string, visual: string }}
+ */
+export function pickSeasonalFlowerEntry(dateStr, recentThemes = null) {
+  const md = dateStr.slice(5);
+  let idx = SEASONAL_FLOWERS.findIndex(e => md >= e.startMd && md <= e.endMd);
+  if (idx < 0) idx = SEASONAL_FLOWERS.findIndex(e => e.name === "梅"); // getSeasonalFlower()と同じ既定
+  const n = SEASONAL_FLOWERS.length;
+  const candidates = [idx, (idx - 1 + n) % n, (idx + 1) % n].map(i => SEASONAL_FLOWERS[i]);
+  const recent = recentThemes ?? new Set();
+  return candidates.find(e => !recent.has(`${e.name}の季節`)) ?? candidates[0];
+}
+
+/**
  * handleResearch()の結果配列から none（検索証拠ゼロ）を除外し theme 重複を除去する。
  * google-search-fallback（webSearchQueriesあり）はGeminiが検索した証拠があるため保持する。
  * Gemini 2.5以降、groundingChunksが返らずwebSearchQueriesのみ返るケースが増加したため
@@ -520,10 +538,17 @@ export const SEASONAL_FLOWER_SELECT_PROBABILITY = 0.10;
  *
  * @param {{ entries?: object[] }} pool - R2から取得したプールオブジェクト
  * @param {() => number} [rand=Math.random] - テスト用乱数関数
+ * @param {Set<string>|null} [excludeThemes] - 除外するテーマ（直近の投稿のテーマ）
  * @returns {object|null}
  */
-export function pickFromPool(pool, rand = Math.random) {
-  const entries  = pool.entries ?? [];
+export function pickFromPool(pool, rand = Math.random, excludeThemes = null) {
+  let entries  = pool.entries ?? [];
+  // 直近のテーマを除外する（2026-10追加）。除外すると候補がゼロになる場合は除外せず全体から選ぶ
+  // （同じテーマの繰り返しを許してでも、投稿を止めない）
+  if (excludeThemes?.size > 0) {
+    const filtered = entries.filter(e => !excludeThemes.has(e.theme));
+    if (filtered.length > 0) entries = filtered;
+  }
   const normal   = entries.filter(e => !e.isSeasonalFallback);
   const fallback = entries.filter(e => e.isSeasonalFallback);
 
@@ -640,9 +665,12 @@ export async function generateResearchPool(env, ctx = null) {
   // 3件未満なら季節の花で補充
   let supplemented = false;
   if (entries.length < 3) {
-    const flowerName = getSeasonalFlower(todayJst);
-    const flowerEn    = getSeasonalFlowerEn(todayJst);
-    const flowerKana  = getSeasonalFlowerKana(todayJst);
+    // 直近のBot作品と同じ花が続かないよう、隣の窓の花に切り替える（getRecentThemes()は失敗しても空Set）
+    const recentThemes = await getRecentThemes(env.IMAGE_BUCKET, todayJst);
+    const flower      = pickSeasonalFlowerEntry(todayJst, recentThemes);
+    const flowerName  = flower.name;
+    const flowerEn    = flower.en;
+    const flowerKana  = flower.kana;
     const fallbackTheme       = `${flowerName}の季節`;
     const fallbackDescription = `今の季節を彩る${flowerName}`;
     // themeHookのみ例外的にGemini呼び出しで生成する（kana/en/visual/styleは静的・Gemini呼び出しなし）。
@@ -656,7 +684,7 @@ export async function generateResearchPool(env, ctx = null) {
       descriptionEn:      `${flowerEn} is the highlight of this season.`,
       themeKana:          `${flowerKana}の<ruby>季節<rt>きせつ</rt></ruby>`,
       descriptionKana:    `<ruby>今<rt>いま</rt></ruby>の<ruby>季節<rt>きせつ</rt></ruby>を<ruby>彩<rt>いろど</rt></ruby>る${flowerKana}`,
-      visualHint:         getSeasonalFlowerVisual(todayJst),
+      visualHint:         flower.visual,
       themeHook:          fallbackHook.themeHook,
       themeHookEn:        fallbackHook.themeHookEn,
       foodItem:           null,
@@ -976,6 +1004,50 @@ export function pickEmotion() {
 }
 
 // ---------------------------------------------------------------------------
+// 猫のポーズ・画角（重み付き確率でランダム選択・毛柄・性格・感情とは独立・2026-10追加）
+// ---------------------------------------------------------------------------
+// 同じテーマ・同じ毛柄・性格の組み合わせだと構図が似通う問題（2026-10-20/21）への対策。
+// 性格（CAT_PERSONALITIES）はポーズも含むが、このポーズ軸はプロンプトで優先させる。
+// 題材と合わない場合は採用しない:
+//   - コード側: 食べ物の動作（eatingAction）・壁紙（reserveCalendarSpace）ではpickPose()がnullを返す
+//   - プロンプト側: 「テーマ・場面に自然に合う場合のみ適用」と明記し、判断はモデルに任せる
+// needsProp: 小道具（容器・寝具等）が要るポーズ。重みを小さくし、Fluxに渡さない（pollinations: null）。
+// 文字列はASCIIのみ（Pollinations APIのURL埋め込みで安全）。最後の要素（gemini: null）が「指定なし」。
+export const CAT_POSES = [
+  { weight: 8, needsProp: false, gemini: "relaxed lying on its back showing its fluffy belly, paws curled up, trusting expression", pollinations: "lying on back showing fluffy belly" },
+  { weight: 8, needsProp: false, gemini: "sitting and looking up with an open mouth meowing, wide hopeful eyes", pollinations: "looking up meowing with open mouth" },
+  { weight: 6, needsProp: false, gemini: "curled up in a tight round ball, sleeping peacefully", pollinations: "curled up in a round ball sleeping" },
+  { weight: 6, needsProp: false, gemini: "licking a front paw and grooming itself", pollinations: "licking paw grooming" },
+  { weight: 5, needsProp: false, gemini: "looking back over its shoulder at the viewer", pollinations: "looking back over shoulder" },
+  { weight: 5, needsProp: false, gemini: "close-up portrait framing, face and upper body filling the frame", pollinations: "close-up portrait of face and upper body" },
+  { weight: 5, needsProp: false, gemini: "peeking out playfully from behind the theme items", pollinations: "peeking out from behind" },
+  { weight: 5, needsProp: false, gemini: "viewed from a slightly high angle, looking up at the viewer", pollinations: "high angle view looking up at viewer" },
+  { weight: 4, needsProp: true,  gemini: "squeezing itself into a small cozy container that suits the scene, such as a cardboard box, a bucket, or a fishbowl", pollinations: null },
+  { weight: 4, needsProp: true,  gemini: "kneading a soft blanket or cushion with its front paws, eyes half-closed", pollinations: null },
+  { weight: 3, needsProp: true,  gemini: "rolling and rubbing its back on soft bedding, belly partly showing", pollinations: null },
+  // 指定なし: 従来どおり性格のポーズのみ (weight 41)
+  { weight: 41, needsProp: false, gemini: null, pollinations: null },
+];
+
+/**
+ * ポーズを重み付きでランダムに選ぶ。指定なしの場合・題材と合わない場面ではnullを返す。
+ * @param {{ eatingAction?: string|null, reserveCalendarSpace?: boolean }} [opts]
+ * @param {() => number} [rand=Math.random] - テスト用乱数関数
+ * @returns {{ weight: number, needsProp: boolean, gemini: string, pollinations: string|null }|null}
+ */
+export function pickPose({ eatingAction = null, reserveCalendarSpace = false } = {}, rand = Math.random) {
+  // 食べ物の動作と競合する・壁紙は全身を収めて余白を確保する構図のためポーズ軸を使わない
+  if (eatingAction || reserveCalendarSpace) return null;
+  const total = CAT_POSES.reduce((s, p) => s + p.weight, 0);
+  let r = rand() * total;
+  for (const p of CAT_POSES) {
+    r -= p.weight;
+    if (r <= 0) return p.gemini ? p : null;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // 食べ物テーマの eating action（foodItem が指定された場合のみ 30% で追加）
 // ---------------------------------------------------------------------------
 const EATING_ACTION_PROBABILITY = 0.30;
@@ -1143,7 +1215,7 @@ export function pickGuestAnimal(mainPersona, rand = Math.random) {
   }
 }
 
-export function _buildPollinationsPrompt(theme, description, persona, personality, visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "", reserveCalendarSpace = false) {
+export function _buildPollinationsPrompt(theme, description, persona, personality, visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "", reserveCalendarSpace = false, pose = null) {
   // Pollinations API のプロンプトは ASCII のみ使用
   // 日本語等の非ASCII文字はURLパス内でサーバー側エラー(500)の原因になるためフィルタリング
   const toAscii = (s) => (s ?? "").replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
@@ -1160,12 +1232,12 @@ export function _buildPollinationsPrompt(theme, description, persona, personalit
   // 「kawaii watercolor cat」にcatが含まれるため persona が null のときの "cat" フォールバックは不要
   const guestPart  = guest ? `with ${guest.appearance}` : null;
   const calendarParts = reserveCalendarSpace ? ["vertical 9:16 portrait", "wide empty margin at bottom third", "empty margin top left corner", "no text or numbers"] : [];
-  const parts = ["kawaii watercolor cat", vhForParts, subject, descAscii || null, persona, personality, emotion, eatingAction, guestPart, "pastel colors, white background", "full frame composition, minimal empty space", "only the cat has a face, no faces on other objects", ...calendarParts];
+  const parts = ["kawaii watercolor cat", vhForParts, subject, descAscii || null, persona, personality, pose?.pollinations ?? null, emotion, eatingAction, guestPart, "pastel colors, white background", "full frame composition, minimal empty space", "only the cat has a face, no faces on other objects", ...calendarParts];
   return parts.filter(Boolean).join(", ");
 }
 
 // seasonalStyleTone省略時は旧固定文言にフォールバック（呼び出し元が季節カラーを渡さない場合の後方互換）
-export function _buildGeminiPrompt(theme, description, persona, personality, visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "", seasonalStyleTone = "light pink and beige tones", reserveCalendarSpace = false) {
+export function _buildGeminiPrompt(theme, description, persona, personality, visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "", seasonalStyleTone = "light pink and beige tones", reserveCalendarSpace = false, pose = null) {
   const promptTheme = themeEn || theme;
   const promptContext = descriptionEn || description;
   return (
@@ -1173,6 +1245,7 @@ export function _buildGeminiPrompt(theme, description, persona, personality, vis
     (persona     ? `Cat appearance: ${persona}. `                      : "") +
     (personality ? `Cat personality and pose: ${personality}. `        : "") +
     (emotion     ? `Cat facial expression and emotion: ${emotion}. `   : "") +
+    (pose?.gemini ? `Cat pose and framing (overrides any pose implied above; apply it only if it fits the Theme and Setting naturally, otherwise ignore it and keep a natural pose for the theme): ${pose.gemini}. ` : "") +
     (eatingAction ? `Cat action: ${eatingAction}. `                    : "") +
     (guest        ? `Guest animal in the scene: ${guest.appearance}. Guest demeanor: ${guest.personality}. ` : "") +
     `Theme: ${promptTheme}. ` +
@@ -1191,8 +1264,8 @@ export function _buildGeminiPrompt(theme, description, persona, personality, vis
   );
 }
 
-function buildPollinationsUrl(theme, description, persona, personality, model = "flux", visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "", reserveCalendarSpace = false) {
-  const prompt = _buildPollinationsPrompt(theme, description, persona, personality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, reserveCalendarSpace);
+function buildPollinationsUrl(theme, description, persona, personality, model = "flux", visualHint = null, emotion = null, eatingAction = null, guest = null, themeEn = "", descriptionEn = "", reserveCalendarSpace = false, pose = null) {
+  const prompt = _buildPollinationsPrompt(theme, description, persona, personality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, reserveCalendarSpace, pose);
   const seed = Math.floor(Math.random() * 1_000_000);
   return (
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
@@ -1215,6 +1288,7 @@ export async function handleGenerate(body, apiKey, env, ctx = null) {
   const emotion      = pickEmotion();
   const visualHint   = body.visualHint ?? null;
   const eatingAction = pickEatingAction(body.foodItem ?? null);
+  const pose         = pickPose({ eatingAction, reserveCalendarSpace });
   const guest        = pickGuestAnimal(persona);
   // No.8 子猫の場合はメイン猫の性格に保護者修飾を追加
   const effectivePersonality = (personality && guest?.guardianModifier)
@@ -1223,7 +1297,7 @@ export async function handleGenerate(body, apiKey, env, ctx = null) {
   // Bug#26: 季節カラー（getSeasonalStyleTone）でStyle行の固定文言"light pink and beige tones"を置き換える
   // Bug#32: runBot()側で計算済みのJST日付があれば再利用し、new Date()の再計算を避ける
   const seasonalStyleTone = getSeasonalStyleTone(body.jstDateISO ?? toJSTDateStringWorker(new Date()));
-  const prompt = _buildGeminiPrompt(theme, description, persona, effectivePersonality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, seasonalStyleTone, reserveCalendarSpace);
+  const prompt = _buildGeminiPrompt(theme, description, persona, effectivePersonality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, seasonalStyleTone, reserveCalendarSpace, pose);
 
   async function callModel(model) {
     // 1モデルあたり最大 15 秒（実測最大 ~10s + 余裕5s）
@@ -1327,7 +1401,7 @@ export async function handleGenerate(body, apiKey, env, ctx = null) {
     const MODELS = ["flux", "turbo", "flux-realism", "flux-anime"];
     return Promise.any(
       MODELS.map(async (model) => {
-        const url = buildPollinationsUrl(theme, description, persona, effectivePersonality, model, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, reserveCalendarSpace);
+        const url = buildPollinationsUrl(theme, description, persona, effectivePersonality, model, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, reserveCalendarSpace, pose);
         console.log(`[pollinations] trying model=${model}`);
         const imgRes = await fetch(url, { signal: AbortSignal.timeout(POLLINATIONS_TIMEOUT_MS) });
         if (!imgRes.ok) throw new Error(`status=${imgRes.status}`);
@@ -1340,11 +1414,11 @@ export async function handleGenerate(body, apiKey, env, ctx = null) {
     );
   }
 
-  const pollinationsPrompt = _buildPollinationsPrompt(theme, description, persona, effectivePersonality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, reserveCalendarSpace);
+  const pollinationsPrompt = _buildPollinationsPrompt(theme, description, persona, effectivePersonality, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, reserveCalendarSpace, pose);
 
   // 2フェーズ方式の実行（ロジックは _twoPhaseRace に切り出し済み）
   const result = await _twoPhaseRace(tryGemini, tryPollinations);
-  return { ...result, persona, personality: effectivePersonality, emotion, eatingAction, guest, prompt, pollinationsPrompt };
+  return { ...result, persona, personality: effectivePersonality, emotion, pose: pose?.gemini ?? null, eatingAction, guest, prompt, pollinationsPrompt };
 }
 
 // ---------------------------------------------------------------------------

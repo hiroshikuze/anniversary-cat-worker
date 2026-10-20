@@ -68,6 +68,30 @@ export async function getImageFromR2(bucket, id) {
 }
 
 /**
+ * 前日から`days`日前までのBot作品（`bot/YYYY-MM-DD`）のテーマを集めて返す（当日は含めない）。
+ * 直近と同じテーマを避けるために使う（2026-10追加）。存在しない日・取得失敗・themeなしは
+ * 無視する（失敗しても空のSetを返し、呼び出し元の処理を止めない）。
+ * @param {R2Bucket|null} bucket
+ * @param {string} jstDateISO - 基準日（"YYYY-MM-DD"・JST）
+ * @param {number} [days=3]
+ * @returns {Promise<Set<string>>}
+ */
+export async function getRecentThemes(bucket, jstDateISO, days = 3) {
+  const themes = new Set();
+  if (!bucket) return themes;
+  const base = new Date(`${jstDateISO}T00:00:00Z`).getTime();
+  const ids = [];
+  for (let i = 1; i <= days; i++) {
+    ids.push(`bot/${new Date(base - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)}`);
+  }
+  const metas = await Promise.all(ids.map(id => getMetaFromR2(bucket, id).catch(() => null)));
+  for (const meta of metas) {
+    if (typeof meta?.theme === "string" && meta.theme) themes.add(meta.theme);
+  }
+  return themes;
+}
+
+/**
  * 14日以上前のidプレフィックスを列挙する。
  * @param {R2Bucket} bucket
  * @param {number} maxAgeDays

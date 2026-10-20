@@ -13,7 +13,7 @@
  *   SUZURI_API_KEY        ... SUZURI API キー（商品生成用）
  */
 
-import { saveToR2, getMetaFromR2, getImageFromR2 } from "./r2-storage.js";
+import { saveToR2, getMetaFromR2, getImageFromR2, getRecentThemes } from "./r2-storage.js";
 import { createSuzuriProducts } from "./suzuri.js";
 import { pickFromPool, recordCpuCheckpoint, _deferOrAwait, _recordAutoCropCpu, getSeasonalFlower, getSeasonalFlowerEn, getSeasonalFlowerVisual } from "./index.js";
 import { getActiveSaleInfo } from "./sale.js";
@@ -921,7 +921,9 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null, de
       const poolObj = await env.IMAGE_BUCKET.get(`research-pool/${jstDateISO}.json`);
       if (poolObj) {
         const pool = await poolObj.json();
-        research = pickFromPool(pool);
+        // 直近のBot作品と同じテーマを避ける（取得失敗は空Setで、プール選択は従来どおり）
+        const recentThemes = await getRecentThemes(env.IMAGE_BUCKET, jstDateISO);
+        research = pickFromPool(pool, Math.random, recentThemes);
         if (research) {
           console.log(`${prefix} research プール取得 theme="${research.theme}" fallback=${!!research.isSeasonalFallback}`);
         }
@@ -1171,6 +1173,7 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null, de
         generated.persona       ? `🐱 毛柄: ${generated.persona}`                      : null,
         generated.personality   ? `😺 性格: ${generated.personality}`                  : null,
         generated.emotion       ? `💭 感情: ${generated.emotion}`                      : null,
+        generated.pose          ? `🤸 ポーズ: ${generated.pose}`                       : null,
         generated.eatingAction  ? `🍴 食べ物アクション: ${generated.eatingAction}`      : null,
         generated.guest         ? `🐾 ゲスト外見: ${generated.guest.appearance}`        : null,
         generated.guest         ? `🐾 ゲスト性格: ${generated.guest.personality}`       : null,

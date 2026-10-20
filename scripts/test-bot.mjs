@@ -10,7 +10,7 @@
  */
 
 import { readFileSync, existsSync } from "node:fs";
-import { updateMetaInR2, collectMaterialIds } from "../worker/r2-storage.js";
+import { updateMetaInR2, collectMaterialIds, getRecentThemes } from "../worker/r2-storage.js";
 import { parseExpiryDate } from "./audit-suzuri-materials.mjs";
 import { parseSinceMs, buildQueryBody, parseArgs as parseQueryLogArgs } from "./query-worker-logs.mjs";
 import {
@@ -30,7 +30,7 @@ import {
 import { _setSaleForTest } from "../worker/sale.js";
 import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale } from "../worker/sale-check.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST, _isBotCronEvent, cleanupExpiredEntries, cleanupOrphanBackTextureMaterials, _generateFallbackThemeHook, generateResearchPool } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST, _isBotCronEvent, cleanupExpiredEntries, cleanupOrphanBackTextureMaterials, _generateFallbackThemeHook, generateResearchPool, pickPose, CAT_POSES, pickSeasonalFlowerEntry } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 import { renderElementToPng, ensureResvg, _setSatoriForTest, _setResvgForTest } from "../worker/svg-render.js";
@@ -6796,6 +6796,313 @@ console.log("\n[runMonthlyWallpaperPost: Discord通知にBluesky/Mastodon投稿U
 
   assert("1通目にBluesky投稿URLが含まれる", discordBodies[0]?.includes("https://bsky.app/profile/nyanmusu.bsky.social/post/wallpaper1"));
   assert("1通目にMastodon投稿URLが含まれる", discordBodies[0]?.includes(`${MASTO_INSTANCE_WP}/@nyanmusu/status1`));
+}
+
+// ─── 猫のポーズ（A）: pickPose / プロンプト反映（2026-10追加） ──────────────
+console.log("\n[猫のポーズ] CAT_POSES / pickPose");
+{
+  const isAscii = (t) => /^[\x20-\x7E]+$/.test(t);
+  const totalWeight = CAT_POSES.reduce((sum, e) => sum + e.weight, 0);
+  const real = CAT_POSES.filter(e => e.gemini);
+
+  assert("CAT_POSES: 重みの合計が100", totalWeight === 100);
+  assert("CAT_POSES: ポーズ指定なし（gemini=null）が含まれる", CAT_POSES.some(e => e.gemini === null));
+  assert("CAT_POSES: ポーズ指定なしの重みは30〜50（従来の挙動を残す）", (() => {
+    const w = CAT_POSES.find(e => e.gemini === null).weight;
+    return w >= 30 && w <= 50;
+  })());
+  assert("CAT_POSES: gemini文字列はすべてASCIIのみ", real.every(e => isAscii(e.gemini)));
+  assert("CAT_POSES: pollinations文字列はnullまたはASCIIのみ", real.every(e => e.pollinations === null || isAscii(e.pollinations)));
+  assert("CAT_POSES: 小道具が必要なポーズ（needsProp）はpollinations=null", real.filter(e => e.needsProp).every(e => e.pollinations === null));
+  assert("CAT_POSES: 小道具が不要なポーズはpollinationsを持つ", real.filter(e => !e.needsProp).every(e => typeof e.pollinations === "string" && e.pollinations.length > 0));
+  assert("CAT_POSES: 小道具が必要なポーズの重み合計は15以下（まれにする）", real.filter(e => e.needsProp).reduce((sum, e) => sum + e.weight, 0) <= 15);
+  assert("CAT_POSES: 小道具が必要なポーズが3つある（狭い所・踏み踏み・背中をこする）", real.filter(e => e.needsProp).length === 3);
+  assert("CAT_POSES: ユーザー指定の7種類の仕草が揃う", [
+    /box|bucket/i, /belly/i, /kneading/i, /groom/i, /meow/i, /curled up/i, /rubbing its back/i,
+  ].every(re => real.some(e => re.test(e.gemini))));
+
+  // 正常系: randの値で決定的に選ばれる（先頭・末尾）
+  const first = pickPose({}, () => 0);
+  assert("pickPose: rand=0で先頭のポーズ（指定あり）", first !== null && first.gemini === CAT_POSES[0].gemini);
+  assert("pickPose: rand≈1で末尾（ポーズ指定なし）→ null", pickPose({}, () => 0.999999) === null);
+
+  // 除外条件: 題材と合わない場面ではポーズ軸を使わない
+  assert("pickPose: eatingActionがあるとnull（動作が競合する）", pickPose({ eatingAction: "nibbling on a rice ball" }, () => 0) === null);
+  assert("pickPose: reserveCalendarSpace（壁紙）ではnull", pickPose({ reserveCalendarSpace: true }, () => 0) === null);
+  assert("pickPose: eatingAction=nullなら除外されない", pickPose({ eatingAction: null }, () => 0) !== null);
+
+  // 境界値: 引数省略でも動く
+  let threw = false;
+  try { pickPose(); } catch { threw = true; }
+  assert("pickPose: 引数省略でも例外を投げない", !threw);
+
+  // 分布: 本番乱数でポーズ指定なしが重みどおり（41%前後）・全ポーズが出現する
+  const N = 20000;
+  let nullCount = 0;
+  const seen = new Set();
+  for (let i = 0; i < N; i++) {
+    const r = pickPose();
+    if (r === null) nullCount++; else seen.add(r.gemini);
+  }
+  const nullRate = nullCount / N;
+  assert(`pickPose: ポーズ指定なしの割合が重みどおり（${(nullRate * 100).toFixed(1)}%）`, nullRate > 0.36 && nullRate < 0.46);
+  assert("pickPose: すべてのポーズが一度は選ばれる", seen.size === real.length);
+}
+
+console.log("\n[猫のポーズ] プロンプトへの反映");
+{
+  const POSE = { gemini: "relaxed lying on its back showing its fluffy belly", pollinations: "lying on back showing belly", needsProp: false };
+  const PROP = { gemini: "squeezing into a small cozy container", pollinations: null, needsProp: true };
+
+  const withPose = _buildGeminiPrompt("テーマ", "説明", "orange tabby", "gazing warmly", "vh", "serene", null, null, "Theme", "Desc", "tone", false, POSE);
+  assert("Geminiプロンプト: ポーズ行が入る", withPose.includes("Cat pose and framing") && withPose.includes(POSE.gemini));
+  assert("Geminiプロンプト: 性格のポーズより優先する指示が入る", withPose.includes("overrides any pose implied above"));
+  assert("Geminiプロンプト: 題材に合う場合のみ適用する条件が入る", /only if it fits the Theme and Setting naturally/.test(withPose));
+  assert("Geminiプロンプト: ポーズ行は性格行より後・Theme行より前", (() => {
+    const a = withPose.indexOf("Cat personality and pose");
+    const b = withPose.indexOf("Cat pose and framing");
+    const c = withPose.indexOf("Theme:");
+    return a >= 0 && a < b && b < c;
+  })());
+  const noPose = _buildGeminiPrompt("テーマ", "説明", "orange tabby", "gazing warmly", "vh", "serene", null, null, "Theme", "Desc", "tone", false);
+  assert("Geminiプロンプト: ポーズ省略時はポーズ行を含まない（後方互換）", !noPose.includes("Cat pose and framing"));
+  const nullPose = _buildGeminiPrompt("テーマ", "説明", "orange tabby", "gazing warmly", "vh", "serene", null, null, "Theme", "Desc", "tone", false, null);
+  assert("Geminiプロンプト: pose=nullは省略時と同一", nullPose === noPose);
+
+  const pollWith = _buildPollinationsPrompt("テーマ", "説明", "orange tabby", "gazing warmly", "vh", "serene", null, null, "Theme", "Desc", false, POSE);
+  assert("Pollinationsプロンプト: ポーズのフレーズが入る", pollWith.includes(POSE.pollinations));
+  assert("Pollinationsプロンプト: ポーズは性格の後・感情の前", (() => {
+    const a = pollWith.indexOf("gazing warmly");
+    const b = pollWith.indexOf(POSE.pollinations);
+    const c = pollWith.indexOf("serene");
+    return a >= 0 && a < b && b < c;
+  })());
+  const pollProp = _buildPollinationsPrompt("テーマ", "説明", "orange tabby", "gazing warmly", "vh", "serene", null, null, "Theme", "Desc", false, PROP);
+  const pollNone = _buildPollinationsPrompt("テーマ", "説明", "orange tabby", "gazing warmly", "vh", "serene", null, null, "Theme", "Desc", false);
+  assert("Pollinationsプロンプト: 小道具が必要なポーズ（pollinations=null）は渡さない", pollProp === pollNone);
+  assert("Pollinationsプロンプト: ポーズはASCIIのみ", /^[\x20-\x7E]+$/.test(pollWith));
+
+  // handleGenerate: 戻り値のpose（壁紙では常にnull・通常はプロンプトのポーズ行と整合）
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (typeof url === "string" && url.includes("pollinations")) {
+      return { ok: true, headers: { get: () => "image/png" }, arrayBuffer: async () => Buffer.from("png") };
+    }
+    return { ok: false, status: 500, text: async () => "error" };
+  };
+  try {
+    const wall = await handleGenerate({ theme: "テスト", description: "", reserveCalendarSpace: true }, "dummy-key");
+    assert("handleGenerate: 壁紙（reserveCalendarSpace）ではposeがnull", wall.pose === null && !wall.prompt.includes("Cat pose and framing"));
+    let consistent = true;
+    for (let i = 0; i < 10; i++) {
+      const g = await handleGenerate({ theme: "テスト", description: "" }, "dummy-key");
+      const hasLine = g.prompt.includes("Cat pose and framing");
+      if (!("pose" in g) || (g.pose === null) === hasLine) consistent = false;
+      if (g.pose !== null && !g.prompt.includes(g.pose)) consistent = false;
+    }
+    assert("handleGenerate: poseの有無とプロンプトのポーズ行が整合する", consistent);
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+}
+
+// ─── 直近テーマの除外（B）: getRecentThemes / pickFromPool / 季節の花の代替 ──
+console.log("\n[直近テーマ] getRecentThemes");
+{
+  const makeBucket = (metas, { throwOn = [] } = {}) => {
+    const calls = [];
+    return {
+      calls,
+      async get(key) {
+        calls.push(key);
+        if (throwOn.includes(key)) throw new Error("R2 get failed");
+        const m = key.match(/^(bot\/\d{4}-\d{2}-\d{2})\/meta\.json$/);
+        if (m && metas[m[1]]) return { json: async () => metas[m[1]] };
+        return null;
+      },
+    };
+  };
+
+  {
+    const bucket = makeBucket({
+      "bot/2026-10-21": { theme: "今日のテーマ" },          // 当日は含めない
+      "bot/2026-10-20": { theme: "金木犀の季節" },
+      "bot/2026-10-19": { theme: "秋桜の季節" },
+      "bot/2026-10-17": { theme: "4日前のテーマ" },         // days=3の範囲外
+    });
+    const r = await getRecentThemes(bucket, "2026-10-21", 3);
+    assert("getRecentThemes: 前日・前々日のテーマを返す", r.has("金木犀の季節") && r.has("秋桜の季節"));
+    assert("getRecentThemes: 当日・範囲外は含めない", !r.has("今日のテーマ") && !r.has("4日前のテーマ"));
+    assert("getRecentThemes: 存在しない日（10-18）は無視する", r.size === 2);
+  }
+  {
+    const bucket = makeBucket({});
+    await getRecentThemes(bucket, "2026-11-01", 3);
+    assert("getRecentThemes: 月をまたぐ（11-01→10-31,10-30,10-29）", ["bot/2026-10-31", "bot/2026-10-30", "bot/2026-10-29"].every(id => bucket.calls.includes(`${id}/meta.json`)));
+    const bucket2 = makeBucket({});
+    await getRecentThemes(bucket2, "2027-01-02", 3);
+    assert("getRecentThemes: 年をまたぐ（01-02→01-01,12-31,12-30）", ["bot/2027-01-01", "bot/2026-12-31", "bot/2026-12-30"].every(id => bucket2.calls.includes(`${id}/meta.json`)));
+    const bucket3 = makeBucket({});
+    await getRecentThemes(bucket3, "2026-10-21");
+    assert("getRecentThemes: days省略時は3日分を読む", bucket3.calls.length === 3);
+  }
+  {
+    // エラー系: 一部の日の取得失敗は無視して他の日の結果を返す・bucketなし・themeなしメタ
+    const bucket = makeBucket({ "bot/2026-10-19": { theme: "秋桜の季節" }, "bot/2026-10-18": {} },
+      { throwOn: ["bot/2026-10-20/meta.json"] });
+    const r = await getRecentThemes(bucket, "2026-10-21", 3);
+    assert("getRecentThemes: 一部の取得失敗は無視して残りを返す", r.size === 1 && r.has("秋桜の季節"));
+    const none = await getRecentThemes(null, "2026-10-21", 3);
+    assert("getRecentThemes: bucketなしは空のSet", none instanceof Set && none.size === 0);
+  }
+}
+
+console.log("\n[直近テーマ] pickFromPool の除外");
+{
+  const mkNormal   = (theme) => ({ theme, sourceUrlKind: "grounding", isSeasonalFallback: false });
+  const mkFallback = (theme) => ({ theme, sourceUrlKind: "seasonal-flower-fallback", isSeasonalFallback: true });
+
+  {
+    const pool = { entries: [mkNormal("A"), mkNormal("B")] };
+    let everA = false;
+    for (let i = 0; i < 100; i++) if (pickFromPool(pool, Math.random, new Set(["A"])).theme === "A") everA = true;
+    assert("除外: 除外テーマは選ばれない", !everA);
+  }
+  {
+    const pool = { entries: [mkNormal("A"), mkNormal("B")] };
+    const r = pickFromPool(pool, Math.random, new Set(["A", "B"]));
+    assert("除外: 全件除外になる場合は除外せず全体から選ぶ（投稿を止めない）", r !== null && ["A", "B"].includes(r.theme));
+  }
+  {
+    const pool = { entries: [mkNormal("A"), mkFallback("藤の季節")] };
+    const r = pickFromPool(pool, () => 0.99, new Set(["A"]));
+    assert("除外: 通常エントリが全件除外ならfallbackを選ぶ", r?.theme === "藤の季節");
+  }
+  {
+    const pool = { entries: [mkNormal("A"), mkFallback("藤の季節")] };
+    // rand=0 は通常ならfallbackを選ぶ判定だが、fallbackを除外したら通常から選ぶ
+    const r = pickFromPool(pool, () => 0, new Set(["藤の季節"]));
+    assert("除外: 除外されたfallbackは選ばれない", r?.theme === "A");
+  }
+  {
+    const pool = { entries: [mkFallback("金木犀の季節")] };
+    const r = pickFromPool(pool, Math.random, new Set(["金木犀の季節"]));
+    assert("除外: 候補がfallback1件だけで除外対象でも返す（繰り返しを許す）", r?.theme === "金木犀の季節");
+  }
+  {
+    const pool = { entries: [mkNormal("A"), mkNormal("B")] };
+    const seen = new Set();
+    for (let i = 0; i < 100; i++) {
+      seen.add(pickFromPool(pool, Math.random, null).theme);
+      seen.add(pickFromPool(pool, Math.random, new Set()).theme);
+    }
+    assert("除外: null・空のSetは従来どおり全体から選ぶ", seen.has("A") && seen.has("B"));
+  }
+  assert("除外: 空プールは除外指定があってもnull", pickFromPool({ entries: [] }, Math.random, new Set(["A"])) === null);
+}
+
+console.log("\n[直近テーマ] pickSeasonalFlowerEntry");
+{
+  const today = pickSeasonalFlowerEntry("2026-10-20", new Set());
+  assert("季節の花: 直近テーマなしなら当日の窓の花", today.name === "金木犀");
+  assert("季節の花: entryに名前・英語名・ふりがな・visualがある", ["name", "en", "kana", "visual"].every(k => typeof today[k] === "string" && today[k].length > 0));
+  assert("季節の花: recent=null・省略でも当日の花", pickSeasonalFlowerEntry("2026-10-20", null).name === "金木犀" && pickSeasonalFlowerEntry("2026-10-20").name === "金木犀");
+  assert("季節の花: 当日の花が直近なら前の窓の花（秋桜）", pickSeasonalFlowerEntry("2026-10-20", new Set(["金木犀の季節"])).name === "秋桜");
+  assert("季節の花: 前の窓も直近なら次の窓の花（菊）", pickSeasonalFlowerEntry("2026-10-20", new Set(["金木犀の季節", "秋桜の季節"])).name === "菊");
+  assert("季節の花: 前後すべて直近なら当日の花", pickSeasonalFlowerEntry("2026-10-20", new Set(["金木犀の季節", "秋桜の季節", "菊の季節"])).name === "金木犀");
+  assert("季節の花: 年初（寒椿）の前の窓は年末の千両に循環する", pickSeasonalFlowerEntry("2026-01-01", new Set(["寒椿の季節"])).name === "千両");
+  assert("季節の花: 年末（千両）の次の窓は年初の寒椿に循環する", pickSeasonalFlowerEntry("2026-12-31", new Set(["千両の季節", "銀杏の季節"])).name === "寒椿");
+  assert("季節の花: 無関係な直近テーマは影響しない", pickSeasonalFlowerEntry("2026-10-20", new Set(["猫の日"])).name === "金木犀");
+}
+
+console.log("\n[直近テーマ] generateResearchPool・runBotへの配線");
+{
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const iso = (d) => d.toISOString().slice(0, 10);
+  const todayISO     = iso(jstNow);
+  const yesterdayISO = iso(new Date(jstNow.getTime() - 24 * 60 * 60 * 1000));
+  const todayFlower  = getSeasonalFlower(todayISO);
+
+  {
+    // generateResearchPool: 前日が当日の花だった場合は別の花で補充する
+    const puts = {};
+    const bucket = {
+      puts,
+      async get(key) {
+        if (key === `bot/${yesterdayISO}/meta.json`) return { json: async () => ({ theme: `${todayFlower}の季節` }) };
+        return null;
+      },
+      async put(key, val) { puts[key] = val; },
+    };
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = makeAllNoneResearchFetchMock(() => ({ ok: false, status: 500, text: async () => "error" }));
+    _resetModelCacheForTest();
+    await generateResearchPool({ GEMINI_API_KEY: "key", IMAGE_BUCKET: bucket });
+    globalThis.fetch = origFetch;
+    const savedKey = Object.keys(puts).find(k => k.startsWith("research-pool/"));
+    const entry = JSON.parse(puts[savedKey]).entries.find(e => e.isSeasonalFallback);
+    assert("generateResearchPool: 前日が同じ花なら別の花で補充する", !!entry && entry.theme !== `${todayFlower}の季節` && entry.theme.endsWith("の季節"));
+    assert("generateResearchPool: 別の花のvisualHintに切り替わる", entry?.visualHint !== getSeasonalFlowerVisual(todayISO));
+  }
+  {
+    // 直近テーマがなければ従来どおり当日の花
+    const puts = {};
+    const bucket = { puts, async get() { return null; }, async put(key, val) { puts[key] = val; } };
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = makeAllNoneResearchFetchMock(() => ({ ok: false, status: 500, text: async () => "error" }));
+    _resetModelCacheForTest();
+    await generateResearchPool({ GEMINI_API_KEY: "key", IMAGE_BUCKET: bucket });
+    globalThis.fetch = origFetch;
+    const savedKey = Object.keys(puts).find(k => k.startsWith("research-pool/"));
+    const entry = JSON.parse(puts[savedKey]).entries.find(e => e.isSeasonalFallback);
+    assert("generateResearchPool: 直近テーマなしは当日の花で補充する", entry?.theme === `${todayFlower}の季節`);
+  }
+
+  // runBot: プールから選ぶとき、前日のテーマを避ける
+  const makeBotEnv = ({ yesterdayMeta, throwOnYesterday = false }) => {
+    const store = {
+      [`research-pool/${todayISO}.json`]: JSON.stringify({ entries: [
+        { theme: "直近記念日", description: "d", visualHint: "h", sourceUrl: "https://example.com" },
+        { theme: "別の記念日", description: "d", visualHint: "h", sourceUrl: "https://example.com" },
+      ] }),
+    };
+    const bucket = {
+      async put(key, value) { store[key] = value; },
+      async get(key) {
+        if (key === `bot/${yesterdayISO}/meta.json`) {
+          if (throwOnYesterday) throw new Error("R2 get failed");
+          return yesterdayMeta ? { json: async () => yesterdayMeta } : null;
+        }
+        if (!(key in store)) return null;
+        return { json: async () => JSON.parse(store[key]) };
+      },
+    };
+    return { GEMINI_API_KEY: "k", BLUESKY_IDENTIFIER: "", BLUESKY_APP_PASSWORD: "", DISCORD_WEBHOOK_URL: "", IMAGE_BUCKET: bucket };
+  };
+  const runOnce = async (env) => {
+    let theme = null;
+    await runBot(env, async () => { throw new Error("プールがあるので呼ばれない"); },
+      async (body) => { theme = body.theme; return { imageData: btoa("x"), mimeType: "image/png", source: "gemini" }; });
+    return theme;
+  };
+
+  {
+    let pickedRecent = 0;
+    for (let i = 0; i < 20; i++) {
+      if (await runOnce(makeBotEnv({ yesterdayMeta: { theme: "直近記念日" } })) === "直近記念日") pickedRecent++;
+    }
+    assert("runBot: 前日のテーマはプールから選ばない（20回）", pickedRecent === 0);
+  }
+  {
+    const seen = new Set();
+    for (let i = 0; i < 30; i++) seen.add(await runOnce(makeBotEnv({ yesterdayMeta: null })));
+    assert("runBot: 前日のメタがなければ両方のテーマが選ばれうる", seen.has("直近記念日") && seen.has("別の記念日"));
+  }
+  {
+    // エラー系: 前日メタの取得が失敗しても投稿を止めない
+    const theme = await runOnce(makeBotEnv({ throwOnYesterday: true }));
+    assert("runBot: 直近テーマの取得に失敗しても投稿処理を続ける", theme === "直近記念日" || theme === "別の記念日");
+  }
 }
 
 // ─── repostBot: 投稿済み確認つきの再投稿（2026-10追加） ──────────────────
