@@ -9,7 +9,7 @@
  *   ALLOWED_ORIGIN  ... GitHub Pages の URL（例: https://hiroshikuze.github.io）
  */
 
-import { runBot, notifyDiscord, runMonthlyWallpaperPost } from "./bot.js";
+import { runBot, repostBot, notifyDiscord, runMonthlyWallpaperPost } from "./bot.js";
 import { saveToR2, getMetaFromR2, getImageFromR2, listExpiredIds, deleteFromR2, updateMetaInR2, collectMaterialIds } from "./r2-storage.js";
 import { createSuzuriProducts, deleteSuzuriMaterial, listSuzuriMaterials, isOrphanBackTextureMaterial } from "./suzuri.js";
 import { submitFalJob, getFalResult } from "./fal.js";
@@ -1852,6 +1852,20 @@ ${itemsXml}
         return Response.json({ error: "X-Bypass-Tokenが必要です" }, { status: 403, headers: corsH });
       }
       const dryRun = url.searchParams.get("dryRun") !== "false";
+      // 再投稿モード（2026-10追加）: 投稿済みかを確認したうえで未投稿のSNSにだけ再投稿する
+      if (url.searchParams.get("mode") === "repost") {
+        try {
+          const result = await repostBot(env, {
+            date:     url.searchParams.get("date"),
+            platform: url.searchParams.get("platform") ?? "both",
+            dryRun,
+          });
+          return Response.json(result, { status: result.error ? 400 : 200, headers: corsH });
+        } catch (e) {
+          console.error(`[bot manual-run repost] 失敗: ${e.message}`);
+          return Response.json({ error: e.message }, { status: 500, headers: corsH });
+        }
+      }
       try {
         const result = await runBot(env, handleResearch, handleGenerate, ctx, { dryRun });
         return Response.json(result, { headers: corsH });

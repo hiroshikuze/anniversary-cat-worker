@@ -204,7 +204,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | 漢字一字の背面印刷（`/research`の`kanjiChar`→Canvas生成→Tシャツ`sub_materials`） | `worker/index.js` `normalizeKanjiChar()` / `frontend/index.html` `generateKanjiTexture()` | 稼働中 |
 | Bluesky Bot投稿（毎平日7:00 JST・2026-05-01より） | `worker/bot.js` `runBot()` | 稼働中 |
 | Mastodon Bot投稿（Blueskyと同時・Promise.allSettled・シークレット未設定時はスキップ・設定エラー検出） | `worker/bot.js` `runBot()` | 稼働中 |
-| Bot Cronの手動実行・テストエンドポイント（`X-Bypass-Token`保護・デフォルトdryRun=trueで投稿なしプレビュー・`?dryRun=false`で本番投稿。ダッシュボードのScheduled手動送信〔記録が残らず実行者不明の事故＝Bug#40〕の代替） | `worker/index.js` `POST /bot/manual-run` `worker/index.js` `_isBotCronEvent()` `worker/bot.js` `runBot()`の`deps.dryRun` | 稼働中 |
+| Bot Cronの手動実行・テストエンドポイント（`X-Bypass-Token`保護・デフォルトdryRun=trueで投稿なしプレビュー・`?dryRun=false`で本番投稿。ダッシュボードのScheduled手動送信〔記録が残らず実行者不明の事故＝Bug#40〕の代替。`?mode=repost&date=YYYY-MM-DD`で、投稿済みかを確認したうえで未投稿のSNSにだけ再投稿する・2026-10追加） | `worker/index.js` `POST /bot/manual-run` `worker/bot.js` `repostBot()` `worker/index.js` `_isBotCronEvent()` `worker/bot.js` `runBot()`の`deps.dryRun` | 稼働中 |
 | ゲストキャラクター（10%確率・8種・ゲスト外見/性格をDiscord通知に含む） | `worker/index.js` `pickGuestAnimal()` | 稼働中 |
 | Bot投稿完了のDiscord通知（テーマ・プロンプト全文・画像ソース・毛柄・性格・感情・食べ物アクション・ゲスト・投稿URL含む・2通構成） | `worker/bot.js` `notifyDiscord()` `buildBlueskyPostUrl()` | 稼働中 |
 | SUZURIグッズ登録（4商品: Tシャツ・ステッカー・缶バッジ・アクキー） | `worker/suzuri.js` | 稼働中 |

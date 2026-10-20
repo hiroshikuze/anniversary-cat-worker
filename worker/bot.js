@@ -13,7 +13,7 @@
  *   SUZURI_API_KEY        ... SUZURI API キー（商品生成用）
  */
 
-import { saveToR2 } from "./r2-storage.js";
+import { saveToR2, getMetaFromR2, getImageFromR2 } from "./r2-storage.js";
 import { createSuzuriProducts } from "./suzuri.js";
 import { pickFromPool, recordCpuCheckpoint, _deferOrAwait, _recordAutoCropCpu, getSeasonalFlower, getSeasonalFlowerEn, getSeasonalFlowerVisual } from "./index.js";
 import { getActiveSaleInfo } from "./sale.js";
@@ -692,6 +692,194 @@ export async function findAvailableR2Id(bucket, jstDateISO) {
     if (!(await bucket.get(`${id}/meta.json`))) return id;
   }
   return `${base}-9`;
+}
+
+// ---------------------------------------------------------------------------
+// 再投稿モード（2026-10追加）: 投稿済みかを確認したうえで、未投稿のSNSにだけ再投稿する
+// ---------------------------------------------------------------------------
+// 背景: Bluesky/Mastodon投稿は二重投稿を避けるため意図的にリトライしない設計のため、
+// 502等で片方だけ失敗した場合に、後から失敗した側だけを投稿し直す手段が必要になった。
+// 502・タイムアウトは「サーバー側では投稿が作られていた」可能性があるため、再投稿の前に
+// 必ず投稿済みかを確認する。確認自体に失敗した場合は投稿しない（二重投稿を避ける側に倒す）。
+
+const REPOST_DATE_RE          = /^\d{4}-\d{2}-\d{2}(?:-[2-9])?$/;
+const REPOST_PLATFORMS        = ["bluesky", "mastodon", "both"];
+const REPOST_CHECK_LIMIT      = 30;
+const REPOST_CHECK_TIMEOUT_MS = 10_000;
+
+/**
+ * 本文に`?id={id}`（共有URL）が含まれるかを判定する。
+ * `?id=bot/2026-10-21`が`?id=bot/2026-10-21-2`（同日2件目）に前方一致して誤判定しないよう、
+ * 直後が英数字・`_`・`-`以外であることを要求する。
+ */
+export function containsPostMarker(text, id) {
+  if (typeof text !== "string" || !text) return false;
+  const escaped = `?id=${id}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`${escaped}(?![\\w-])`).test(text);
+}
+
+/** GETして本文をJSONとして返す。非2xx・非JSONはthrow（coding.mdの外部HTTP標準パターン） */
+async function fetchJsonOrThrow(url, options, label) {
+  const res = await fetch(url, { ...options, signal: AbortSignal.timeout(REPOST_CHECK_TIMEOUT_MS) });
+  const resText = await res.text();
+  let data;
+  try { data = JSON.parse(resText); } catch {
+    throw new Error(`${label} 非JSONレスポンス: status=${res.status} body=${resText.slice(0, 120)}`);
+  }
+  if (!res.ok) {
+    throw new Error(`${label} エラー: status=${res.status} message=${data?.message ?? data?.error ?? JSON.stringify(data)}`);
+  }
+  return data;
+}
+
+/** Blueskyの直近の自分の投稿に当該idの共有URLが含まれるか（認証不要・PDSを直接読む） */
+async function findExistingBlueskyPost(identifier, id) {
+  if (!identifier) throw new Error("BLUESKY_IDENTIFIER が設定されていません");
+  const url = `${BLUESKY_API}/com.atproto.repo.listRecords?repo=${encodeURIComponent(identifier)}` +
+    `&collection=app.bsky.feed.post&limit=${REPOST_CHECK_LIMIT}`;
+  const data = await fetchJsonOrThrow(url, {}, "Bluesky投稿一覧取得");
+  return (data.records ?? []).some(r => containsPostMarker(r?.value?.text, id));
+}
+
+/** Mastodonの直近の自分の投稿（リプライ除く）に当該idの共有URLが含まれるか */
+async function findExistingMastodonPost(instanceUrl, accessToken, id) {
+  if (!instanceUrl.startsWith("https://")) {
+    throw new Error("設定エラー: MASTODON_INSTANCE_URL が https:// で始まっていません");
+  }
+  const headers = { "Authorization": `Bearer ${accessToken}` };
+  const me = await fetchJsonOrThrow(`${instanceUrl}/api/v1/accounts/verify_credentials`, { headers }, "Mastodonアカウント確認");
+  const statuses = await fetchJsonOrThrow(
+    `${instanceUrl}/api/v1/accounts/${me.id}/statuses?limit=${REPOST_CHECK_LIMIT}&exclude_replies=true`,
+    { headers }, "Mastodon投稿一覧取得"
+  );
+  return (Array.isArray(statuses) ? statuses : []).some(st => containsPostMarker(st?.content, id));
+}
+
+/** 投稿済み確認を3値（exists/missing/unknown）に畳む。確認失敗はunknown（投稿しない） */
+async function checkPosted(findFn) {
+  try {
+    return { status: (await findFn()) ? "exists" : "missing" };
+  } catch (e) {
+    return { status: "unknown", error: e.message };
+  }
+}
+
+function formatRepostLine(label, r, dryRun) {
+  if (!r) return null;
+  switch (r.status) {
+    case "exists":  return `✅ ${label}: 投稿済み（再投稿不要）`;
+    case "skipped": return `⏭️ ${label}: 未設定・スキップ`;
+    case "unknown": return `❓ ${label}: 投稿済みか確認できず、投稿していません: ${r.error}`;
+    default:
+      if (dryRun)            return `⚠️ ${label}: 未投稿（dryRun=falseで再投稿できます）`;
+      if (r.posted === true) return `✅ ${label}: 再投稿完了${r.url ? ` ${r.url}` : ""}`;
+      return `❌ ${label}: 再投稿失敗: ${r.error}`;
+  }
+}
+
+/**
+ * 指定日のR2保存済みの画像・メタ情報を使い、投稿済みかを確認したうえで未投稿のSNSにだけ再投稿する。
+ * 新しいリサーチ・画像生成は行わない。R2メタにthemeHook・ゲストSNSタグは保存されていないため
+ * 常にfull形式で組み立てる（元の投稿と文面が変わりうる）。
+ *
+ * @param {object} env
+ * @param {{ date: string, platform?: "bluesky"|"mastodon"|"both", dryRun?: boolean }} opts
+ *   dateはYYYY-MM-DD（同日の2件目以降はYYYY-MM-DD-2〜-9）。dryRunは省略時true（確認のみ）
+ * @returns {Promise<{ dryRun: boolean, id?: string, bluesky?: object|null, mastodon?: object|null, error?: string }>}
+ */
+export async function repostBot(env, { date, platform = "both", dryRun = true } = {}) {
+  if (!REPOST_DATE_RE.test(date ?? "")) {
+    return { dryRun, error: "dateはYYYY-MM-DD形式（同日の2件目以降はYYYY-MM-DD-2〜-9）で指定してください" };
+  }
+  if (!REPOST_PLATFORMS.includes(platform)) {
+    return { dryRun, error: `platformはbluesky/mastodon/bothのいずれかで指定してください: ${platform}` };
+  }
+  if (!env.IMAGE_BUCKET) return { dryRun, error: "IMAGE_BUCKET が設定されていません" };
+
+  const id     = `bot/${date}`;
+  const prefix = `[bot repost] ${id}`;
+  const meta   = await getMetaFromR2(env.IMAGE_BUCKET, id);
+  if (!meta) return { dryRun, error: `R2に${id}のメタ情報がありません（保存は14日間です）` };
+  const image = await getImageFromR2(env.IMAGE_BUCKET, id);
+  if (!image) return { dryRun, error: `R2に${id}の画像がありません` };
+
+  const wantBsky  = platform !== "mastodon";
+  const wantMasto = platform !== "bluesky";
+  const mastoConfigured = !!(env.MASTODON_INSTANCE_URL && env.MASTODON_ACCESS_TOKEN);
+
+  // ── 1. 投稿済みか確認（dryRunでも必ず実行する） ──
+  const [bskyCheck, mastoCheck] = await Promise.all([
+    wantBsky ? checkPosted(() => findExistingBlueskyPost(env.BLUESKY_IDENTIFIER, id)) : null,
+    wantMasto
+      ? (mastoConfigured
+          ? checkPosted(() => findExistingMastodonPost(env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, id))
+          : { status: "skipped" })
+      : null,
+  ]);
+  console.log(`${prefix} 確認結果 bluesky=${bskyCheck?.status ?? "-"} mastodon=${mastoCheck?.status ?? "-"} dryRun=${dryRun}`);
+
+  let bluesky  = bskyCheck;
+  let mastodon = mastoCheck;
+
+  // ── 2. 未投稿と確認できたSNSにだけ投稿する（dryRun時は投稿しない） ──
+  const bskyMissing  = bskyCheck?.status === "missing";
+  const mastoMissing = mastoCheck?.status === "missing";
+  if (!dryRun && (bskyMissing || mastoMissing)) {
+    const desc    = meta.description ?? "";
+    const shrunk  = await shrinkImageIfNeeded(image.data, image.mimeType || "image/png", meta.theme, desc);
+    const pageUrl = `${SITE_URL}?id=${id}`;
+    const cta     = pickCta();
+    const altText = desc
+      ? `にゃんバーサリー - 「${meta.theme}」の日！${desc}（AIが生成した水彩画風の猫イラスト）`
+      : `にゃんバーサリー - 「${meta.theme}」をテーマにAIが生成した水彩画風の猫イラスト`;
+
+    const postBluesky = async () => {
+      const { accessJwt, did } = await createBlueskySession(env.BLUESKY_IDENTIFIER, env.BLUESKY_APP_PASSWORD);
+      const blobRef = await uploadBlob(accessJwt, shrunk.bytes, shrunk.mimeType);
+      const text    = buildPostText(meta.theme, desc, pageUrl, null, cta, null, "full");
+      const data    = await createPost(accessJwt, did, text, blobRef, shrunk.mimeType, altText, pageUrl, buildThemeTag(meta.theme), null);
+      return { url: buildBlueskyPostUrl(data?.uri, env.BLUESKY_IDENTIFIER) };
+    };
+    const postMastodon = async () => {
+      const mediaId = await uploadMediaToMastodon(
+        env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, shrunk.bytes, shrunk.mimeType, altText
+      );
+      const text = buildMastodonText(
+        meta.theme, desc, meta.themeEn ?? "", meta.descriptionEn ?? "", pageUrl, null, cta, null, "", "full"
+      );
+      const data = await postStatusToMastodon(env.MASTODON_INSTANCE_URL, env.MASTODON_ACCESS_TOKEN, text, mediaId);
+      return { url: data?.url ?? null };
+    };
+    const attempt = async (fn) => {
+      try { return { posted: true, ...(await fn()) }; }
+      catch (e) { return { posted: false, error: e.message }; }
+    };
+
+    const [bskyPost, mastoPost] = await Promise.all([
+      bskyMissing  ? attempt(postBluesky)  : null,
+      mastoMissing ? attempt(postMastodon) : null,
+    ]);
+    if (bskyPost)  bluesky  = { ...bskyCheck,  ...bskyPost };
+    if (mastoPost) mastodon = { ...mastoCheck, ...mastoPost };
+    for (const [label, r] of [["Bluesky", bskyPost], ["Mastodon", mastoPost]]) {
+      if (!r) continue;
+      if (r.posted) console.log(`${prefix} ${label} 再投稿 完了 ${r.url ?? ""}`);
+      else console.error(`${prefix} ${label} 再投稿 失敗: ${r.error}`);
+    }
+  }
+
+  // ── 3. Discord通知 ──
+  const header = dryRun
+    ? `🧪 再投稿の確認のみ（投稿は行われていません） ${id}`
+    : `🔁 再投稿 ${id}`;
+  const lines = [
+    header,
+    formatRepostLine("Bluesky", bluesky, dryRun),
+    formatRepostLine("Mastodon", mastodon, dryRun),
+  ].filter(Boolean);
+  await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines.join("\n"), dryRun ? "🧪" : "🔁");
+
+  return { dryRun, id, bluesky: bluesky ?? null, mastodon: mastodon ?? null };
 }
 
 /**

@@ -25,6 +25,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta, pickPostFormat,
   buildSaleReplyTextJa, buildSaleReplyTextBilingual,
   buildMonthlyWallpaperPostText, buildMonthlyWallpaperMastodonText, runMonthlyWallpaperPost,
+  containsPostMarker, repostBot,
 } from "../worker/bot.js";
 import { _setSaleForTest } from "../worker/sale.js";
 import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale } from "../worker/sale-check.js";
@@ -6795,6 +6796,161 @@ console.log("\n[runMonthlyWallpaperPost: Discord通知にBluesky/Mastodon投稿U
 
   assert("1通目にBluesky投稿URLが含まれる", discordBodies[0]?.includes("https://bsky.app/profile/nyanmusu.bsky.social/post/wallpaper1"));
   assert("1通目にMastodon投稿URLが含まれる", discordBodies[0]?.includes(`${MASTO_INSTANCE_WP}/@nyanmusu/status1`));
+}
+
+// ─── repostBot: 投稿済み確認つきの再投稿（2026-10追加） ──────────────────
+console.log("\n[repostBot] 投稿済み確認つき再投稿");
+{
+  const ID = "bot/2026-10-21";
+  const marker = "?id=bot/2026-10-21";
+
+  // containsPostMarker: -2スロットへの前方一致・別日の誤判定を防ぐ
+  assert("containsPostMarker: URL末尾（&lang付き）で一致", containsPostMarker(`📸 https://x/?id=bot/2026-10-21&lang=en`, ID));
+  assert("containsPostMarker: 行末（改行直前）で一致", containsPostMarker(`📸 https://x/?id=bot/2026-10-21\n\nCTA`, ID));
+  assert("containsPostMarker: HTML属性の引用符直前で一致", containsPostMarker(`<a href="https://x/?id=bot/2026-10-21">`, ID));
+  assert("containsPostMarker: -2スロットに前方一致しない", !containsPostMarker(`https://x/?id=bot/2026-10-21-2`, ID));
+  assert("containsPostMarker: 別日は一致しない", !containsPostMarker(`https://x/?id=bot/2026-10-20`, ID));
+  assert("containsPostMarker: 空文字・非文字列は一致しない", !containsPostMarker("", ID) && !containsPostMarker(undefined, ID));
+  assert("containsPostMarker: -2スロット自体は一致する", containsPostMarker(`https://x/?id=bot/2026-10-21-2`, "bot/2026-10-21-2"));
+
+  const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
+  function makeRepostBucket({ withMeta = true, withImage = true } = {}) {
+    return {
+      async get(key) {
+        if (key === `${ID}/meta.json` && withMeta) {
+          return { json: async () => ({
+            theme: "金木犀の季節", description: "今の季節を彩る金木犀",
+            themeEn: "Fragrant Olive Season", descriptionEn: "Fragrant Olive is the highlight of this season.",
+          }) };
+        }
+        if (key === `${ID}/web.png` && withImage) {
+          return { arrayBuffer: async () => PNG.buffer.slice(0), httpMetadata: { contentType: "image/png" } };
+        }
+        return null;
+      },
+    };
+  }
+  const baseEnv = (bucket) => ({
+    IMAGE_BUCKET: bucket,
+    BLUESKY_IDENTIFIER: "nyanmusu.bsky.social", BLUESKY_APP_PASSWORD: "pw",
+    MASTODON_INSTANCE_URL: "https://mastodon.test", MASTODON_ACCESS_TOKEN: "tok",
+    DISCORD_WEBHOOK_URL: "https://discord.test/hook",
+  });
+  const textRes = (status, body) => ({ ok: status >= 200 && status < 300, status, text: async () => body });
+
+  // blueskyList / mastoList: "found" | "empty" | "502"
+  function installFetch({ blueskyList = "empty", mastoList = "empty" }) {
+    const calls = [];
+    const orig = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      calls.push(u);
+      if (u.includes("listRecords")) {
+        if (blueskyList === "502") return textRes(502, "error code: 502");
+        const records = blueskyList === "found"
+          ? [{ value: { text: `今日は！\n📸 https://h.example/?id=${ID}\n#tag` } }]
+          : [{ value: { text: "別の日の投稿 ?id=bot/2026-10-20" } }];
+        return textRes(200, JSON.stringify({ records }));
+      }
+      if (u.includes("verify_credentials")) return textRes(200, JSON.stringify({ id: "42" }));
+      if (u.includes("/accounts/42/statuses")) {
+        if (mastoList === "502") return textRes(502, "error code: 502");
+        const body = mastoList === "found"
+          ? [{ content: `<p><a href="https://h.example/?id=${ID}">link</a></p>` }]
+          : [{ content: "<p>別の日</p>" }];
+        return textRes(200, JSON.stringify(body));
+      }
+      if (u.includes("createSession")) return textRes(200, JSON.stringify({ accessJwt: "jwt", did: "did:plc:x" }));
+      if (u.includes("uploadBlob"))    return textRes(200, JSON.stringify({ blob: { $type: "blob", ref: { $link: "r" }, mimeType: "image/png", size: 1 } }));
+      if (u.includes("createRecord"))  return textRes(200, JSON.stringify({ uri: "at://did:plc:x/app.bsky.feed.post/repost1", cid: "cid" }));
+      if (u.includes("/api/v2/media")) return textRes(200, JSON.stringify({ id: "media1" }));
+      if (u.includes("/api/v1/statuses")) return textRes(200, JSON.stringify({ id: "status1" }));
+      return textRes(200, "{}");
+    };
+    return { calls, restore: () => { globalThis.fetch = orig; } };
+  }
+  const posted = (calls) => ({
+    bsky:  calls.some(u => u.includes("createRecord")),
+    masto: calls.some(u => u.endsWith("/api/v1/statuses")),
+  });
+
+  {
+    // dryRun（デフォルト）: 両方未投稿でも投稿しない・確認結果のみ返す
+    const f = installFetch({});
+    const r = await repostBot(baseEnv(makeRepostBucket()), { date: "2026-10-21" });
+    f.restore();
+    assert("repost dryRun: dryRunがtrue", r.dryRun === true);
+    assert("repost dryRun: Blueskyはmissing", r.bluesky?.status === "missing");
+    assert("repost dryRun: Mastodonはmissing", r.mastodon?.status === "missing");
+    assert("repost dryRun: どちらにも投稿しない", !posted(f.calls).bsky && !posted(f.calls).masto);
+    assert("repost dryRun: Discordに通知する", f.calls.some(u => u.includes("discord.test")));
+  }
+  {
+    // 両方投稿済み: dryRun=falseでも投稿しない
+    const f = installFetch({ blueskyList: "found", mastoList: "found" });
+    const r = await repostBot(baseEnv(makeRepostBucket()), { date: "2026-10-21", dryRun: false });
+    f.restore();
+    assert("repost: 両方existsと判定", r.bluesky?.status === "exists" && r.mastodon?.status === "exists");
+    assert("repost: 投稿済みなら投稿しない", !posted(f.calls).bsky && !posted(f.calls).masto);
+  }
+  {
+    // Blueskyだけ未投稿: Blueskyにだけ投稿する
+    const f = installFetch({ blueskyList: "empty", mastoList: "found" });
+    const r = await repostBot(baseEnv(makeRepostBucket()), { date: "2026-10-21", dryRun: false });
+    f.restore();
+    assert("repost: Blueskyにだけ投稿する", posted(f.calls).bsky && !posted(f.calls).masto);
+    assert("repost: Blueskyのposted=true", r.bluesky?.status === "missing" && r.bluesky?.posted === true);
+    assert("repost: Mastodonはexistsで投稿なし", r.mastodon?.status === "exists" && !r.mastodon?.posted);
+  }
+  {
+    // Mastodonだけ未投稿: Mastodonにだけ投稿する
+    const f = installFetch({ blueskyList: "found", mastoList: "empty" });
+    const r = await repostBot(baseEnv(makeRepostBucket()), { date: "2026-10-21", dryRun: false });
+    f.restore();
+    assert("repost: Mastodonにだけ投稿する", !posted(f.calls).bsky && posted(f.calls).masto);
+    assert("repost: Mastodonのposted=true", r.mastodon?.posted === true);
+  }
+  {
+    // 確認APIが失敗（502）: unknownで投稿しない（二重投稿を避ける側に倒す）
+    const f = installFetch({ blueskyList: "502", mastoList: "found" });
+    const r = await repostBot(baseEnv(makeRepostBucket()), { date: "2026-10-21", dryRun: false });
+    f.restore();
+    assert("repost: 確認失敗はunknown", r.bluesky?.status === "unknown");
+    assert("repost: unknownのエラー内容を返す", typeof r.bluesky?.error === "string" && r.bluesky.error.length > 0);
+    assert("repost: unknownでは投稿しない", !posted(f.calls).bsky);
+  }
+  {
+    // platform指定: blueskyのみ指定ならMastodon APIを一切呼ばない
+    const f = installFetch({});
+    const r = await repostBot(baseEnv(makeRepostBucket()), { date: "2026-10-21", platform: "bluesky", dryRun: false });
+    f.restore();
+    assert("repost: platform=blueskyでMastodonは対象外(null)", r.mastodon === null);
+    assert("repost: platform=blueskyでMastodon APIを呼ばない", !f.calls.some(u => u.includes("mastodon.test")));
+    assert("repost: platform=blueskyでBlueskyには投稿する", posted(f.calls).bsky);
+  }
+  {
+    // Mastodon未設定: skipped
+    const f = installFetch({});
+    const env = { ...baseEnv(makeRepostBucket()), MASTODON_INSTANCE_URL: undefined, MASTODON_ACCESS_TOKEN: undefined };
+    const r = await repostBot(env, { date: "2026-10-21", dryRun: false });
+    f.restore();
+    assert("repost: Mastodon未設定はskipped", r.mastodon?.status === "skipped");
+    assert("repost: Mastodon未設定でもBlueskyは投稿する", posted(f.calls).bsky && !posted(f.calls).masto);
+  }
+  {
+    // エラー系: 日付形式不正・R2にメタ/画像なし・platform不正
+    const f = installFetch({});
+    const bad    = await repostBot(baseEnv(makeRepostBucket()), { date: "2026/10/21" });
+    const noMeta = await repostBot(baseEnv(makeRepostBucket({ withMeta: false })), { date: "2026-10-21" });
+    const noImg  = await repostBot(baseEnv(makeRepostBucket({ withImage: false })), { date: "2026-10-21" });
+    const badPf  = await repostBot(baseEnv(makeRepostBucket()), { date: "2026-10-21", platform: "x" });
+    f.restore();
+    assert("repost: 日付形式不正はerror", typeof bad.error === "string");
+    assert("repost: R2にメタなしはerror", typeof noMeta.error === "string");
+    assert("repost: R2に画像なしはerror", typeof noImg.error === "string");
+    assert("repost: platform不正はerror", typeof badPf.error === "string");
+    assert("repost: エラー系ではSNSのAPIを呼ばない", !f.calls.some(u => u.includes("listRecords") || u.includes("createRecord") || u.includes("mastodon.test")));
+  }
 }
 
 // ─── SEO/AIO: サイト全体のJSON-LDとllms.txt ─────────────────

@@ -87,7 +87,7 @@ anniversary-cat-worker/
 | GET | `/sale-info` | 現在有効なSUZURIセール情報（認証なし・`{active:true,endUtcMs,discountYen,endDisplay}`または`{active:false}`・`Cache-Control: public, max-age=300`） |
 | POST | `/suzuri-create` | ウォーターマーク済み画像を受け取りSUZURI登録・R2メタ更新 |
 | POST | `/monthly-wallpaper/regenerate` | 月替わり壁紙の手動再生成（`X-Bypass-Token`ヘッダー必須。月末Cronと同じ`runMonthlyWallpaperPost()`を呼ぶ） |
-| POST | `/bot/manual-run` | Bot Cronの手動実行・テスト（`X-Bypass-Token`ヘッダー必須。`?dryRun=false`指定時のみ実投稿。詳細は「Bluesky Bot」の「手動実行エンドポイント」参照） |
+| POST | `/bot/manual-run` | Bot Cronの手動実行・テスト（`X-Bypass-Token`ヘッダー必須。`?dryRun=false`指定時のみ実投稿。詳細は「Bluesky Bot」の「手動実行エンドポイント」参照。`?mode=repost&date=YYYY-MM-DD`で、投稿済みかを確認したうえで未投稿のSNSにだけ再投稿する） |
 
 ### /proxy-imageのセキュリティ制約
 
@@ -363,6 +363,7 @@ Florkiewicz & Scott（2023）の276表情研究（友好的45%・攻撃的37%・
 - 設計方針
 - `scheduled()`のCron明示チェック（2026-09追加・Bug#40）
 - 手動実行エンドポイント（`POST /bot/manual-run`・2026-09追加・Bug#40）
+- 再投稿モード（`POST /bot/manual-run?mode=repost`・2026-10追加）
 - 投稿フォーマットの選択（short/full・2026-10追加）
 - 投稿テキスト形式
 - テーマタグ正規化（`buildThemeTag`）
