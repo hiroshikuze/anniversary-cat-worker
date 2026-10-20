@@ -47,6 +47,7 @@ anniversary-cat-worker/
 ├── frontend/
 │   ├── index.html                    ← フロントエンド（PWA対応、JP/EN切り替え）
 │   ├── manifest.json
+│   ├── llms.txt                      ← 生成AI向けのサイト案内（2026-10追加）
 │   ├── sw.js
 │   └── images/                       ← faviconアイコン類
 └── scripts/
@@ -391,6 +392,31 @@ Florkiewicz & Scott（2023）の276表情研究（友好的45%・攻撃的37%・
 - 手動再生成エンドポイント
 - Cron（月末自動生成）
 - 公開後フォローアップ（運用ルール）
+
+---
+
+## SEO/AIO対策（2026-10追加）
+
+### 実装済み
+
+| 対策 | 内容 | 場所 |
+| --- | --- | --- |
+| メタ情報 | `lang="ja"`・description・canonical・OGP・Xカード | `frontend/index.html`の`<head>` |
+| RSSフィード | 直近14日の作品を記念日名・説明文・個別URL付きで配信。`<link rel="alternate">`で自動検出 | `GET /rss.xml` |
+| 代替テキスト | 生成画像・Bluesky/Mastodon投稿の`alt` | `frontend/index.html`・`worker/bot.js` |
+| サイト全体の構造化データ | `<script type="application/ld+json">`に`WebApplication`（名前・別名・URL・説明・言語・無料・作者・`sameAs`）を固定記述 | `frontend/index.html`の`<head>` |
+| `llms.txt` | 生成AI向けのサイト概要・主要ページ・RSSの案内 | `frontend/llms.txt`（公開URL: `https://hiroshikuze.github.io/anniversary-cat-worker/llms.txt`） |
+
+JSON-LDはサイト全体で内容が変わらないため固定記述にし、自動更新の仕組みは持たない。`name`・`url`・`description`は`<title>`・canonical・`<meta name="description">`と一致させる（`scripts/test-bot.mjs`で検証）。
+
+### 作らなかったもの（ホスティング制約・2026-10判明）
+
+- **`robots.txt`**: クローラーはホストのルート（`https://hiroshikuze.github.io/robots.txt`）だけを読む。本サイトは`/anniversary-cat-worker/`配下のプロジェクトサイトのため、`frontend/robots.txt`を置いても公開URLは`/anniversary-cat-worker/robots.txt`となり、クローラーに無視される。ルートの`robots.txt`はリポジトリ`hiroshikuze.github.io`（ユーザーサイト）側の管理。未設定の場合は全許可がデフォルトなので、現状で困ることはない
+- **`sitemap.xml`**: Workerの`workers.dev`に置くと、掲載するURL（`github.io`）と別ホストになり、検索エンジンに受理されない。`github.io`側に置く場合は静的ファイルとなり、掲載したい作品URL（`?id=bot/YYYY-MM-DD`）は、canonicalが常にトップ固定のため評価されない。作品URLを別ページとして扱う設計（下記「保留」）とセットで検討する
+
+### 保留（次回以降の検討事項）
+
+作品ごとのcanonical・`<title>`・JSON-LD、およびそれに伴う`sitemap.xml`の扱い。選択肢と判断材料は`.claude/future-ideas.md`の「作品ごとのSEO/AIO対応」参照。
 
 ---
 

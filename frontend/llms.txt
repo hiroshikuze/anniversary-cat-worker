@@ -1,0 +1,25 @@
+# にゃんバーサリー
+
+> 今日の記念日をAIが調べて、水彩画風の猫イラストを生成する無料Webアプリ（Nyaniversary）。毎平日7:00（日本時間）にBlueskyとMastodonへ新作を自動投稿し、イラスト入りグッズをSUZURIで販売している。
+
+https://hiroshikuze.github.io/anniversary-cat-worker/
+
+## 主要ページ
+
+- [トップページ](https://hiroshikuze.github.io/anniversary-cat-worker/): 今日の記念日の調査と猫イラストの生成、直近14日の作品ギャラリー
+- [英語表示](https://hiroshikuze.github.io/anniversary-cat-worker/?lang=en): 英語のテーマ名・説明文で表示
+- 作品の個別ページ: `https://hiroshikuze.github.io/anniversary-cat-worker/?id=bot/YYYY-MM-DD`の形式（日付は作品の日）。記念日名・説明文・イラスト・グッズへのリンクを表示（直近14日分。個別URLはRSSで確認できる）
+
+## フィード
+
+- [RSS](https://anniversary-cat-worker.hiroshikuze.workers.dev/rss.xml): 直近14日分の作品（記念日名・説明文・サムネイル・個別ページのURL）
+
+## 関連
+
+- [Bluesky](https://bsky.app/profile/nyanmusu.bsky.social): 毎平日の新作を投稿
+- [SUZURIショップ](https://suzuri.jp/nyanmusu): AIイラスト入りのTシャツ・ステッカー・缶バッジ・アクリルキーホルダー
+
+## 補足
+
+- 作品は生成から14日間のみ公開される
+- 記念日の自由入力には対応していない（AIが毎日自動で選ぶ）

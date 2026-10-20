@@ -34,6 +34,8 @@ jobs:
           # 計測
           check 'gallery-click'
           check 'umami?.track'
+          # SEO/AIO
+          check 'application/ld+json'
           # SUZURI登録フロー
           check 'createSuzuriFromImage'
           check 'allSuzuriProductsRegistered'

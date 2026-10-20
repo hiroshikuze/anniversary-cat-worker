@@ -159,6 +159,7 @@ PR #121のリグレッション（マージ競合で英語機能が黙って削�
 | `params.set("lang"` | 多言語i18n | `setLang()`の`?lang` URL同期 |
 | `gallery-click` | 計測 | ギャラリーカードのUmami計測 |
 | `umami?.track` | 計測 | `loadSharedImage()`内のUmami page view追跡 |
+| `application/ld+json` | SEO/AIO | サイト全体の構造化データ（削除されてもエラーにならない） |
 | `createSuzuriFromImage` | SUZURI登録 | SUZURI登録フローの入口関数 |
 | `allSuzuriProductsRegistered` | SUZURI登録 | 全商品登録確認（部分登録バグ対策） |
 | `resizeForSuzuri` | SUZURI登録 | 2048px高解像度リサイズ（印刷品質） |

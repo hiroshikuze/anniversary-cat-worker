@@ -9,6 +9,7 @@
  * 終了コード 0 = 全件成功、1 = 1件以上失敗
  */
 
+import { readFileSync, existsSync } from "node:fs";
 import { updateMetaInR2, collectMaterialIds } from "../worker/r2-storage.js";
 import { parseExpiryDate } from "./audit-suzuri-materials.mjs";
 import { parseSinceMs, buildQueryBody, parseArgs as parseQueryLogArgs } from "./query-worker-logs.mjs";
@@ -6794,6 +6795,37 @@ console.log("\n[runMonthlyWallpaperPost: Discord通知にBluesky/Mastodon投稿U
 
   assert("1通目にBluesky投稿URLが含まれる", discordBodies[0]?.includes("https://bsky.app/profile/nyanmusu.bsky.social/post/wallpaper1"));
   assert("1通目にMastodon投稿URLが含まれる", discordBodies[0]?.includes(`${MASTO_INSTANCE_WP}/@nyanmusu/status1`));
+}
+
+// ─── SEO/AIO: サイト全体のJSON-LDとllms.txt ─────────────────
+console.log("\n[SEO/AIO] JSON-LD・llms.txt");
+{
+  const html = readFileSync(new URL("../frontend/index.html", import.meta.url), "utf-8");
+  const m = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
+  assert("index.htmlにJSON-LDが埋め込まれている", !!m);
+
+  let ld = null;
+  try { ld = JSON.parse(m?.[1] ?? ""); } catch { /* 正常系では起きない */ }
+  assert("JSON-LDがJSONとしてパースできる", ld !== null);
+  assert("@contextがschema.org", ld?.["@context"] === "https://schema.org");
+  assert("@typeがWebApplication", ld?.["@type"] === "WebApplication");
+
+  const canonical = html.match(/<link rel="canonical" href="([^"]+)"/)?.[1];
+  const title     = html.match(/<title>([^<]+)<\/title>/)?.[1];
+  const metaDesc  = html.match(/<meta name="description" content="([^"]+)"/)?.[1];
+  assert("JSON-LDのurlがcanonicalと一致", !!canonical && ld?.url === canonical);
+  assert("JSON-LDのnameが<title>と一致", !!title && ld?.name === title);
+  assert("JSON-LDのdescriptionが<meta description>と一致", !!metaDesc && ld?.description === metaDesc);
+  assert("JSON-LDが無料(price=0)を表す", String(ld?.offers?.price) === "0" && ld?.offers?.priceCurrency === "JPY");
+  assert("JSON-LDのinLanguageにjaとenを含む", Array.isArray(ld?.inLanguage) && ld.inLanguage.includes("ja") && ld.inLanguage.includes("en"));
+  assert("JSON-LDのsameAsが空でない配列", Array.isArray(ld?.sameAs) && ld.sameAs.length > 0);
+
+  const llmsUrl = new URL("../frontend/llms.txt", import.meta.url);
+  assert("frontend/llms.txtが存在する", existsSync(llmsUrl));
+  const llms = existsSync(llmsUrl) ? readFileSync(llmsUrl, "utf-8") : "";
+  assert("llms.txtが先頭でサイト名のH1を持つ", llms.startsWith("# にゃんバーサリー"));
+  assert("llms.txtにサイトURLを含む", !!canonical && llms.includes(canonical));
+  assert("llms.txtにRSSのURLを含む", llms.includes("https://anniversary-cat-worker.hiroshikuze.workers.dev/rss.xml"));
 }
 
 console.log(`\n${passed + failed}件中 ${passed}件成功、${failed}件失敗`);
