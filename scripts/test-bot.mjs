@@ -10,6 +10,7 @@
  */
 
 import { readFileSync, existsSync } from "node:fs";
+import worker from "../worker/index.js";
 import { updateMetaInR2, collectMaterialIds, getRecentThemes } from "../worker/r2-storage.js";
 import { parseExpiryDate } from "./audit-suzuri-materials.mjs";
 import { parseSinceMs, buildQueryBody, parseArgs as parseQueryLogArgs } from "./query-worker-logs.mjs";
@@ -7103,6 +7104,84 @@ console.log("\n[直近テーマ] generateResearchPool・runBotへの配線");
     const theme = await runOnce(makeBotEnv({ throwOnYesterday: true }));
     assert("runBot: 直近テーマの取得に失敗しても投稿処理を続ける", theme === "直近記念日" || theme === "別の記念日");
   }
+}
+
+// ─── POST /bot/manual-run: パラメーター解釈・ルーティング（2026-10追加・Bug#45） ──
+// 本番投稿になるのは`?dryRun=false`と完全一致したときだけ（安全側がデフォルト）。
+// iPhoneからの実行で「本番のつもりがテストのまま」になる事象があったため、解釈を固定する。
+console.log("\n[/bot/manual-run] パラメーター解釈・ルーティング");
+{
+  const ctx = { waitUntil() {} };
+  // GEMINI_API_KEYなし → runBot()が外部通信せず、解釈されたdryRunを返して終了する
+  const callRun = async (query, { token = "t", env = { BYPASS_TOKEN: "t" } } = {}) => {
+    const headers = token === null ? {} : { "X-Bypass-Token": token };
+    const res = await worker.fetch(new Request(`https://x.example/bot/manual-run${query}`, { method: "POST", headers }), env, ctx);
+    return { status: res.status, body: JSON.parse(await res.text()) };
+  };
+
+  // 認証
+  const noToken = await callRun("?dryRun=false", { token: null });
+  assert("manual-run: トークンなしは403", noToken.status === 403 && typeof noToken.body.error === "string");
+  const badToken = await callRun("?dryRun=false", { token: "wrong" });
+  assert("manual-run: 誤ったトークンは403", badToken.status === 403);
+  assert("manual-run: BYPASS_TOKEN未設定のWorkerではトークンがあっても403", (await callRun("", { env: {} })).status === 403);
+
+  // dryRunの解釈（安全側がデフォルト）
+  assert("manual-run: dryRun省略はテスト実行（true）", (await callRun("")).body.dryRun === true);
+  assert("manual-run: ?dryRun=falseは本番（false）", (await callRun("?dryRun=false")).body.dryRun === false);
+  assert("manual-run: ?dryRun=trueはtrue", (await callRun("?dryRun=true")).body.dryRun === true);
+  assert("manual-run: ?dryRun=False（大文字）はテスト実行のまま", (await callRun("?dryRun=False")).body.dryRun === true);
+  assert("manual-run: ?dryRun=FALSEはテスト実行のまま", (await callRun("?dryRun=FALSE")).body.dryRun === true);
+  assert("manual-run: ?dryrun=false（パラメーター名の大文字小文字違い）はテスト実行のまま", (await callRun("?dryrun=false")).body.dryRun === true);
+  assert("manual-run: ?dryRun=（空）はテスト実行のまま", (await callRun("?dryRun=")).body.dryRun === true);
+  assert("manual-run: ?dryRun=0はテスト実行のまま", (await callRun("?dryRun=0")).body.dryRun === true);
+
+  // mode=repostのルーティング（IMAGE_BUCKETなしのためrepostBot()がエラーを返す）
+  const repost = await callRun("?mode=repost&date=2026-10-21");
+  assert("manual-run: mode=repostはrepostBot()へ（dryRunデフォルトtrue）", repost.status === 400 && repost.body.dryRun === true && /IMAGE_BUCKET/.test(repost.body.error));
+  const repostLive = await callRun("?mode=repost&date=2026-10-21&dryRun=false");
+  assert("manual-run: mode=repostでも?dryRun=falseが反映される", repostLive.body.dryRun === false);
+  const repostNoDate = await callRun("?mode=repost");
+  assert("manual-run: mode=repostでdateなしは400（誤った日を再投稿しない）", repostNoDate.status === 400 && /date/.test(repostNoDate.body.error));
+  const repostBadPf = await callRun("?mode=repost&date=2026-10-21&platform=x");
+  assert("manual-run: mode=repostでplatform不正は400", repostBadPf.status === 400 && /platform/.test(repostBadPf.body.error));
+  const otherMode = await callRun("?mode=unknown");
+  assert("manual-run: 未知のmodeは通常のrunBot()（repostにならない）", otherMode.status === 200 && /GEMINI_API_KEY/.test(otherMode.body.error));
+  const repostNoToken = await callRun("?mode=repost&date=2026-10-21&dryRun=false", { token: null });
+  assert("manual-run: mode=repostもトークンなしは403", repostNoToken.status === 403);
+}
+
+// ─── Discord通知のポーズ行（2026-10追加） ──────────────────────────────
+console.log("\n[runBot] Discord通知のポーズ行");
+{
+  const run = async (generated) => {
+    const bodies = [];
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("discord")) bodies.push(JSON.parse(opts.body).content);
+      return { ok: true, status: 200, text: async () => "{}" };
+    };
+    await runBot(
+      { GEMINI_API_KEY: "key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook" },
+      async () => ({ theme: "テスト記念日", description: "説明", sourceUrl: "" }),
+      async () => ({ imageData: btoa("x"), mimeType: "image/png", source: "gemini", ...generated }),
+      null, { dryRun: true }
+    );
+    globalThis.fetch = origFetch;
+    return bodies.join("\n");
+  };
+
+  const withPose = await run({ emotion: "serene composed expression", pose: "relaxed lying on its back showing its fluffy belly" });
+  assert("Discord通知: ポーズ指定ありなら🤸ポーズ行が出る", withPose.includes("🤸 ポーズ: relaxed lying on its back showing its fluffy belly"));
+  const nullPose = await run({ pose: null });
+  assert("Discord通知: ポーズ指定なし（null）なら🤸ポーズ行が出ない", !nullPose.includes("🤸"));
+  const noField = await run({});
+  assert("Discord通知: pose項目なし（旧形式）でも🤸ポーズ行が出ない", !noField.includes("🤸"));
+  assert("Discord通知: ポーズ行は感情行の後に出る", (() => {
+    const a = withPose.indexOf("💭 感情");
+    const b = withPose.indexOf("🤸 ポーズ");
+    return a >= 0 && b > a;
+  })());
 }
 
 // ─── repostBot: 投稿済み確認つきの再投稿（2026-10追加） ──────────────────

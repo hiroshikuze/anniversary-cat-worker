@@ -149,6 +149,31 @@ curl -X POST "https://anniversary-cat-worker.hiroshikuze.workers.dev/bot/manual-
 
 詳細（判定方法・`unknown`の扱い・投稿内容）は`.claude/docs/architecture/bot-posting.md`の「再投稿モード」参照。
 
+### iPhoneから`POST /bot/manual-run`を実行する（ショートカットアプリ・2026-10追加）
+
+`curl`が使えない環境（iPhoneだけ）では、標準の「ショートカット」アプリで同じリクエストを送れる。2026-10-21の復旧で実際にこの方法で本番投稿に成功した。
+
+1. 「ショートカット」アプリで新規作成し、アクション「**URLの内容を取得**」を追加する
+2. URLに`https://anniversary-cat-worker.hiroshikuze.workers.dev/bot/manual-run`を入力する
+3. 「›」（詳細）で、方法を**POST**にし、ヘッダに**`X-Bypass-Token`**（値は`BYPASS_TOKEN`）を追加する。本文は空のままでよい（本文を要求がJSONでも問題ない）
+4. 下に「**結果を表示**」を追加し、「URLの内容」を渡す。返ってきたJSONで成否を確認する
+5. 確認のみ（デフォルトのdryRun）を実行して、Discordの通知（先頭に「🧪 テスト実行」）を確認する。問題なければ、ショートカットを複製してURLの末尾に`?dryRun=false`を付けて実行する
+
+注意点:
+
+- **パラメーターは大文字小文字を区別する**。`?dryRun=false`（dは小文字・Rは大文字・falseはすべて小文字）と完全に一致したときだけ本番投稿になる。`False`・`FALSE`・`dryrun`は**テスト実行のまま**（安全側）。iPhoneの自動大文字・自動修正で変わることがあるため、URLは**コピー＆貼り付け**を推奨する。結果のJSONに`"dryRun":false`と出ているかで判別できる
+- 結果が`{"error":"X-Bypass-Tokenが必要です"}`のときは、ヘッダのキーまたは値の誤り
+- テスト実行でも画像生成（Gemini）を行い、Discord通知まで十数秒〜30秒ほどかかる。本番実行も同様に待つ
+- 成功時のJSON例: `{"mastoOk":true,"bskyOk":true,"theme":"...","dryRun":false}`（dryRun時は`bskyOk`・`mastoOk`が常に`false`で正常）
+- 同日に本番実行を2回以上行うと、保存先は`bot/YYYY-MM-DD-2`〜`-9`になる。投稿のリンクは新しい保存先を指す
+- トークンはショートカット内（端末）にだけ保存し、チャットやリポジトリには貼らない
+
+#### `BYPASS_TOKEN`の所在・再設定
+
+- 本体は**Cloudflare Workerのシークレット**。登録後は値を表示できない（GitHubのシークレットも同様）
+- GitHub Actionsのシークレットには**登録されていない**（2026-10-21確認。任意項目のため、未登録でもhealth-checkのE2Eはレート制限なしで動く）
+- 値を忘れた場合は、Cloudflareダッシュボード（iPhoneのSafariから可）→ Workers → `anniversary-cat-worker` → 設定 → 変数とシークレット → `BYPASS_TOKEN`を新しい値で上書きする。値は英数字だけの長いランダム文字列にする。ショートカットのヘッダの値も同じに更新する。デプロイは不要。GitHub側に同名のシークレットを後から登録した場合は、そちらも同じ値に更新する
+
 ### Cronイベント履歴の確認（実際のCron Triggerの発火状況を見たい場合）
 
 - 設定タブ → **トリガーイベント** → Cronイベント一覧（実行時刻・CPU時間・ステータス表示）

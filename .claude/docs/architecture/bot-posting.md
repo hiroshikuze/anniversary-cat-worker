@@ -34,6 +34,9 @@ Cloudflareダッシュボードの手動Scheduled送信は、Cronイベントロ
   - `research`/`generate`（Gemini API呼び出し）は`dryRun`時も実行される（生成内容そのものの確認が目的のため）。Discord通知は`🧪 テスト実行（投稿は行われていません）`を明記したうえで、実際に投稿されるはずだった`buildPostText()`/`buildMastodonText()`の出力をプレビューとして送信する
 - 戻り値: `runMonthlyWallpaperPost()`と同じパターンで`{ dryRun, bskyOk, mastoOk, theme }`（またはエラー時`{ error }`）を返すよう`runBot()`をvoidから変更した
 - Cron本番実行（`scheduled()`からの呼び出し）は`deps`省略のため`dryRun: false`扱いで、従来と完全に同じ挙動（後方互換）
+- **パラメーターは大文字小文字を区別する**: `dryRun`が本番投稿になるのは`?dryRun=false`と完全一致したときだけ。`False`・`dryrun`等は`true`（テスト実行）のまま（安全側）。2026-10-21、iPhoneからの本番実行で「テストが続く」事象があり、原因はURLの入力違いの可能性があるが特定できていない（サーバー側の解釈はローカルで確認済み）。大文字小文字に依らず受け付ける改善は未実装（`.claude/future-ideas.md`の「運用改善（2026-10-21の事象から）」参照）
+- **同日に本番実行を2回以上行うと**、`findAvailableR2Id()`により保存先が`bot/YYYY-MM-DD-2`〜`-9`になり、投稿のリンクは新しい保存先を指す。一方、ギャラリー・RSSは基本の保存先（`bot/YYYY-MM-DD`）しか参照しないため、手動で再生成した日は朝の古い絵が出る可能性がある（未対応）
+- Discord通知には`🤸 ポーズ: ...`行が出る（ポーズ指定なしの場合は出ない。`.claude/rules/architecture.md`の「猫のポーズ」参照）
 
 ### 再投稿モード（`POST /bot/manual-run?mode=repost`・2026-10追加）
 

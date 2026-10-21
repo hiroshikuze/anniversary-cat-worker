@@ -205,6 +205,9 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | Bluesky Bot投稿（毎平日7:00 JST・2026-05-01より） | `worker/bot.js` `runBot()` | 稼働中 |
 | Mastodon Bot投稿（Blueskyと同時・Promise.allSettled・シークレット未設定時はスキップ・設定エラー検出） | `worker/bot.js` `runBot()` | 稼働中 |
 | Bot Cronの手動実行・テストエンドポイント（`X-Bypass-Token`保護・デフォルトdryRun=trueで投稿なしプレビュー・`?dryRun=false`で本番投稿。ダッシュボードのScheduled手動送信〔記録が残らず実行者不明の事故＝Bug#40〕の代替。`?mode=repost&date=YYYY-MM-DD`で、投稿済みかを確認したうえで未投稿のSNSにだけ再投稿する・2026-10追加） | `worker/index.js` `POST /bot/manual-run` `worker/bot.js` `repostBot()` `worker/index.js` `_isBotCronEvent()` `worker/bot.js` `runBot()`の`deps.dryRun` | 稼働中 |
+| 猫のポーズ軸（`CAT_POSES` 11種+指定なし・重み付き・性格のポーズよりプロンプトで優先・食べ物の動作/壁紙では使わない・小道具が要るポーズはPollinationsに渡さない・題材に合うときのみ採用。虫・猫草は[#211](https://github.com/hiroshikuze/anniversary-cat-worker/issues/211)で保留） | `worker/index.js` `pickPose()` | 稼働中（2026-10-21の実機で1回、投稿まで確認。絵への反映は数日分を見比べて判断） |
+| 直近テーマの除外（前日から3日前までのBot作品のテーマをプール選択で避ける・全件除外時は除外しない・季節補充は直近と同じ花なら隣の窓の花に切替） | `worker/index.js` `pickFromPool()` `pickSeasonalFlowerEntry()` `worker/r2-storage.js` `getRecentThemes()` | 実装済み・実機で季節補充の切替は未確認（当日のプールは旧コードで生成済みだったため） |
+| SEO/AIO対策（サイト全体のJSON-LD・`llms.txt`。`robots.txt`・`sitemap.xml`はホスティング制約で作らず、作品ごとの対応は保留） | `frontend/index.html` `frontend/llms.txt` | 稼働中（検索エンジン・AIからの見え方は未確認） |
 | ゲストキャラクター（10%確率・8種・ゲスト外見/性格をDiscord通知に含む） | `worker/index.js` `pickGuestAnimal()` | 稼働中 |
 | Bot投稿完了のDiscord通知（テーマ・プロンプト全文・画像ソース・毛柄・性格・感情・食べ物アクション・ゲスト・投稿URL含む・2通構成） | `worker/bot.js` `notifyDiscord()` `buildBlueskyPostUrl()` | 稼働中 |
 | SUZURIグッズ登録（4商品: Tシャツ・ステッカー・缶バッジ・アクキー） | `worker/suzuri.js` | 稼働中 |
