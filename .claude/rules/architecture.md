@@ -47,6 +47,7 @@ anniversary-cat-worker/
 ├── frontend/
 │   ├── index.html                    ← フロントエンド（PWA対応、JP/EN切り替え）
 │   ├── manifest.json
+│   ├── llms.txt                      ← 生成AI向けのサイト案内（2026-10追加）
 │   ├── sw.js
 │   └── images/                       ← faviconアイコン類
 └── scripts/
@@ -86,7 +87,7 @@ anniversary-cat-worker/
 | GET | `/sale-info` | 現在有効なSUZURIセール情報（認証なし・`{active:true,endUtcMs,discountYen,endDisplay}`または`{active:false}`・`Cache-Control: public, max-age=300`） |
 | POST | `/suzuri-create` | ウォーターマーク済み画像を受け取りSUZURI登録・R2メタ更新 |
 | POST | `/monthly-wallpaper/regenerate` | 月替わり壁紙の手動再生成（`X-Bypass-Token`ヘッダー必須。月末Cronと同じ`runMonthlyWallpaperPost()`を呼ぶ） |
-| POST | `/bot/manual-run` | Bot Cronの手動実行・テスト（`X-Bypass-Token`ヘッダー必須。`?dryRun=false`指定時のみ実投稿。詳細は「Bluesky Bot」の「手動実行エンドポイント」参照） |
+| POST | `/bot/manual-run` | Bot Cronの手動実行・テスト（`X-Bypass-Token`ヘッダー必須。`?dryRun=false`指定時のみ実投稿。詳細は「Bluesky Bot」の「手動実行エンドポイント」参照。`?mode=repost&date=YYYY-MM-DD`で、投稿済みかを確認したうえで未投稿のSNSにだけ再投稿する） |
 
 ### /proxy-imageのセキュリティ制約
 
@@ -331,6 +332,55 @@ Florkiewicz & Scott（2023）の276表情研究（友好的45%・攻撃的37%・
 
 ---
 
+## 猫のポーズ（CAT_POSES / pickPose・2026-10追加）
+
+`worker/index.js`の`CAT_POSES`配列と`pickPose()`関数で、猫の**ポーズ・画角**をランダムに決定する。毛柄（`CAT_PERSONAS`）・性格（`CAT_PERSONALITIES`）・感情（`CAT_EMOTIONS`）とは**独立したランダム選択**。
+
+### 背景
+
+2026-10-20・10-21のBot投稿が、細部（尻尾の形・枝の位置）以外はほぼ同じ構図になった（オレンジ茶トラ・右前足を挙げて花の枝に触れるポーズ）。ランダム要素は毛柄・性格・感情だけで、ポーズ・画角はプロンプトに入っておらず、同じテーマ・同じ毛柄・性格の組み合わせだとモデルが似た構図に収束するのが原因と考えられる（Gemini画像生成には`seed`等の乱数指定がない）。
+
+### 設計
+
+- `pickPersonality()`が決める性格はポーズも含む（例: 「身を乗り出して調べる」）。ポーズ軸はそれとは別に追加し、**プロンプトでポーズ軸を優先する**（`Cat pose and framing (overrides any pose implied above; ...)`）。性格が持つ表情・気質は残る
+- 重み: ポーズ指定なし41（従来どおり性格のポーズのみ）・ポーズあり59。`pickEmotion()`等と同じ「重み付き配列＋pick関数」パターン
+- `pickPose({ eatingAction, reserveCalendarSpace }, rand)`は`handleGenerate()`内で`pickEmotion()`と同じタイミングで**1回だけ**呼び、GeminiとPollinationsの両方に同じポーズを渡す。戻り値は`{ weight, gemini, pollinations, needsProp }`または`null`（指定なし）
+- ポーズ文字列は**ASCIIのみ**（Pollinations APIのURL埋め込みで安全）
+
+### 題材と合わない場合は採用しない
+
+2段構えにする。
+
+1. **コード側の除外**（`pickPose()`が`null`を返す）: 食べ物の`eatingAction`が付くとき（猫の動作が競合するため）、月替わり壁紙（`reserveCalendarSpace`・全身を収めて余白を確保する構図のため）
+2. **プロンプト側の採用条件**: ポーズ行に「テーマ・場面に自然に合う場合のみ適用し、合わなければ無視して、テーマに合う自然なポーズにする」と明記する。コードはテーマの屋内外・小道具の有無を判定できないため、判断はモデルに任せる。小道具が要るポーズ（`needsProp: true`）は重みを小さくし、Pollinations（Fluxは採用条件を判断できない）には渡さない（`pollinations: null`）
+
+### ポーズ一覧
+
+| ポーズ | 重み | 小道具 | 備考 |
+| --- | --- | --- | --- |
+| リラックスしてお腹を見せる | 8 | 不要 | |
+| 見上げて鳴く | 8 | 不要 | |
+| 丸まって寝る | 6 | 不要 | 性格（うたた寝・7%）にも近いものがある |
+| 毛づくろいをする | 6 | 不要 | 性格（毛づくろい・7%）にも近いものがある |
+| 肩越しに振り返る | 5 | 不要 | |
+| 顔と上半身のアップ | 5 | 不要 | |
+| 物陰からのぞく | 5 | 不要 | テーマの小物・花の陰など |
+| 少し上から見下ろした画角で見上げる | 5 | 不要 | |
+| 狭いところ（段ボール・バケツ・金魚鉢など）に入る | 4 | 必要 | テーマに合う容器がある場合のみ |
+| 柔らかいものを踏み踏みする | 4 | 必要 | ブランケット・クッション等 |
+| 柔らかい寝具に背中をこすりつける | 3 | 必要 | |
+| 指定なし | 41 | - | 従来の挙動 |
+
+### Discord通知
+
+`handleGenerate()`の戻り値に`pose`（ポーズ指定がない場合は`null`）を追加し、`runBot()`のDiscord通知に`🐾 ポーズ: ...`行を出す。
+
+### 検証の限界
+
+プロンプトに入ることまではユニットテストで検証できるが、**実際の絵に反映されるか・題材に合わないとき無視されるか**はローカルでは確認できない（Gemini実機が必要）。デプロイ後に数日分の画像を見比べて判断する。プロンプトの確認だけなら`POST /bot/manual-run`（デフォルトのdryRun）で可能。
+
+---
+
 ## Geminiモデル管理
 
 > **詳細は[`.claude/docs/architecture/gemini.md`](../docs/architecture/gemini.md)に移動した**（2026-10・自動読み込みの軽量化）。この節を参照する指示があったら移動先を読むこと。
@@ -346,6 +396,7 @@ Florkiewicz & Scott（2023）の276表情研究（友好的45%・攻撃的37%・
 - Style行の季節カラー（`getSeasonalStyleTone()`・2026-06追加）
 - 構図の余白削減指示（2026-08追加）
 - 猫以外への顔・擬人化の禁止（Bug#33・2026-09追加）
+- 直近テーマの除外（`getRecentThemes()`・`pickFromPool()`・2026-10追加）
 - 生成後の自動トリミング（コード側補正・2026-08追加・計測フェーズ）
 - visualHintの役割（2026-05変更）
 
@@ -362,6 +413,7 @@ Florkiewicz & Scott（2023）の276表情研究（友好的45%・攻撃的37%・
 - 設計方針
 - `scheduled()`のCron明示チェック（2026-09追加・Bug#40）
 - 手動実行エンドポイント（`POST /bot/manual-run`・2026-09追加・Bug#40）
+- 再投稿モード（`POST /bot/manual-run?mode=repost`・2026-10追加）
 - 投稿フォーマットの選択（short/full・2026-10追加）
 - 投稿テキスト形式
 - テーマタグ正規化（`buildThemeTag`）
@@ -391,6 +443,31 @@ Florkiewicz & Scott（2023）の276表情研究（友好的45%・攻撃的37%・
 - 手動再生成エンドポイント
 - Cron（月末自動生成）
 - 公開後フォローアップ（運用ルール）
+
+---
+
+## SEO/AIO対策（2026-10追加）
+
+### 実装済み
+
+| 対策 | 内容 | 場所 |
+| --- | --- | --- |
+| メタ情報 | `lang="ja"`・description・canonical・OGP・Xカード | `frontend/index.html`の`<head>` |
+| RSSフィード | 直近14日の作品を記念日名・説明文・個別URL付きで配信。`<link rel="alternate">`で自動検出 | `GET /rss.xml` |
+| 代替テキスト | 生成画像・Bluesky/Mastodon投稿の`alt` | `frontend/index.html`・`worker/bot.js` |
+| サイト全体の構造化データ | `<script type="application/ld+json">`に`WebApplication`（名前・別名・URL・説明・言語・無料・作者・`sameAs`）を固定記述 | `frontend/index.html`の`<head>` |
+| `llms.txt` | 生成AI向けのサイト概要・主要ページ・RSSの案内 | `frontend/llms.txt`（公開URL: `https://hiroshikuze.github.io/anniversary-cat-worker/llms.txt`） |
+
+JSON-LDはサイト全体で内容が変わらないため固定記述にし、自動更新の仕組みは持たない。`name`・`url`・`description`は`<title>`・canonical・`<meta name="description">`と一致させる（`scripts/test-bot.mjs`で検証）。
+
+### 作らなかったもの（ホスティング制約・2026-10判明）
+
+- **`robots.txt`**: クローラーはホストのルート（`https://hiroshikuze.github.io/robots.txt`）だけを読む。本サイトは`/anniversary-cat-worker/`配下のプロジェクトサイトのため、`frontend/robots.txt`を置いても公開URLは`/anniversary-cat-worker/robots.txt`となり、クローラーに無視される。ルートの`robots.txt`はリポジトリ`hiroshikuze.github.io`（ユーザーサイト）側の管理。未設定の場合は全許可がデフォルトなので、現状で困ることはない
+- **`sitemap.xml`**: Workerの`workers.dev`に置くと、掲載するURL（`github.io`）と別ホストになり、検索エンジンに受理されない。`github.io`側に置く場合は静的ファイルとなり、掲載したい作品URL（`?id=bot/YYYY-MM-DD`）は、canonicalが常にトップ固定のため評価されない。作品URLを別ページとして扱う設計（下記「保留」）とセットで検討する
+
+### 保留（次回以降の検討事項）
+
+作品ごとのcanonical・`<title>`・JSON-LD、およびそれに伴う`sitemap.xml`の扱い。選択肢と判断材料は`.claude/future-ideas.md`の「作品ごとのSEO/AIO対応」参照。
 
 ---
 

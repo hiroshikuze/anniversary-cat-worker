@@ -331,6 +331,22 @@ Only the cat(s) described above should have a face, eyes, or expression. Do not 
 - 季節補充フォールバックは1日あたり最大1回しか発生しない（`entries.length < 3`の判定後に1エントリのみ追加するため）ため、追加するGemini呼び出しも1日最大1回。既存のリサーチプール生成（10並列）・コスト最適化の方針と矛盾しない
 - **トークン使用量も`handleResearch()`と同じパターンで記録する**: `data.usageMetadata.totalTokenCount`・`data.modelVersion`を`incrementUsageKv(env?.RATE_KV, "text", totalTokens, model, resolvedModel)`で記録する（`kind: "text"`、`handleResearch()`の計測と同じ`usage:YYYY-MM-DD`キーに積み上がる）。`ctx`が渡された場合は`_deferOrAwait()`でバックグラウンド化し、呼び出し元の応答を遅らせない（`handleResearch()`と同じ設計）。これを入れない場合、この経路でのGemini呼び出しが`/usage`の集計に反映されず、将来のコスト調査（Issue #204のような）で見落とされるリスクがある
 
+### 直近テーマの除外（`getRecentThemes()`・`pickFromPool()`・2026-10追加）
+
+**背景**: 2026-10-20・10-21のBot投稿が2日続けて「金木犀の季節」（季節の花補充フォールバック由来）になり、構図も酷似した。記念日の選定には前日までのテーマを避ける処理がなく、重複を除いていたのは同じ日のプラン内だけ（`filterAndDedupePool()`）だった。リサーチプール生成が有効なエントリを3件未満しか得られない日は、季節の花（その時期の窓の花は最大16日間同じ）が連日選ばれうる。
+
+**対策（2つ・いずれもR2のBot作品メタを参照する）:**
+
+- `getRecentThemes(bucket, jstDateISO, days = 3)`（`worker/r2-storage.js`）: 前日から`days`日前までの`bot/YYYY-MM-DD`のメタから`theme`を集めた`Set`を返す。存在しない日・取得失敗は無視する（失敗しても空の`Set`でサービスを止めない）
+- `pickFromPool(pool, rand, excludeThemes)`: `excludeThemes`に含まれるテーマのエントリを除外して選ぶ。**除外すると候補がゼロになる場合は除外せずに全体から選ぶ**（投稿が止まるより、同じテーマの繰り返しを許す方を優先する）。`runBot()`が`getRecentThemes()`の結果を渡す（`/research`のユーザー生成には適用しない）
+- `pickSeasonalFlowerEntry(dateStr, recentThemes)`: `generateResearchPool()`の季節補充フォールバックで使う。当日の窓の花（`${name}の季節`）が直近テーマに含まれていれば、`SEASONAL_FLOWERS`の隣の窓（前→後の順）の花に切り替える。すべて直近テーマなら当日の花を使う
+
+**既知の限界:**
+
+- Style行の季節カラー（`getSeasonalStyleTone()`）は日付の窓から決まるため、隣の窓の花に切り替えた日は、花と色調が少しずれる（隣の窓は同じ季節のため色調は近い）
+- 有効なエントリが3件未満になる根本原因（リサーチで`sourceUrlKind: "none"`が多い等）は別問題で、今回は対処していない
+- Bot Cronで追加されるR2読み取りは最大3回（`getRecentThemes()`）。`cleanupExpiredEntries()`を`0 16 * * *`へ移した経緯（Bug#41）があるため、読み取り回数を増やす変更は慎重に扱う
+
 ### visualHintの役割（2026-05変更）
 
 旧役割: テーマが日本語のみのときPollinationsプロンプトのASCII化で内容が失われる問題を補完（「日本語回避」）。

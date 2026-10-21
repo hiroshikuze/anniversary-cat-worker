@@ -15,6 +15,7 @@
 - fal.aiポーリングをCloudflare Queuesに移行する案（未着手・2026-08）
 - 集客・マーケティング診断（2026-09）
 - SUZURIセール関連: 自動反映ルール導入＋SNSセール告知バナー（2026-09・議論中断・未承認）
+- 作品ごとのSEO/AIO対応（2026-10・保留・次回未定）
 
 ## Cloudflare Workers AI移行調査（2026-05・完了・保留）
 
@@ -1525,3 +1526,29 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 ### 次のアクション
 
 次回セッション冒頭で、このセクションを読んでからA・B/Cどちらから再開するかユーザーに確認する。Aは2026-09-30に現行案（Actionsに集約）へ設計変更済み。再開時に、上の「実装前に詰める点」への回答（とくに`WORKER_URL`・`BYPASS_TOKEN`の登録状況とプルリクエスト作成の許可設定）と承認を得る。Cは2026-09-29にAI Studio版を自動投稿の仕組みで実投稿済み。2026-10-05に反響を確認し、結果をこの節に追記する（Claude Code Remoteの`send_later`で予約済み）。次のセールではスキル`sale-announcement`（`.claude/skills/sale-announcement/SKILL.md`）の「手順」から始める。
+
+---
+
+## 作品ごとのSEO/AIO対応（2026-10・保留・次回未定）
+
+サイト全体のJSON-LDと`llms.txt`は実装済み（`.claude/rules/architecture.md`の「SEO/AIO対策」参照）。作品（`?id=bot/YYYY-MM-DD`）ごとの対応は、下記の制約と選択肢があるため保留した。
+
+### 現状の制約
+
+- フロントはGitHub Pagesの静的配信。`?id=`付きURLでも返るHTMLは毎回同じ`index.html`
+- canonicalがトップ固定のため、検索エンジンは作品URLをトップと同じページとして扱う
+- 作品の中身は`loadSharedImage()`がJSで後から描画する。JSを実行しないクローラー・多くの生成AIの取得ボットには見えない可能性がある
+- `sitemap.xml`は、掲載したい作品URL（`github.io`）と同じホストに置く必要がある。Workerに置いても受理されない。作品URLを評価させる設計とセットでないと意味が薄い
+
+### 選択肢
+
+| 案 | 内容 | 長所 | 短所 |
+| --- | --- | --- | --- |
+| A. JSで書き換え | `loadSharedImage()`成功時に、`document.title`・canonical・JSON-LDを動的に書き換える | 変更が小さい | JS非実行のクローラー・AIボットには効かない。確実性が低い |
+| B. Worker配信ページ | `/page/bot/YYYY-MM-DD`のようなURLでWorkerが構造化データ入りHTMLを返す（canonical・title・JSON-LD・本文を含む）。共有URLもこちらに寄せる | 確実。完全自動 | 新しいエンドポイントと共有URLの仕様変更が必要。規模が大きい |
+
+### 決めること
+
+- A・Bのどちらにするか（Bなら共有URL・Bot投稿のリンク先・RSSの`<link>`を新URLにするか）
+- `sitemap.xml`の置き場所（Bなら、Workerの`workers.dev`に置く構成が成立する）
+- ルートの`robots.txt`（リポジトリ`hiroshikuze.github.io`側）を管理できるか

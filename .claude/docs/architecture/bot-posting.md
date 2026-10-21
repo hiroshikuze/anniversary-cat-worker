@@ -35,6 +35,40 @@ Cloudflareダッシュボードの手動Scheduled送信は、Cronイベントロ
 - 戻り値: `runMonthlyWallpaperPost()`と同じパターンで`{ dryRun, bskyOk, mastoOk, theme }`（またはエラー時`{ error }`）を返すよう`runBot()`をvoidから変更した
 - Cron本番実行（`scheduled()`からの呼び出し）は`deps`省略のため`dryRun: false`扱いで、従来と完全に同じ挙動（後方互換）
 
+### 再投稿モード（`POST /bot/manual-run?mode=repost`・2026-10追加）
+
+**背景**: 2026-10-21、Bluesky APIが`502`を返してBluesky投稿だけが失敗した（Mastodonは成功）。Bluesky・Mastodon投稿は二重投稿を避けるため意図的にリトライしない設計のため、失敗した側だけを後から投稿し直す手段が必要になった。ただし`502`・タイムアウトは「サーバー側では投稿が作られていた」可能性があるため、**再投稿の前に必ず投稿済みかを確認する**。
+
+```bash
+# 確認のみ（デフォルト）: 投稿済みかどうかをプラットフォーム別に調べて報告する。投稿はしない
+curl -X POST "https://anniversary-cat-worker.hiroshikuze.workers.dev/bot/manual-run?mode=repost&date=2026-10-21" \
+  -H "X-Bypass-Token: <BYPASS_TOKENの値>"
+
+# 未投稿と確認できたSNSにだけ実際に投稿する
+curl -X POST "https://anniversary-cat-worker.hiroshikuze.workers.dev/bot/manual-run?mode=repost&date=2026-10-21&platform=bluesky&dryRun=false" \
+  -H "X-Bypass-Token: <BYPASS_TOKENの値>"
+```
+
+- クエリ: `date`（必須・`YYYY-MM-DD`。同日の2件目以降は`YYYY-MM-DD-2`〜`-9`）・`platform`（`bluesky`/`mastodon`/`both`・省略時`both`）・`dryRun`（省略時`true`）。`date`を省略可にしない（誤って別の日を再投稿しないため）
+- 実装: `worker/index.js`の`POST /bot/manual-run`が`mode=repost`のとき`worker/bot.js`の`repostBot(env, { date, platform, dryRun }, deps)`を呼ぶ。`mode`省略時は従来どおり`runBot()`
+
+#### 投稿済みの判定
+
+| プラットフォーム | 取得方法 | 備考 |
+| --- | --- | --- |
+| Bluesky | `GET {BLUESKY_API}/com.atproto.repo.listRecords?repo={BLUESKY_IDENTIFIER}&collection=app.bsky.feed.post&limit=30`（認証不要） | 2026-10に実機で認証なしで取得できることを確認済み。PDSを直接読むためAppViewのインデックス遅延がない |
+| Mastodon | `GET /api/v1/accounts/verify_credentials`でIDを取得→`GET /api/v1/accounts/{id}/statuses?limit=30&exclude_replies=true` | 本文HTMLの`href`にページURLが含まれる |
+
+- 判定は「本文に`?id={id}`を含むか」（`containsPostMarker()`）。**`?id=bot/2026-10-21`が`?id=bot/2026-10-21-2`にも前方一致して誤判定しないよう**、直後が英数字・`_`・`-`以外であることを要求する
+- 結果は3値: `exists`（投稿済み・投稿しない）・`missing`（未投稿と確認・投稿対象）・`unknown`（確認用APIの失敗。**投稿しない**。迷ったときは二重投稿を避ける側に倒す）。Mastodon未設定は`skipped`
+- `limit=30`の範囲外（約30件より古い投稿）は確認できないため`missing`と判定されうる。直近の失敗の復旧を想定した用途のため許容する
+
+#### 再投稿の内容
+
+- 新しいリサーチ・画像生成は行わない。R2の`{id}/meta.json`と`web.png|jpg`を使う（R2に無ければエラー）
+- R2メタに`themeHook`/`themeHookEn`・ゲストSNSタグは保存されていないため、**常にfull形式**で組み立てる（`buildPostText()`/`buildMastodonText()`・CTAは`pickCta()`で再抽選）。元の投稿とは文面が変わりうる
+- 戻り値: `{ dryRun, id, bluesky, mastodon }`。各値は`{ status, posted?, error? }`。Discordにもプラットフォーム別の確認結果と投稿結果を通知する
+
 ### 投稿フォーマットの選択（short/full・2026-10追加）
 
 **背景**: 毎回「説明文＋CTA＋サイトURL」のフル構成だと、(1) 絵と説明だけでSNS上で満足されクリックスルーに繋がっていない、(2) 毎回CTA＋紹介URLが付くことで「宣伝ポストっぽさ」が強まりフォロー動機を阻害している、という2つの懸念がユーザーから指摘された。対応として、投稿の大半をテーマ連動の短い一言＋URL＋ハッシュタグのみの**short版**にし、残りは効果比較・サービス再認知のため従来の**full版**を流す設計にした。

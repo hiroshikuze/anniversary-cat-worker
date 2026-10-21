@@ -133,6 +133,22 @@ curl -X POST "https://anniversary-cat-worker.hiroshikuze.workers.dev/bot/manual-
 - レスポンスは`runMonthlyWallpaperPost()`と同じパターンのJSON（`{ dryRun, bskyOk, mastoOk, theme }`または`{ error }`）
 - 実行結果はCloudflareダッシュボードの「分析とログ」→「ログ」（Begin log stream）、または`query-worker-logs.mjs`（`--grep "[bot]"`）で確認できる
 
+### 片方のSNSだけ投稿に失敗したときの再投稿（`mode=repost`・2026-10追加）
+
+BlueskyまたはMastodonの一方だけ失敗した場合は、`?dryRun=false`の通常実行（新しいテーマ・画像を生成して両方に投稿するため二重投稿になる）ではなく、`mode=repost`を使う。**先に確認のみ（dryRun）で、未投稿かどうかをプラットフォーム別に確認する**。`502`等でも実際には投稿されていることがあるため。
+
+```bash
+# 1. 確認のみ（投稿しない）
+curl -X POST "https://anniversary-cat-worker.hiroshikuze.workers.dev/bot/manual-run?mode=repost&date=YYYY-MM-DD" \
+  -H "X-Bypass-Token: <BYPASS_TOKENの値>"
+
+# 2. 「未投稿」と出たSNSにだけ投稿する
+curl -X POST "https://anniversary-cat-worker.hiroshikuze.workers.dev/bot/manual-run?mode=repost&date=YYYY-MM-DD&platform=bluesky&dryRun=false" \
+  -H "X-Bypass-Token: <BYPASS_TOKENの値>"
+```
+
+詳細（判定方法・`unknown`の扱い・投稿内容）は`.claude/docs/architecture/bot-posting.md`の「再投稿モード」参照。
+
 ### Cronイベント履歴の確認（実際のCron Triggerの発火状況を見たい場合）
 
 - 設定タブ → **トリガーイベント** → Cronイベント一覧（実行時刻・CPU時間・ステータス表示）
@@ -159,6 +175,7 @@ PR #121のリグレッション（マージ競合で英語機能が黙って削�
 | `params.set("lang"` | 多言語i18n | `setLang()`の`?lang` URL同期 |
 | `gallery-click` | 計測 | ギャラリーカードのUmami計測 |
 | `umami?.track` | 計測 | `loadSharedImage()`内のUmami page view追跡 |
+| `application/ld+json` | SEO/AIO | サイト全体の構造化データ（削除されてもエラーにならない） |
 | `createSuzuriFromImage` | SUZURI登録 | SUZURI登録フローの入口関数 |
 | `allSuzuriProductsRegistered` | SUZURI登録 | 全商品登録確認（部分登録バグ対策） |
 | `resizeForSuzuri` | SUZURI登録 | 2048px高解像度リサイズ（印刷品質） |
