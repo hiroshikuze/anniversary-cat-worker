@@ -341,6 +341,8 @@ Only the cat(s) described above should have a face, eyes, or expression. Do not 
 - `pickFromPool(pool, rand, excludeThemes)`: `excludeThemes`に含まれるテーマのエントリを除外して選ぶ。**除外すると候補がゼロになる場合は除外せずに全体から選ぶ**（投稿が止まるより、同じテーマの繰り返しを許す方を優先する）。`runBot()`が`getRecentThemes()`の結果を渡す（`/research`のユーザー生成には適用しない）
 - `pickSeasonalFlowerEntry(dateStr, recentThemes)`: `generateResearchPool()`の季節補充フォールバックで使う。当日の窓の花（`${name}の季節`）が直近テーマに含まれていれば、`SEASONAL_FLOWERS`の隣の窓（前→後の順）の花に切り替える。すべて直近テーマなら当日の花を使う
 
+**実機確認（2026-10-22）**: 直近3日が「金木犀の季節」だった翌朝、新コードで0:00 JSTに生成したプールの季節補充が「秋桜の季節」（前の窓の花）に切り替わり、Bot投稿のテーマになった（`bot/2026-10-22`のメタと公開API上のBluesky投稿で確認）。
+
 **既知の限界:**
 
 - Style行の季節カラー（`getSeasonalStyleTone()`）は日付の窓から決まるため、隣の窓の花に切り替えた日は、花と色調が少しずれる（隣の窓は同じ季節のため色調は近い）
