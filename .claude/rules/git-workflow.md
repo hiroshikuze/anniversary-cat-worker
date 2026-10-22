@@ -92,3 +92,4 @@ Cron Trigger（`0 15 * * *`・`0 16 * * *`・`0 22 * * 1-5`）は`wrangler.toml`
 - `MASTODON_ACCESS_TOKEN`（任意・同上）
 - `WORKER_URL`（任意・`https://anniversary-cat-worker.hiroshikuze.workers.dev`・設定時はhealth-check.jsがWorker E2Eチェック〔/research・/generate・/usage〕を実行する）
 - `BYPASS_TOKEN`（任意・`WORKER_URL`と併用・レート制限をスキップしてE2Eテストを実行）
+  - 2026-10-21時点では未登録（Cloudflare Workerのシークレットのみ）。Cloudflareのシークレットは登録後に値を確認できないため、紛失時は新しい値に上書きする。手順は`.claude/rules/testing.md`の「`BYPASS_TOKEN`の所在・再設定」参照
