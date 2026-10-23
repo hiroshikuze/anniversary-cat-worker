@@ -27,6 +27,7 @@
 - 外部API呼び出しを含む非同期ロジックは、**依存関数を引数で受け取る形に切り出して**テストする
   - `handleGenerate()`の2フェーズレース → `_twoPhaseRace(tryGemini, tryPollinations, priorityMs)`としてexport
   - テストでは`priorityMs`を短縮（500ms等）し、遅延関数を引数に渡してモック不要でロジックを検証する
+- **現在日時に依存する状態はテストで固定する**: セール期間（`worker/sale.js`の`_currentSale`・`scripts/test-bot.mjs`の冒頭で`_setSaleForTest(null)`）や、季節の花・`new Date()`に依存する結果は、実日付のままにしない。セール期間中にだけ`runBot()`系のテストが失敗した事故がある（Bug#46）。セールを使うテストは`_setSaleForTest(SALE)`で自分で設定し、終わったら`null`に戻す
 - テストケースは「正常系」「境界値」「エラー系」の3パターンを書く
 - 新しい関数を追加したら対応するテストを`scripts/test-bot.mjs`に追加する
 
