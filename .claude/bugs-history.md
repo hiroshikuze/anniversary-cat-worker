@@ -51,6 +51,7 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 | 43 | short形式のBot投稿URLがpageUrl（個別作品URL）を無視しSITE_URL（トップページ）固定になっていた（2026-10） | このファイル |
 | 44 | Discovery応答が地域制限等でエラーになると候補0件となり、固定の旧モデル（gemini-2.5-flash）に落ちて生成が400で失敗、sale-checkの構造化抽出が2日連続で止まった（2026-10） | このファイル |
 | 45 | Bluesky APIの502で片方だけ投稿に失敗し、復旧手段がなかった。同日にテーマ・構図が2日続けて酷似した（2026-10） | このファイル |
+| 46 | `npm test`がセール期間の実日付に依存し、セール期間中はrunBot系3件が失敗してCI（Health Check）が落ちる（2026-10） | このファイル |
 
 ## 過去に修正した問題（再発防止）
 
@@ -291,6 +292,15 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 - **テスト**: `scripts/test-bot.mjs`に、`repostBot()`（投稿済み判定・片方のみ投稿・確認失敗時は投稿しない・日付/platform不正）、`pickPose()`・プロンプト反映、`getRecentThemes()`・`pickFromPool()`の除外・`pickSeasonalFlowerEntry()`、`/bot/manual-run`のパラメーター解釈、Discord通知のポーズ行を追加
 - **場所**: `worker/bot.js`（`repostBot()`・`containsPostMarker()`）、`worker/index.js`（`CAT_POSES`・`pickPose()`・`pickSeasonalFlowerEntry()`・`pickFromPool()`・`generateResearchPool()`）、`worker/r2-storage.js`（`getRecentThemes()`）
 - **教訓**: 片方のSNSだけ失敗する場合の復旧経路を、事故が起きる前に用意しておく。5xxは「失敗」と「成功したが応答が届かなかった」を区別できないため、再実行の前に必ず結果（投稿の有無）を確認する。「同じ見た目が続く」問題は、入力（テーマ・ランダム要素）が同じだとモデルの出力が収束しやすいことを前提に、ランダム要素を増やして対処する
+
+### 46. `npm test`がセール期間の実日付に依存し、セール期間中はrunBot系のテストが失敗してCI（Health Check）が落ちる（2026-10）
+
+- **症状**: 2026-10-23（ニンニンSALE開催中）、作業ブランチへのpushでHealth Checkが`1137件中1134件成功、3件失敗`で失敗した（run #650）。失敗は「short選択時: Bluesky投稿本文にthemeHookが含まれる」「…R2保存後のpageUrl（?id=）が含まれる」（Bluesky・Mastodon）の3件。ローカルでも、セール期間中は同じ3件が再現する
+- **原因**: `worker/sale.js`の`_currentSale`（実際のセール期間）が有効な間、`runBot()`は本体投稿のあとにセール告知リプライを`createRecord`で投稿する。該当テストは`createRecord`の本文を**最後の1件**で上書きして保持しているため、リプライの本文（セール告知）を「投稿本文」と取り違えて失敗した。テストが実日付（セール期間かどうか）に依存していて、`_setSaleForTest()`で固定していなかった。投稿フォーマット（short/full）が重み付きランダムのため、short選択時は2〜3件、full選択時は別の1件が失敗する（件数がセールの有無・乱数で変わる）。Bug#45の変更とは無関係で、セール期間中にだけ顕在化した
+- **影響**: `main`・作業ブランチへのpushでHealth Checkのテストの工程が失敗する（セール期間の間）。本番の動作には影響しない（Worker・Bot投稿のコードは正しく動作している。失敗はテストの取り違えのみ）
+- **対応**: `scripts/test-bot.mjs`の冒頭（import直後）で`_setSaleForTest(null)`を呼び、セールなしを既定にした。セール関連のテスト（`_setSaleForTest(SALE)`を呼ぶもの）は従来どおり自分で設定する。セール期間中の実時計（今回のスクリプト実行時が該当）で全件成功することを確認した
+- **場所**: `scripts/test-bot.mjs`
+- **教訓**: テストは、現在日時に依存する状態（セール期間・季節の花・`new Date()`）を冒頭で固定する。実日付のままだと、特定の期間にだけCIが落ちる時限的な不具合になり、原因（日付）が見えにくい。Bot投稿のテストは「最後の1件」ではなく、本文の種類（本体・リプライ）を区別して取得するほうが堅い
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
 
