@@ -36,6 +36,10 @@ import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 import { renderElementToPng, ensureResvg, _setSatoriForTest, _setResvgForTest } from "../worker/svg-render.js";
 
+// セール期間（worker/sale.jsの実際の_currentSale）に依存しないよう、既定をセールなしに固定する（Bug#46）。
+// セール関連のテストは_setSaleForTest(SALE)で自分で設定する
+_setSaleForTest(null);
+
 let passed = 0;
 let failed = 0;
 
