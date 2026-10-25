@@ -52,6 +52,7 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 | 44 | Discovery応答が地域制限等でエラーになると候補0件となり、固定の旧モデル（gemini-2.5-flash）に落ちて生成が400で失敗、sale-checkの構造化抽出が2日連続で止まった（2026-10） | このファイル |
 | 45 | Bluesky APIの502で片方だけ投稿に失敗し、復旧手段がなかった。同日にテーマ・構図が2日続けて酷似した（2026-10） | このファイル |
 | 46 | `npm test`がセール期間の実日付に依存し、セール期間中はrunBot系3件が失敗してCI（Health Check）が落ちる（2026-10） | このファイル |
+| 47 | Bot投稿でGeminiがタイムアウトしPollinations全モデルも失敗し、画像生成に失敗して当日の投稿が止まった（2026-10） | このファイル |
 
 ## 過去に修正した問題（再発防止）
 
@@ -301,6 +302,18 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 - **対応**: `scripts/test-bot.mjs`の冒頭（import直後）で`_setSaleForTest(null)`を呼び、セールなしを既定にした。セール関連のテスト（`_setSaleForTest(SALE)`を呼ぶもの）は従来どおり自分で設定する。セール期間中の実時計（今回のスクリプト実行時が該当）で全件成功することを確認した
 - **場所**: `scripts/test-bot.mjs`
 - **教訓**: テストは、現在日時に依存する状態（セール期間・季節の花・`new Date()`）を冒頭で固定する。実日付のままだと、特定の期間にだけCIが落ちる時限的な不具合になり、原因（日付）が見えにくい。Bot投稿のテストは「最後の1件」ではなく、本文の種類（本体・リプライ）を区別して取得するほうが堅い
+
+### 47. Bot投稿でGeminiがタイムアウトしPollinations全モデルも失敗し、画像生成に失敗して当日の投稿が止まった（2026-10）
+
+- **症状**: 2026-10-26 7:00 JSTのBot Cronで、Discordに`❌ にゃんバーサリーBot [bot] 2026年10月26日 エラー: 画像生成に失敗しました（The operation was aborted due to timeout / All promises were rejected）`が届き、その日のBluesky・Mastodon投稿がなかった（R2への保存もなし）
+- **調査**: `query-worker-logs.yml`（Claude Codeから`workflow_dispatch`で起動）で該当の実行のログを取得した。`research プール取得 theme="柿の日"`（成功）→ `generate 開始`（22:00:17.218 UTC）→ Pollinations 4モデル開始 → `phase1 timeout → phase2`（約12秒後）→ `ALL SOURCES FAILED`（約18.7秒後）の順。同じ実行に期限切れ削除（cleanup）等の処理はなく、**Bug#41の再発ではない**（Bug#41は、cleanupが同じCron実行のサブリクエスト予算を使い切った事象）
+- **原因（確認できた範囲と未確認の範囲）**: 確認できたのは、(1) Gemini側が`The operation was aborted due to timeout`（コード上は15秒のタイムアウト。通常は平均約8.4秒・最大約10.2秒）で失敗したこと、(2) Pollinationsの4モデルがすべて失敗（`All promises were rejected`）したこと。**Pollinations側の失敗理由は、当時のログに出ておらず未確認**（コードが理由を記録していなかった）。調査時（約5分後）にClaude Codeの環境からPollinationsを試したところ、モデルによって断続的にHTTP 402（Payment Required）が返った（`turbo`と`flux-anime`が別々の回に1回ずつ。他は約6秒で成功）。無料枠が不安定な可能性はあるが、今朝の失敗が402だったとは断定できない
+- **復旧**: ユーザーがiPhoneのショートカットから`POST /bot/manual-run?dryRun=false`を実行し、8:21 JSTに両方へ投稿成功（`bskyOk`・`mastoOk`とも`true`）。再実行で成功したため、一時的な障害だったと考えられる。失敗が投稿前だったため、二重投稿の心配はなかった
+- **対応（今回）**: (1) `handleGenerate()`のPollinations呼び出しで、モデルごとの失敗理由（HTTPステータス・通信例外）を`console.warn`で記録するようにした。次に同じ失敗が起きたとき、原因（402かタイムアウトか）を確認できる。(2) 副次的に気づいた、直近テーマの除外が月曜の朝は金曜の1件分しか効かない問題を修正した（`getRecentThemes()`を、カレンダー日数ではなく直近の投稿3件で数える。`.claude/docs/architecture/gemini.md`の「直近テーマの除外」参照）
+- **見送った対応**: 画像生成が両方失敗したときの自動再試行（Cronの実行時間と、再試行で重なる外部通信の予算を確認する必要がある。まず今回のログで頻度と原因を観察し、必要になったら実装する。`.claude/future-ideas.md`の「運用改善（2026-10-21の事象から・未着手）」に記録）
+- **テスト**: `scripts/test-bot.mjs`に、Pollinationsの失敗理由ログ（HTTPステータス・通信例外・成功時はログなし）と、`getRecentThemes()`の新仕様（直近3件・週末を飛ばす・最大7日・早期終了）、5日前の投稿テーマがプール選択で避けられる統合テストを追加した
+- **場所**: `worker/index.js`（`handleGenerate()`のPollinations呼び出し）、`worker/r2-storage.js`（`getRecentThemes()`）
+- **教訓**: 外部サービスへの並列呼び出しが「すべて失敗」した場合、失敗理由が記録されていないと原因（レート制限か、タイムアウトか、障害か）を後から確認できない。複数の経路を並列に試す設計では、各経路の失敗理由を個別にログへ残す。また、「直近N日」のように期間で数える仕組みは、運用がカレンダーと一致しない（平日のみ投稿）場合に効果が薄れる。数える単位は、運用の単位（投稿数）に合わせる
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
 

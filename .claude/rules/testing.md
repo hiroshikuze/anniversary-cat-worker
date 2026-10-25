@@ -66,6 +66,7 @@
 | `[generate] model=xxx unavailable(404)` | そのモデルは廃止済み → `KNOWN_CANDIDATES`を更新 |
 | `[generate] model=xxx quota exceeded` | クォータ超過 |
 | `[generate] ALL SOURCES FAILED` | GeminiもPollinationsも全滅 |
+| `[pollinations] model=xxx failed status=402` | Pollinationsの当該モデルがHTTPエラーで失敗（402は支払い要求。2026-10-26に追加したログ。`[pollinations] model=xxx failed: メッセージ`は通信例外・タイムアウト） |
 | `[bot] research 完了 theme="xxx"` | 記念日取得成功 |
 | `[bot] generate 完了 source=gemini` | 画像生成成功 |
 | `[bot] Bluesky 投稿 完了` | 投稿成功 |

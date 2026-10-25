@@ -337,7 +337,7 @@ Only the cat(s) described above should have a face, eyes, or expression. Do not 
 
 **対策（2つ・いずれもR2のBot作品メタを参照する）:**
 
-- `getRecentThemes(bucket, jstDateISO, days = 3)`（`worker/r2-storage.js`）: 前日から`days`日前までの`bot/YYYY-MM-DD`のメタから`theme`を集めた`Set`を返す。存在しない日・取得失敗は無視する（失敗しても空の`Set`でサービスを止めない）
+- `getRecentThemes(bucket, jstDateISO, count = 3, maxDays = 7)`（`worker/r2-storage.js`）: 前日から1日ずつ遡り、`bot/YYYY-MM-DD`のメタが存在する日（＝投稿があった日）のテーマを**直近`count`件**集めた`Set`を返す。最大`maxDays`日まで遡る。当日は含めない。読み取りは1日ずつ順に行い、`count`件そろった時点で止める（平日の通常は3回前後・最大7回）。存在しない日・取得失敗・themeなしのメタは件数に数えず飛ばす（失敗しても空の`Set`でサービスを止めない）。**カレンダー日ではなく投稿数で数える理由**: Botは平日のみ投稿するため、当初の「前日から3日前まで」だと月曜の朝は金曜の1件しか見えず、5日前（10/21）の「金木犀の季節」を避けられなかった（2026-10-26。Bug#47）
 - `pickFromPool(pool, rand, excludeThemes)`: `excludeThemes`に含まれるテーマのエントリを除外して選ぶ。**除外すると候補がゼロになる場合は除外せずに全体から選ぶ**（投稿が止まるより、同じテーマの繰り返しを許す方を優先する）。`runBot()`が`getRecentThemes()`の結果を渡す（`/research`のユーザー生成には適用しない）
 - `pickSeasonalFlowerEntry(dateStr, recentThemes)`: `generateResearchPool()`の季節補充フォールバックで使う。当日の窓の花（`${name}の季節`）が直近テーマに含まれていれば、`SEASONAL_FLOWERS`の隣の窓（前→後の順）の花に切り替える。すべて直近テーマなら当日の花を使う
 
@@ -347,7 +347,7 @@ Only the cat(s) described above should have a face, eyes, or expression. Do not 
 
 - Style行の季節カラー（`getSeasonalStyleTone()`）は日付の窓から決まるため、隣の窓の花に切り替えた日は、花と色調が少しずれる（隣の窓は同じ季節のため色調は近い）
 - 有効なエントリが3件未満になる根本原因（リサーチで`sourceUrlKind: "none"`が多い等）は別問題で、今回は対処していない
-- Bot Cronで追加されるR2読み取りは最大3回（`getRecentThemes()`）。`cleanupExpiredEntries()`を`0 16 * * *`へ移した経緯（Bug#41）があるため、読み取り回数を増やす変更は慎重に扱う
+- Bot Cronで追加されるR2読み取りは通常3回前後・最大7回（`getRecentThemes()`。2026-10-26に3回固定から変更）。`cleanupExpiredEntries()`を`0 16 * * *`へ移した経緯（Bug#41）があるため、読み取り回数を増やす変更は慎重に扱う
 
 ### visualHintの役割（2026-05変更）
 
