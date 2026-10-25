@@ -6911,8 +6911,54 @@ console.log("\n[猫のポーズ] プロンプトへの反映");
   }
 }
 
+// ─── Pollinationsの失敗理由ログ（2026-10-26追加・Bug#47） ───────────────
+console.log("\n[handleGenerate] Pollinationsの失敗理由ログ");
+{
+  const origFetch = globalThis.fetch;
+  const origWarn  = console.warn;
+  const warns = [];
+  console.warn = (...args) => { warns.push(args.join(" ")); };
+  try {
+    // Gemini: 即座に400で失敗（リトライなし）。Pollinations: モデルごとに異なる失敗（402・500・通信例外・429）
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes("pollinations")) {
+        const model = new URL(u).searchParams.get("model");
+        if (model === "turbo")        return { ok: false, status: 402, headers: { get: () => "" } };
+        if (model === "flux")         return { ok: false, status: 500, headers: { get: () => "" } };
+        if (model === "flux-realism") throw new Error("network down");
+        return { ok: false, status: 429, headers: { get: () => "" } }; // flux-anime
+      }
+      return { ok: false, status: 400, text: async () => "bad request", json: async () => ({}) };
+    };
+    let threw = null;
+    try { await handleGenerate({ theme: "テスト", description: "" }, "dummy-key"); } catch (e) { threw = e; }
+    const text = warns.join("\n");
+    assert("Pollinations失敗ログ: すべて失敗すると例外になる（従来どおり）", threw !== null);
+    assert("Pollinations失敗ログ: turboのHTTPステータス（402）が記録される", text.includes("[pollinations] model=turbo failed status=402"));
+    assert("Pollinations失敗ログ: fluxのHTTPステータス（500）が記録される", text.includes("[pollinations] model=flux failed status=500"));
+    assert("Pollinations失敗ログ: flux-animeのHTTPステータス（429）が記録される", text.includes("[pollinations] model=flux-anime failed status=429"));
+    assert("Pollinations失敗ログ: 通信例外のメッセージが記録される", text.includes("[pollinations] model=flux-realism failed: network down"));
+    assert("Pollinations失敗ログ: プロンプト（URL）は記録しない", !text.includes("kawaii watercolor cat") && !text.includes("image.pollinations.ai"));
+
+    // 成功時は失敗ログを出さない
+    warns.length = 0;
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("pollinations")) {
+        return { ok: true, headers: { get: () => "image/png" }, arrayBuffer: async () => Buffer.from("png") };
+      }
+      return { ok: false, status: 400, text: async () => "bad request", json: async () => ({}) };
+    };
+    const ok = await handleGenerate({ theme: "テスト", description: "" }, "dummy-key");
+    assert("Pollinations失敗ログ: 成功時は失敗ログを出さない", ok.source === "pollinations" && !warns.join("\n").includes("[pollinations] model="));
+  } finally {
+    globalThis.fetch = origFetch;
+    console.warn = origWarn;
+  }
+}
+
 // ─── 直近テーマの除外（B）: getRecentThemes / pickFromPool / 季節の花の代替 ──
-console.log("\n[直近テーマ] getRecentThemes");
+console.log("\n[直近テーマ] getRecentThemes（直近の投稿3件・最大7日・2026-10-26仕様）");
 {
   const makeBucket = (metas, { throwOn = [] } = {}) => {
     const calls = [];
@@ -6929,35 +6975,70 @@ console.log("\n[直近テーマ] getRecentThemes");
   };
 
   {
+    // 正常系: 投稿があった日を飛ばさず、直近3件を返す（当日は含めない・欠けた日は数えない）
     const bucket = makeBucket({
       "bot/2026-10-21": { theme: "今日のテーマ" },          // 当日は含めない
       "bot/2026-10-20": { theme: "金木犀の季節" },
       "bot/2026-10-19": { theme: "秋桜の季節" },
-      "bot/2026-10-17": { theme: "4日前のテーマ" },         // days=3の範囲外
+      // 10-18 は投稿なし（数えない）
+      "bot/2026-10-17": { theme: "3件目のテーマ" },
+      "bot/2026-10-16": { theme: "4件目（対象外）のテーマ" },
     });
-    const r = await getRecentThemes(bucket, "2026-10-21", 3);
-    assert("getRecentThemes: 前日・前々日のテーマを返す", r.has("金木犀の季節") && r.has("秋桜の季節"));
-    assert("getRecentThemes: 当日・範囲外は含めない", !r.has("今日のテーマ") && !r.has("4日前のテーマ"));
-    assert("getRecentThemes: 存在しない日（10-18）は無視する", r.size === 2);
+    const r = await getRecentThemes(bucket, "2026-10-21");
+    assert("getRecentThemes: 直近3件（10-20・10-19・10-17）を返す", r.size === 3 && r.has("金木犀の季節") && r.has("秋桜の季節") && r.has("3件目のテーマ"));
+    assert("getRecentThemes: 当日と4件目以降は含めない", !r.has("今日のテーマ") && !r.has("4件目（対象外）のテーマ"));
+    assert("getRecentThemes: 投稿のない日（10-18）は件数に数えない", r.has("3件目のテーマ"));
   }
   {
+    // 月曜（平日のみ投稿）: 土日を飛ばして金・木・水の3件を返す（旧仕様は金曜の1件だけだった）
+    const bucket = makeBucket({
+      "bot/2026-10-23": { theme: "金曜のテーマ" },
+      "bot/2026-10-22": { theme: "木曜のテーマ" },
+      "bot/2026-10-21": { theme: "水曜のテーマ" },
+      "bot/2026-10-20": { theme: "火曜のテーマ" },
+    });
+    const r = await getRecentThemes(bucket, "2026-10-26"); // 月曜
+    assert("getRecentThemes: 月曜は土日を飛ばして金・木・水の3件を返す", r.size === 3 && r.has("金曜のテーマ") && r.has("木曜のテーマ") && r.has("水曜のテーマ"));
+    assert("getRecentThemes: 月曜でも4件目（火曜）は含めない", !r.has("火曜のテーマ"));
+  }
+  {
+    // 件数指定・早期終了
+    const bucket = makeBucket({ "bot/2026-10-20": { theme: "A" }, "bot/2026-10-19": { theme: "B" }, "bot/2026-10-18": { theme: "C" } });
+    const one = await getRecentThemes(bucket, "2026-10-21", 1);
+    assert("getRecentThemes: count=1なら直近1件だけ", one.size === 1 && one.has("A"));
+    const bucket2 = makeBucket({ "bot/2026-10-20": { theme: "A" }, "bot/2026-10-19": { theme: "B" }, "bot/2026-10-18": { theme: "C" }, "bot/2026-10-17": { theme: "D" } });
+    await getRecentThemes(bucket2, "2026-10-21");
+    assert("getRecentThemes: 3件そろった時点で読み取りを止める（3回）", bucket2.calls.length === 3);
+  }
+  {
+    // 境界値: 最大7日まで。それより古い投稿は対象外・投稿がなければ7回読んで空
+    const bucket = makeBucket({ "bot/2026-10-13": { theme: "8日前のテーマ" } }); // 10-21の8日前
+    const r = await getRecentThemes(bucket, "2026-10-21");
+    assert("getRecentThemes: 8日前の投稿は対象外（maxDays=7）", r.size === 0);
+    assert("getRecentThemes: 投稿が見つからない場合は7日分（7回）読んで終わる", bucket.calls.length === 7);
+    const bucket7 = makeBucket({ "bot/2026-10-14": { theme: "7日前のテーマ" } }); // ちょうど7日前
+    const r7 = await getRecentThemes(bucket7, "2026-10-21");
+    assert("getRecentThemes: ちょうど7日前の投稿は対象", r7.has("7日前のテーマ"));
+    const small = makeBucket({ "bot/2026-10-18": { theme: "3日前のテーマ" } });
+    assert("getRecentThemes: maxDays=2なら3日前は対象外", (await getRecentThemes(small, "2026-10-21", 3, 2)).size === 0);
+  }
+  {
+    // 月・年をまたぐ
     const bucket = makeBucket({});
-    await getRecentThemes(bucket, "2026-11-01", 3);
+    await getRecentThemes(bucket, "2026-11-01", 3, 3);
     assert("getRecentThemes: 月をまたぐ（11-01→10-31,10-30,10-29）", ["bot/2026-10-31", "bot/2026-10-30", "bot/2026-10-29"].every(id => bucket.calls.includes(`${id}/meta.json`)));
     const bucket2 = makeBucket({});
-    await getRecentThemes(bucket2, "2027-01-02", 3);
+    await getRecentThemes(bucket2, "2027-01-02", 3, 3);
     assert("getRecentThemes: 年をまたぐ（01-02→01-01,12-31,12-30）", ["bot/2027-01-01", "bot/2026-12-31", "bot/2026-12-30"].every(id => bucket2.calls.includes(`${id}/meta.json`)));
-    const bucket3 = makeBucket({});
-    await getRecentThemes(bucket3, "2026-10-21");
-    assert("getRecentThemes: days省略時は3日分を読む", bucket3.calls.length === 3);
   }
   {
-    // エラー系: 一部の日の取得失敗は無視して他の日の結果を返す・bucketなし・themeなしメタ
-    const bucket = makeBucket({ "bot/2026-10-19": { theme: "秋桜の季節" }, "bot/2026-10-18": {} },
-      { throwOn: ["bot/2026-10-20/meta.json"] });
-    const r = await getRecentThemes(bucket, "2026-10-21", 3);
-    assert("getRecentThemes: 一部の取得失敗は無視して残りを返す", r.size === 1 && r.has("秋桜の季節"));
-    const none = await getRecentThemes(null, "2026-10-21", 3);
+    // エラー系: 一部の日の取得失敗は飛ばして、さらに古い日で件数を埋める・bucketなし・themeなしのメタは数えない
+    const bucket = makeBucket({
+      "bot/2026-10-19": { theme: "B" }, "bot/2026-10-18": {}, "bot/2026-10-17": { theme: "C" }, "bot/2026-10-16": { theme: "D" },
+    }, { throwOn: ["bot/2026-10-20/meta.json"] });
+    const r = await getRecentThemes(bucket, "2026-10-21");
+    assert("getRecentThemes: 取得失敗（10-20）・themeなし（10-18）は数えず、B・C・Dの3件を返す", r.size === 3 && r.has("B") && r.has("C") && r.has("D"));
+    const none = await getRecentThemes(null, "2026-10-21");
     assert("getRecentThemes: bucketなしは空のSet", none instanceof Set && none.size === 0);
   }
 }
@@ -7102,6 +7183,24 @@ console.log("\n[直近テーマ] generateResearchPool・runBotへの配線");
     const seen = new Set();
     for (let i = 0; i < 30; i++) seen.add(await runOnce(makeBotEnv({ yesterdayMeta: null })));
     assert("runBot: 前日のメタがなければ両方のテーマが選ばれうる", seen.has("直近記念日") && seen.has("別の記念日"));
+  }
+  {
+    // 週末をまたぐ（月曜の朝を想定）: 前の投稿が5日前でも、直近3件に数えて避ける
+    const fiveDaysAgoISO = iso(new Date(jstNow.getTime() - 5 * 24 * 60 * 60 * 1000));
+    const makeEnvOld = () => {
+      const env = makeBotEnv({ yesterdayMeta: null });
+      const origGet = env.IMAGE_BUCKET.get.bind(env.IMAGE_BUCKET);
+      env.IMAGE_BUCKET.get = async (key) => {
+        if (key === `bot/${fiveDaysAgoISO}/meta.json`) return { json: async () => ({ theme: "直近記念日" }) };
+        return origGet(key);
+      };
+      return env;
+    };
+    let pickedRecent = 0;
+    for (let i = 0; i < 20; i++) {
+      if (await runOnce(makeEnvOld()) === "直近記念日") pickedRecent++;
+    }
+    assert("runBot: 5日前の投稿のテーマも直近3件として避ける（週末をまたぐ・20回）", pickedRecent === 0);
   }
   {
     // エラー系: 前日メタの取得が失敗しても投稿を止めない

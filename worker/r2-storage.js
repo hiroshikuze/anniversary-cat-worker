@@ -68,25 +68,31 @@ export async function getImageFromR2(bucket, id) {
 }
 
 /**
- * 前日から`days`日前までのBot作品（`bot/YYYY-MM-DD`）のテーマを集めて返す（当日は含めない）。
- * 直近と同じテーマを避けるために使う（2026-10追加）。存在しない日・取得失敗・themeなしは
- * 無視する（失敗しても空のSetを返し、呼び出し元の処理を止めない）。
+ * 直近`count`件のBot作品（`bot/YYYY-MM-DD`）のテーマを集めて返す（当日は含めない）。
+ * 直近と同じテーマを避けるために使う（2026-10追加）。Botは平日のみ投稿するため、
+ * カレンダー日数ではなく「投稿があった日」を`count`件数える（月曜の朝は土日を飛ばして
+ * 金・木・水を見る。旧仕様の「前日から3日前まで」は月曜に金曜の1件しか見えなかった・Bug#47）。
+ * 前日から1日ずつ遡り、`count`件そろうか`maxDays`日遡った時点で止める（読み取りは通常3回前後）。
+ * 存在しない日・取得失敗・themeなしのメタは件数に数えず飛ばす（失敗しても空のSetで
+ * 呼び出し元の処理を止めない）。
  * @param {R2Bucket|null} bucket
  * @param {string} jstDateISO - 基準日（"YYYY-MM-DD"・JST）
- * @param {number} [days=3]
+ * @param {number} [count=3] - 集める投稿の件数
+ * @param {number} [maxDays=7] - 遡る最大日数
  * @returns {Promise<Set<string>>}
  */
-export async function getRecentThemes(bucket, jstDateISO, days = 3) {
+export async function getRecentThemes(bucket, jstDateISO, count = 3, maxDays = 7) {
   const themes = new Set();
   if (!bucket) return themes;
   const base = new Date(`${jstDateISO}T00:00:00Z`).getTime();
-  const ids = [];
-  for (let i = 1; i <= days; i++) {
-    ids.push(`bot/${new Date(base - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)}`);
-  }
-  const metas = await Promise.all(ids.map(id => getMetaFromR2(bucket, id).catch(() => null)));
-  for (const meta of metas) {
-    if (typeof meta?.theme === "string" && meta.theme) themes.add(meta.theme);
+  let found = 0;
+  for (let i = 1; i <= maxDays && found < count; i++) {
+    const id = `bot/${new Date(base - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)}`;
+    const meta = await getMetaFromR2(bucket, id).catch(() => null);
+    if (typeof meta?.theme === "string" && meta.theme) {
+      themes.add(meta.theme);
+      found++;
+    }
   }
   return themes;
 }

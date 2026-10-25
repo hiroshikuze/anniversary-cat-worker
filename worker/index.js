@@ -1403,13 +1403,26 @@ export async function handleGenerate(body, apiKey, env, ctx = null) {
       MODELS.map(async (model) => {
         const url = buildPollinationsUrl(theme, description, persona, effectivePersonality, model, visualHint, emotion, eatingAction, guest, themeEn, descriptionEn, reserveCalendarSpace, pose);
         console.log(`[pollinations] trying model=${model}`);
-        const imgRes = await fetch(url, { signal: AbortSignal.timeout(POLLINATIONS_TIMEOUT_MS) });
-        if (!imgRes.ok) throw new Error(`status=${imgRes.status}`);
-        const buffer = await imgRes.arrayBuffer();
-        const base64 = arrayBufferToBase64(buffer);
-        const mimeType = imgRes.headers.get("Content-Type") || "image/jpeg";
-        console.log(`[pollinations] success model=${model} size=${buffer.byteLength}`);
-        return { imageData: base64, mimeType, source: "pollinations" };
+        try {
+          const imgRes = await fetch(url, { signal: AbortSignal.timeout(POLLINATIONS_TIMEOUT_MS) });
+          if (!imgRes.ok) {
+            // 失敗理由を記録する（2026-10-26・Bug#47。全モデル失敗時に原因が分からなかったため）。
+            // プロンプト（URL）は記録しない
+            console.warn(`[pollinations] model=${model} failed status=${imgRes.status}`);
+            throw new Error(`status=${imgRes.status}`);
+          }
+          const buffer = await imgRes.arrayBuffer();
+          const base64 = arrayBufferToBase64(buffer);
+          const mimeType = imgRes.headers.get("Content-Type") || "image/jpeg";
+          console.log(`[pollinations] success model=${model} size=${buffer.byteLength}`);
+          return { imageData: base64, mimeType, source: "pollinations" };
+        } catch (e) {
+          // HTTPエラー（上でログ済み）以外の通信例外・タイムアウトを記録する
+          if (!/^status=\d+$/.test(e?.message ?? "")) {
+            console.warn(`[pollinations] model=${model} failed: ${e?.message ?? e}`);
+          }
+          throw e;
+        }
       })
     );
   }
