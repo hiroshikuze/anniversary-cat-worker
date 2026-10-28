@@ -60,7 +60,10 @@ curl -X POST "https://anniversary-cat-worker.hiroshikuze.workers.dev/bot/manual-
 | プラットフォーム | 取得方法 | 備考 |
 | --- | --- | --- |
 | Bluesky | `GET {BLUESKY_API}/com.atproto.repo.listRecords?repo={BLUESKY_IDENTIFIER}&collection=app.bsky.feed.post&limit=30`（認証不要） | 2026-10に実機で認証なしで取得できることを確認済み。PDSを直接読むためAppViewのインデックス遅延がない |
-| Mastodon | `GET /api/v1/accounts/verify_credentials`でIDを取得→`GET /api/v1/accounts/{id}/statuses?limit=30&exclude_replies=true` | 本文HTMLの`href`にページURLが含まれる |
+| Mastodon | `GET /api/v1/accounts/verify_credentials`でIDを取得（認証あり）→`GET /api/v1/accounts/{id}/statuses?limit=30&exclude_replies=true`（**認証なし**・公開投稿の取得） | 本文HTMLの`href`にページURLが含まれる。投稿一覧に`Authorization`を付けない理由は下記 |
+
+- **投稿一覧は認証なしで取得する（2026-10-29・Bug#50）**: Botのトークンのスコープは`write:statuses`＋`write:media`（＋アカウント確認の`profile`）だけで、`read:statuses`を持たない。このトークンを付けたまま`/accounts/{id}/statuses`を呼ぶと`403 This action is outside the authorized scopes`になり、確認が`unknown`（投稿しない）に倒れて再投稿できなかった。Botの投稿は公開のため、認証なしでも取得できる。トークンに`read:statuses`を足す案は、漏えい時の影響が大きくなるため採らない
+- 非公開（フォロワー限定・ダイレクト）の投稿は認証なしでは見えない。Botは公開投稿のみのため問題ない
 
 - 判定は「本文に`?id={id}`を含むか」（`containsPostMarker()`）。**`?id=bot/2026-10-21`が`?id=bot/2026-10-21-2`にも前方一致して誤判定しないよう**、直後が英数字・`_`・`-`以外であることを要求する
 - 結果は3値: `exists`（投稿済み・投稿しない）・`missing`（未投稿と確認・投稿対象）・`unknown`（確認用APIの失敗。**投稿しない**。迷ったときは二重投稿を避ける側に倒す）。Mastodon未設定は`skipped`

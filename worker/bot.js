@@ -835,9 +835,11 @@ async function findExistingMastodonPost(instanceUrl, accessToken, id) {
   }
   const headers = { "Authorization": `Bearer ${accessToken}` };
   const me = await fetchJsonOrThrow(`${instanceUrl}/api/v1/accounts/verify_credentials`, { headers }, "Mastodonアカウント確認");
+  // 投稿一覧は認証なしで取得する（Bug#50）。Botのトークンは read:statuses を持たず、
+  // 認証付きで呼ぶと403（outside the authorized scopes）になる。Botの投稿は公開のため不要
   const statuses = await fetchJsonOrThrow(
     `${instanceUrl}/api/v1/accounts/${me.id}/statuses?limit=${REPOST_CHECK_LIMIT}&exclude_replies=true`,
-    { headers }, "Mastodon投稿一覧取得"
+    {}, "Mastodon投稿一覧取得"
   );
   return (Array.isArray(statuses) ? statuses : []).some(st => containsPostMarker(st?.content, id));
 }

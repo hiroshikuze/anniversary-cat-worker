@@ -7676,10 +7676,12 @@ console.log("\n[repostBot] 投稿済み確認つき再投稿");
   // blueskyList / mastoList: "found" | "empty" | "502"
   function installFetch({ blueskyList = "empty", mastoList = "empty" }) {
     const calls = [];
+    const authByUrl = {};
     const orig = globalThis.fetch;
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init) => {
       const u = String(url);
       calls.push(u);
+      authByUrl[u] = init?.headers?.Authorization ?? null;
       if (u.includes("listRecords")) {
         if (blueskyList === "502") return textRes(502, "error code: 502");
         const records = blueskyList === "found"
@@ -7689,6 +7691,10 @@ console.log("\n[repostBot] 投稿済み確認つき再投稿");
       }
       if (u.includes("verify_credentials")) return textRes(200, JSON.stringify({ id: "42" }));
       if (u.includes("/accounts/42/statuses")) {
+        // 実機のBotトークンは read:statuses を持たないため、認証付きの投稿一覧取得は403になる（Bug#50）
+        if (init?.headers?.Authorization) {
+          return textRes(403, JSON.stringify({ error: "This action is outside the authorized scopes" }));
+        }
         if (mastoList === "502") return textRes(502, "error code: 502");
         const body = mastoList === "found"
           ? [{ content: `<p><a href="https://h.example/?id=${ID}">link</a></p>` }]
@@ -7702,7 +7708,7 @@ console.log("\n[repostBot] 投稿済み確認つき再投稿");
       if (u.includes("/api/v1/statuses")) return textRes(200, JSON.stringify({ id: "status1" }));
       return textRes(200, "{}");
     };
-    return { calls, restore: () => { globalThis.fetch = orig; } };
+    return { calls, authByUrl, restore: () => { globalThis.fetch = orig; } };
   }
   const posted = (calls) => ({
     bsky:  calls.some(u => u.includes("createRecord")),
@@ -7719,6 +7725,16 @@ console.log("\n[repostBot] 投稿済み確認つき再投稿");
     assert("repost dryRun: Mastodonはmissing", r.mastodon?.status === "missing");
     assert("repost dryRun: どちらにも投稿しない", !posted(f.calls).bsky && !posted(f.calls).masto);
     assert("repost dryRun: Discordに通知する", f.calls.some(u => u.includes("discord.test")));
+  }
+  {
+    // Bug#50: 投稿一覧は認証なし、アカウント確認は認証ありで呼ぶ
+    const f = installFetch({});
+    await repostBot(baseEnv(makeRepostBucket()), { date: "2026-10-21" });
+    f.restore();
+    const statusesUrl = f.calls.find(u => u.includes("/accounts/42/statuses"));
+    const verifyUrl   = f.calls.find(u => u.includes("verify_credentials"));
+    assert("repost: Mastodon投稿一覧は認証ヘッダーなしで取得する（read:statuses不要）", statusesUrl && f.authByUrl[statusesUrl] === null);
+    assert("repost: アカウント確認は従来どおり認証ありで取得する", verifyUrl && f.authByUrl[verifyUrl] === "Bearer tok");
   }
   {
     // 両方投稿済み: dryRun=falseでも投稿しない

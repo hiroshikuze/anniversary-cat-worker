@@ -55,6 +55,7 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 | 47 | Bot投稿でGeminiがタイムアウトしPollinations全モデルも失敗し、画像生成に失敗して当日の投稿が止まった（2026-10） | このファイル |
 | 48 | Gemini APIの前払いクレジットが枯渇し、画像生成が止まっても原因がDiscordに出なかった（2026-10） | このファイル |
 | 49 | SUZURI登録が同じ作品に重複して走り、マテリアルとfal.aiジョブが増えた（2026-10） | このファイル |
+| 50 | 再投稿モードのMastodon投稿済み確認が403で`unknown`になり、再投稿できなかった（2026-10） | このファイル |
 
 ## 過去に修正した問題（再発防止）
 
@@ -338,6 +339,16 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 - **テスト**: `scripts/test-bot.mjs`に判定関数（入れる・弾く・期限切れ・nullのr2Id）のテストを追加。ブラウザ上の実際の動作はローカルで確認できず、デプロイ後に言語ボタンを素早く連打して`suzuri-create`のログが増えないことを確認する
 - **場所**: `frontend/index.html`（`createSuzuriFromImage()`・`_shouldStartSuzuriRegistration()`）
 - **教訓**: 「重複チェックは結果が記録されてから効く」設計は、記録までに時間がかかる非同期処理（`ctx.waitUntil()`）では隙間ができる。処理中であること自体を、記録される前から呼び出し側で覚えておく
+
+### 50. 再投稿モードのMastodon投稿済み確認が403で`unknown`になり、再投稿できなかった（2026-10）
+
+- **症状**: 2026-10-29 7:00 JSTのBot投稿でMastodonだけ503（`/api/v1/statuses`がHTMLのエラーページを返した。Cloudflareのログで7:00:21 JSTに失敗・約2.3秒）。復旧のため`POST /bot/manual-run?mode=repost&date=2026-10-29&platform=mastodon`（確認のみ）を実行したところ、`{"mastodon":{"status":"unknown","error":"Mastodon投稿一覧取得 エラー: status=403 message=This action is outside the authorized scopes"}}`が返った
+- **原因**: `findExistingMastodonPost()`が、Botの投稿用トークン（`write:statuses`＋`write:media`）を付けたまま`GET /api/v1/accounts/{id}/statuses`を呼んでいた。このエンドポイントに認証付きで呼ぶと`read:statuses`が必要になり、スコープ不足で403になる。再投稿モードは2026-10に実装したが、実機のトークンでの確認が未実施だった（ユニットテストのモックは認証ヘッダーを検証していなかった）。確認が失敗すると「投稿しない」に倒れる設計のため、二重投稿などの被害はなく、復旧できないだけだった
+- **対応**: 投稿一覧の取得から`Authorization`ヘッダーを外した（公開投稿は認証なしで取得できる）。アカウントIDの取得（`verify_credentials`）は従来どおり認証あり。トークンに`read:statuses`を足す案は、漏えい時の影響が大きくなるため採らない。仕様は`.claude/docs/architecture/bot-posting.md`の「投稿済みの判定」参照
+- **テスト**: `scripts/test-bot.mjs`の再投稿テストのモックを、投稿一覧に`Authorization`が付いていると403を返すよう変更（実機のスコープ不足を再現）。投稿一覧取得が認証なしで呼ばれること、アカウント確認は認証ありで呼ばれることを追加で検証
+- **場所**: `worker/bot.js`（`findExistingMastodonPost()`）
+- **教訓**: 外部APIを認証付きで呼ぶ処理は、モックが認証ヘッダーとスコープを検証しないと、実機でだけ起きる権限不足を見逃す。最小権限のトークンで動く前提で、モックにも権限の制約を持たせる。また、復旧用の機能は、障害が起きる前に実機で一度確認しておく（今回は障害の当日にはじめて実機で動かした）
+- **同時に判明した件（503）**: Mastodon本体の一時的な障害とみられる。`postStatusToMastodon()`は`Idempotency-Key`を付けているが、リトライはしていない（Bluesky投稿との非対称）。5xxのみ同じキーで最大2回リトライする案は、ユーザーの判断待ち
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
 
