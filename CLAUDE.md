@@ -222,6 +222,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | `/resume-hires/:id`安全網エンドポイント（60秒超過時のフォールバック） | `worker/index.js` | 稼働中 |
 | fal.ai運用イベントのDiscord通知（403・FAILED・タイムアウト・20MB超） | `worker/fal.js` `worker/index.js` | 稼働中 |
 | 画像生成モデルの自動フォールバック記憶・切替Discord通知（`KNOWN_IMAGE_CANDIDATES` + `RATE_KV`） | `worker/index.js` `_resolveImageModel()` `tryGemini()` | 稼働中 |
+| Gemini前払いクレジット枯渇の専用Discord通知（`prepayment credits are depleted`を検知・1時間に1回・Bug#48・2026-10-28） | `worker/index.js` `isGeminiCreditDepleted()` `notifyGeminiCreditDepleted()` | 実装済み・実機の枯渇時の通知は未確認 |
 | テキストモデルのコスト最適化スコアリング・切替Discord通知（lite優先・低バージョン優先・`RATE_KV`。`-latest`等バージョン番号なしのエイリアスはこの減点を受けず常に最高スコアになる副作用あり・2026-10実測確認・実害なし。詳細は`.claude/docs/architecture/gemini.md`の「`-latest`エイリアスの優先」参照） | `worker/index.js` `_selectFromCandidates()` `selectBestModel()` | 稼働中 |
 | Gemini APIトークン使用量の日次KV集計・`/usage`エンドポイント | `worker/index.js` | 稼働中 |
 | R2ストレージ（14日保持・Cron起動時クリーンアップ） | `worker/r2-storage.js` | 稼働中 |

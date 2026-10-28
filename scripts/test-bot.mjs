@@ -32,7 +32,7 @@ import {
 import { _setSaleForTest } from "../worker/sale.js";
 import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale } from "../worker/sale-check.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST, _isBotCronEvent, cleanupExpiredEntries, cleanupOrphanBackTextureMaterials, _generateFallbackThemeHook, generateResearchPool, pickPose, CAT_POSES, pickSeasonalFlowerEntry } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST, _isBotCronEvent, cleanupExpiredEntries, cleanupOrphanBackTextureMaterials, _generateFallbackThemeHook, generateResearchPool, pickPose, CAT_POSES, pickSeasonalFlowerEntry, isGeminiCreditDepleted } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 import { renderElementToPng, ensureResvg, _setSatoriForTest, _setResvgForTest } from "../worker/svg-render.js";
@@ -6956,6 +6956,87 @@ console.log("\n[handleGenerate] Pollinationsの失敗理由ログ");
     };
     const ok = await handleGenerate({ theme: "テスト", description: "" }, "dummy-key");
     assert("Pollinations失敗ログ: 成功時は失敗ログを出さない", ok.source === "pollinations" && !warns.join("\n").includes("[pollinations] model="));
+  } finally {
+    globalThis.fetch = origFetch;
+    console.warn = origWarn;
+  }
+}
+
+// ─── Gemini前払いクレジット枯渇の専用通知（2026-10-28追加・Bug#48） ─────
+console.log("\n[isGeminiCreditDepleted] 枯渇メッセージの判定");
+{
+  const real = "Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing.";
+  assert("枯渇判定: 実際のエラー文はtrue", isGeminiCreditDepleted(real) === true);
+  assert("枯渇判定: 大文字小文字を区別しない", isGeminiCreditDepleted("PREPAYMENT CREDITS ARE DEPLETED") === true);
+  assert("枯渇判定: 前後に別の文があってもtrue", isGeminiCreditDepleted(`x: ${real} (y)`) === true);
+  assert("枯渇判定: クォータ超過はfalse", isGeminiCreditDepleted("Resource has been exhausted (e.g. check quota).") === false);
+  assert("枯渇判定: 一部のみ一致（credits depletedの語順違い）はfalse", isGeminiCreditDepleted("credits depleted") === false);
+  assert("枯渇判定: 空文字はfalse", isGeminiCreditDepleted("") === false);
+  assert("枯渇判定: null/undefinedはfalse", isGeminiCreditDepleted(null) === false && isGeminiCreditDepleted(undefined) === false);
+}
+
+console.log("\n[handleGenerate] Gemini前払いクレジット枯渇の専用Discord通知");
+{
+  const origFetch = globalThis.fetch;
+  const origWarn  = console.warn;
+  console.warn = () => {};
+  const makeKv = () => {
+    const store = new Map();
+    const puts = [];
+    return {
+      async get(k) { return store.has(k) ? store.get(k) : null; },
+      async put(k, v, opts) { store.set(k, v); puts.push({ k, v, opts }); },
+      puts,
+    };
+  };
+  const setupFetch = (geminiMsg, discordBodies) => {
+    globalThis.fetch = async (url, init) => {
+      const u = String(url);
+      if (u.includes("discord.test")) { discordBodies.push(JSON.parse(init.body).content); return { ok: true, status: 204 }; }
+      if (u.includes("pollinations")) {
+        return { ok: true, headers: { get: () => "image/png" }, arrayBuffer: async () => Buffer.from("png") };
+      }
+      return { ok: false, status: 400, text: async () => JSON.stringify({ error: { message: geminiMsg } }) };
+    };
+  };
+  try {
+    const depleted = "Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing.";
+
+    // 正常系: 枯渇を検知 → 専用通知が1通出る。Pollinationsで画像は返る（従来どおり）
+    {
+      const kv = makeKv(); const bodies = [];
+      setupFetch(depleted, bodies);
+      const r = await handleGenerate({ theme: "テスト", description: "" }, "dummy-key", { DISCORD_WEBHOOK_URL: "https://discord.test/hook", RATE_KV: kv });
+      const credit = bodies.filter((b) => b.includes("前払いクレジット"));
+      assert("枯渇通知: Pollinationsにフォールバックして画像は返る", r.source === "pollinations");
+      assert("枯渇通知: 専用のDiscord通知が1通出る", credit.length === 1);
+      assert("枯渇通知: 対処（AI Studioでチャージ）が書かれている", credit[0].includes("AI Studio") && credit[0].includes("💳"));
+      assert("枯渇通知: 重複抑制キーが1時間のTTLで書かれる", kv.puts.some((p) => p.k === "gemini-credit-alert" && p.opts?.expirationTtl === 3600));
+    }
+
+    // 重複抑制: 抑制キーがあれば再通知しない
+    {
+      const kv = makeKv(); await kv.put("gemini-credit-alert", "1"); const bodies = [];
+      setupFetch(depleted, bodies);
+      await handleGenerate({ theme: "テスト", description: "" }, "dummy-key", { DISCORD_WEBHOOK_URL: "https://discord.test/hook", RATE_KV: kv });
+      assert("枯渇通知: 抑制キーがあれば再通知しない", bodies.filter((b) => b.includes("前払いクレジット")).length === 0);
+    }
+
+    // 境界: KV未バインドでも通知は出る（毎回通知）
+    {
+      const bodies = [];
+      setupFetch(depleted, bodies);
+      await handleGenerate({ theme: "テスト", description: "" }, "dummy-key", { DISCORD_WEBHOOK_URL: "https://discord.test/hook" });
+      assert("枯渇通知: KV未バインドでも通知は出る", bodies.filter((b) => b.includes("前払いクレジット")).length === 1);
+    }
+
+    // エラー系: 枯渇以外のGeminiエラーでは専用通知を出さない
+    {
+      const kv = makeKv(); const bodies = [];
+      setupFetch("Resource has been exhausted (e.g. check quota).", bodies);
+      await handleGenerate({ theme: "テスト", description: "" }, "dummy-key", { DISCORD_WEBHOOK_URL: "https://discord.test/hook", RATE_KV: kv });
+      assert("枯渇通知: 別のエラーでは専用通知を出さない", bodies.filter((b) => b.includes("前払いクレジット")).length === 0 && kv.puts.length === 0);
+    }
   } finally {
     globalThis.fetch = origFetch;
     console.warn = origWarn;
