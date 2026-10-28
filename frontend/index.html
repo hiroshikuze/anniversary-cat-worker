@@ -1150,7 +1150,20 @@
     // SUZURI 商品登録（手動生成・ボット共有URLの初回訪問者の両方で使用）
     // best-effort: 失敗しても画像表示は維持する
     // ----------------------------------------------------------
+    // 登録中のr2Id（Bug#49）。右グループはWorkerが約25秒かけて裏で登録し、その間はR2メタに
+    // 商品が記録されず重複防止が効かない。言語切替の再読み込み等による同ページ内の二重起動を防ぐ
+    const SUZURI_INFLIGHT_TTL_MS = 90_000;
+    const suzuriInFlight = new Map();
+    function _shouldStartSuzuriRegistration(inflight, r2Id, now) {
+      if (!r2Id) return true;
+      const startedAt = inflight.get(r2Id);
+      return startedAt === undefined || now - startedAt >= SUZURI_INFLIGHT_TTL_MS;
+    }
+    window._shouldStartSuzuriRegistration = _shouldStartSuzuriRegistration;
+
     function createSuzuriFromImage(imageData, mimeType, theme, r2Id, description = "", kanjiChar = null) {
+      if (!_shouldStartSuzuriRegistration(suzuriInFlight, r2Id, Date.now())) return;
+      if (r2Id) suzuriInFlight.set(r2Id, Date.now());
       Promise.all([
         applyWatermark(imageData, mimeType, "bottom-right"),
         applyWatermark(imageData, mimeType, "bottom-center"),
@@ -1180,6 +1193,8 @@
             }),
           ]))
       ).then(([rightRes, centerRes]) => {
+        // どちらかの通信が失敗した場合は、すぐ再試行できるよう登録中を解除する
+        if ((rightRes.status === "rejected" || centerRes.status === "rejected") && r2Id) suzuriInFlight.delete(r2Id);
         const centerProducts = centerRes.status === "fulfilled"
           ? centerRes.value?.products ?? [] : [];
         const rightQueued = rightRes.status === "fulfilled" && rightRes.value?.queued === true;
@@ -1195,6 +1210,7 @@
           startPollingSuzuri(r2Id, RIGHT_SLUGS);
         }
       }).catch(e => {
+        if (r2Id) suzuriInFlight.delete(r2Id);
         console.warn("[suzuri-create] 失敗:", e.message);
       });
     }

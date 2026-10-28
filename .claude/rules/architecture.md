@@ -586,6 +586,16 @@ if (!(meta.products?.length > 0) && id !== currentPageId) {
 }
 ```
 
+**ページ内の二重起動防止（2026-10-28追加・Bug#49）:**
+
+上記のid比較は、ギャラリーと共有ビューの組み合わせしか防げない。右グループ（Tシャツ・ステッカー）は`ctx.waitUntil()`で約25秒かけて登録するため、その間はR2メタに登録済み商品が記録されず、Worker側の重複防止チェックも効かない。言語ボタン（`setLang()`が`loadGallery()`を呼ぶ）の切り替えや再読み込みのたびに、同じr2Idの登録がもう一度始まっていた（2026-10-28に右3回・中央2回、マテリアル5件）。
+
+- `frontend/index.html`にモジュールスコープの`suzuriInFlight`（`Map<r2Id, 開始時刻ms>`）を持ち、`createSuzuriFromImage()`の入口で`_shouldStartSuzuriRegistration(inflight, r2Id, now)`を判定する。登録中（開始から90秒未満）なら何もせず戻る
+- 解除: (1)開始から90秒（`SUZURI_INFLIGHT_TTL_MS`。右グループの実測約25秒に余裕を持たせた保険）、(2)通信が失敗したとき（右・中央のいずれかが失敗、または例外）は即座に外して再試行できるようにする。登録完了後は、R2メタに商品が記録され`allSuzuriProductsRegistered()`で弾かれるため、完了時の解除は不要
+- `r2Id`が`null`（R2保存に失敗した手動生成）のときは判定しない（同じr2Idがなく重複しない）
+- 防げるのは**同じページ内**の重複のみ。別タブ・別端末・別の訪問者の重複は防げない（Worker側でR2メタに「登録中」マーカーをCASで書く案は、`.claude/bugs-history.md`のBug#49の「未着手」参照）
+- 純粋関数`_shouldStartSuzuriRegistration()`は`window`経由で公開し、`scripts/test-bot.mjs`で同等の関数を定義して検証する（`_calcWatermarkLayout`と同じ方式）
+
 ### R2保存期間との関係
 
 | 保存期間 | 平日最大カード数 | 理由 |

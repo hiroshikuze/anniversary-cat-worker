@@ -1874,6 +1874,59 @@ console.log("\n[updateMetaInR2: 楽観ロック（etag）競合]");
 }
 
 // ---------------------------------------------------------------------------
+// _shouldStartSuzuriRegistration（frontend/index.html のSUZURI登録の二重起動防止・Bug#49）
+// ※ ブラウザなしで検証するため、同じ純粋関数をここで定義してテストする
+// ---------------------------------------------------------------------------
+console.log("\n[_shouldStartSuzuriRegistration]");
+
+const SUZURI_INFLIGHT_TTL_MS = 90_000;
+function shouldStartSuzuriRegistration(inflight, r2Id, now) {
+  if (!r2Id) return true;
+  const startedAt = inflight.get(r2Id);
+  return startedAt === undefined || now - startedAt >= SUZURI_INFLIGHT_TTL_MS;
+}
+
+{
+  const inflight = new Map();
+  assert("登録中でなければ開始できる", shouldStartSuzuriRegistration(inflight, "bot/2026-10-28", 1_000) === true);
+
+  inflight.set("bot/2026-10-28", 1_000);
+  assert("登録中（直後）は開始しない", shouldStartSuzuriRegistration(inflight, "bot/2026-10-28", 1_001) === false);
+  assert("登録中（25秒後・右グループの実測）は開始しない", shouldStartSuzuriRegistration(inflight, "bot/2026-10-28", 26_000) === false);
+  assert("別のr2Idは登録中でも開始できる", shouldStartSuzuriRegistration(inflight, "bot/2026-10-27", 1_001) === true);
+}
+
+{
+  // 境界: 90秒ちょうど（TTL経過）から開始できる。1ms手前はまだ開始しない
+  const inflight = new Map([["bot/2026-10-28", 0]]);
+  assert("89,999msはまだ開始しない", shouldStartSuzuriRegistration(inflight, "bot/2026-10-28", 89_999) === false);
+  assert("90,000msちょうどで開始できる（保険の期限切れ）", shouldStartSuzuriRegistration(inflight, "bot/2026-10-28", 90_000) === true);
+}
+
+{
+  // エラー系: 通信失敗時に解除（delete）すれば直後に再試行できる
+  const inflight = new Map([["bot/2026-10-28", 5_000]]);
+  inflight.delete("bot/2026-10-28");
+  assert("失敗で解除した後は再試行できる", shouldStartSuzuriRegistration(inflight, "bot/2026-10-28", 5_100) === true);
+
+  // r2Idがnull/空（R2保存失敗の手動生成）は判定しない
+  assert("r2Idがnullなら常に開始できる", shouldStartSuzuriRegistration(new Map([[null, 0]]), null, 1) === true);
+  assert("r2Idが空文字なら常に開始できる", shouldStartSuzuriRegistration(new Map(), "", 1) === true);
+}
+
+{
+  // 複製した関数が本体とずれないよう、frontend/index.html の実コードも検査する
+  const html = readFileSync(new URL("../frontend/index.html", import.meta.url), "utf8");
+  assert("frontend: 登録中のr2Idを覚えるMapがある", /const suzuriInFlight = new Map\(\)/.test(html));
+  assert("frontend: TTLが90秒", /const SUZURI_INFLIGHT_TTL_MS = 90_000;/.test(html));
+  assert("frontend: 判定関数が本体と同じ式", html.includes("startedAt === undefined || now - startedAt >= SUZURI_INFLIGHT_TTL_MS"));
+  const body = html.slice(html.indexOf("function createSuzuriFromImage("));
+  const fnBody = body.slice(0, body.indexOf("async function loadSharedImage"));
+  assert("frontend: createSuzuriFromImage の入口で判定している", /function createSuzuriFromImage\([^)]*\) \{\s*if \(!_shouldStartSuzuriRegistration\(suzuriInFlight, r2Id, Date\.now\(\)\)\) return;/.test(fnBody));
+  assert("frontend: 失敗時に登録中を解除している", (fnBody.match(/suzuriInFlight\.delete\(r2Id\)/g) ?? []).length >= 2);
+}
+
+// ---------------------------------------------------------------------------
 // _calcWatermarkLayout（frontend/index.html の applyWatermark 座標計算ロジック）
 // ※ ブラウザCanvasなしで検証するため、同じ純粋関数をここで定義してテストする
 // ---------------------------------------------------------------------------
