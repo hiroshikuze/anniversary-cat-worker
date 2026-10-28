@@ -5318,6 +5318,48 @@ console.log("\n[buildPostText: short形式]");
 }
 
 // ---------------------------------------------------------------------------
+// 「の季節」の見出し（季節の花補充エントリ・2026-10-28追加）
+// ---------------------------------------------------------------------------
+console.log("\n[見出し: 「の季節」は現在形]");
+{
+  // Bluesky full版: 「今日は〜の日！」ではなく「今は「〜」！」
+  const text = buildPostText("秋桜の季節", "今の季節を彩る秋桜");
+  assert("季節: 見出しが「今は「秋桜の季節」！🐱」で始まる", text.startsWith("今は「秋桜の季節」！🐱"));
+  assert("季節: 「今日は」を含まない", !text.includes("今日は"));
+  assert("季節: 「の日」を付けない", !text.includes("の季節」の日"));
+}
+{
+  // 通常テーマ・「の日」で終わるテーマの見出しは変わらない
+  assert("通常テーマは従来どおり", buildPostText("お花見", "説明").startsWith("今日は「お花見」の日！🐱"));
+  assert("「の日」で終わるテーマは従来どおり", buildPostText("大仏の日", "説明").startsWith("今日は「大仏の日」！🐱"));
+  // 境界: 「の季節」を途中に含むだけ（末尾でない）なら従来どおり
+  assert("「の季節」が末尾でなければ従来どおり", buildPostText("の季節外れ", "説明").startsWith("今日は「の季節外れ」の日！🐱"));
+}
+{
+  // Mastodon full版（英日）
+  const text = buildMastodonText("秋桜の季節", "今の季節を彩る秋桜", "Cosmos Season", "Cosmos in bloom");
+  assert("Mastodon季節: 英語見出しが It's \"...\" now!", text.startsWith('It\'s "Cosmos Season" now!'));
+  assert("Mastodon季節: 英語に Today is を含まない", !text.includes("Today is"));
+  assert("Mastodon季節: 日本語見出しが「今は…」", text.includes("今は「秋桜の季節」！🐱"));
+  assert("Mastodon季節: 「今日は」を含まない", !text.includes("今日は"));
+}
+{
+  // Mastodon: themeEnが空の日本語のみフォールバックも同じ見出し
+  const text = buildMastodonText("秋桜の季節", "今の季節を彩る秋桜", "", "");
+  assert("Mastodon季節（themeEn空）: 日本語見出しが「今は…」", text.startsWith("今は「秋桜の季節」！🐱"));
+}
+{
+  // Mastodon: 通常テーマの英語見出しは変わらない
+  const text = buildMastodonText("国際協力の日", "説明", "International Cooperation Day", "desc");
+  assert("Mastodon通常: 英語見出しは Today is のまま", text.startsWith('Today is "International Cooperation Day"!'));
+}
+{
+  // short形式は見出しを使わないため影響しない
+  const text = buildPostText("秋桜の季節", "説明", undefined, null, undefined, "一言テスト", "short");
+  assert("short形式: 見出しなし（themeHookが先頭）", text.startsWith("一言テスト"));
+}
+
+// ---------------------------------------------------------------------------
 // buildMastodonText: short形式（themeHookEn/themeHook＋URL＋タグのみ・2026-10追加）
 // ---------------------------------------------------------------------------
 console.log("\n[buildMastodonText: short形式]");

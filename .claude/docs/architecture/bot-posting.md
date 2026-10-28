@@ -104,7 +104,7 @@ curl -X POST "https://anniversary-cat-worker.hiroshikuze.workers.dev/bot/manual-
 **full版:**
 
 ```text
-今日は「{theme}」の日！🐱       ← theme が「の日」で終わる場合は「の日」を省略
+今日は「{theme}」の日！🐱       ← theme が「の日」で終わる場合は「の日」を省略。「の季節」で終わる場合は「今は「{theme}」！🐱」
 {description}
 
 📸 {artworkUrl}                  ← R2保存成功時のみ挿入（?id=bot/YYYY-MM-DD）
@@ -216,6 +216,16 @@ CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言で
 - `theme.endsWith("の日")` が true の場合 → `今日は「{theme}」！🐱`（重複なし）
 - false の場合 → `今日は「{theme}」の日！🐱`（通常通り付与）
 - 例: `"大仏の日"` → `今日は「大仏の日」！🐱` / `"お花見"` → `今日は「お花見」の日！🐱`
+
+**「の季節」の見出し（`buildHeaderJa()`・`buildHeaderEn()`・2026-10-28追加）:**
+
+季節の花補充エントリ（テーマ名が`{花}の季節`）は特定の1日の記念日ではなく、季節全体を指す。「今日は〜の日！」だと1日限定に読めるため、`theme.endsWith("の季節")`のとき見出しを現在形にする。
+
+- 日本語（Bluesky full版・Mastodon日本語部分・themeEn空のフォールバック）: `今は「{theme}」！🐱`（例: `今は「秋桜の季節」！🐱`）
+- 英語（Mastodon full版）: `It's "{themeEn}" now!`（例: `It's "Cosmos Season" now!`）。判定は日本語のテーマ名で行う
+- 上記以外のテーマ（「の日」を含む）の見出しは変更しない
+- 3箇所（`buildPostText()`・`buildMastodonText()`の2経路）に重複していた見出し生成を共通関数に集約する。再投稿（`repostBot()`）も同じ関数経由のため同じ見出しになる
+- short形式（`themeHook`＋URL）は見出しを使わないため影響しない
 
 ### テーマタグ正規化（`buildThemeTag`）
 
