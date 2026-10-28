@@ -336,7 +336,7 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 - **実害**: 使われないSUZURIマテリアルが増える（14日後のクリーンアップで`materialIds`全件が削除されるため孤立はしない）、fal.aiの課金が重複する、Discordに誤解を招く通知が重なる
 - **対応（案A）**: `frontend/index.html`に登録中のr2Idを覚える`suzuriInFlight`を追加し、`createSuzuriFromImage()`の入口で開始から90秒未満なら何もせず戻る。通信失敗時は即座に解除する。仕様は`.claude/rules/architecture.md`の「ページ内の二重起動防止」参照
 - **防げないもの**: 別タブ・別端末・別の訪問者による重複（案B。下の未対応項目参照）
-- **テスト**: `scripts/test-bot.mjs`に判定関数（入れる・弾く・期限切れ・nullのr2Id）のテストを追加。ブラウザ上の実際の動作はローカルで確認できず、デプロイ後に言語ボタンを素早く連打して`suzuri-create`のログが増えないことを確認する
+- **テスト**: `scripts/test-bot.mjs`に判定関数（入れる・弾く・期限切れ・nullのr2Id）のテストを追加。ブラウザ上の実際の動作はローカルで確認できず、デプロイ後に言語ボタンを素早く連打して`suzuri-create`のログが増えないことを確認する（[Issue #219](https://github.com/hiroshikuze/anniversary-cat-worker/issues/219)で追跡）
 - **場所**: `frontend/index.html`（`createSuzuriFromImage()`・`_shouldStartSuzuriRegistration()`）
 - **教訓**: 「重複チェックは結果が記録されてから効く」設計は、記録までに時間がかかる非同期処理（`ctx.waitUntil()`）では隙間ができる。処理中であること自体を、記録される前から呼び出し側で覚えておく
 
