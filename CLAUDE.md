@@ -209,7 +209,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | 直近テーマの除外（直近3件のBot作品〔平日のみ投稿のため最大7日遡る〕のテーマをプール選択で避ける・全件除外時は除外しない・季節補充は直近と同じ花なら隣の窓の花に切替） | `worker/index.js` `pickFromPool()` `pickSeasonalFlowerEntry()` `worker/r2-storage.js` `getRecentThemes()` | 稼働中（2026-10-22の実機で、季節補充が金木犀→秋桜の季節に切り替わりBot投稿されたことを確認。プール選択側の除外〔通常エントリ同士〕は実機未確認） |
 | SEO/AIO対策（サイト全体のJSON-LD・`llms.txt`。`robots.txt`・`sitemap.xml`はホスティング制約で作らず、作品ごとの対応は保留） | `frontend/index.html` `frontend/llms.txt` | 稼働中（検索エンジン・AIからの見え方は未確認） |
 | ゲストキャラクター（10%確率・8種・ゲスト外見/性格をDiscord通知に含む） | `worker/index.js` `pickGuestAnimal()` | 稼働中 |
-| Bot投稿完了のDiscord通知（テーマ・プロンプト全文・画像ソース・毛柄・性格・感情・食べ物アクション・ゲスト・投稿URL含む・2通構成） | `worker/bot.js` `notifyDiscord()` `buildBlueskyPostUrl()` | 稼働中 |
+| Bot投稿完了のDiscord通知（テーマ・プロンプト全文・画像ソース・毛柄・性格・感情・食べ物アクション・ゲスト・投稿URL含む・3通構成〔成否は1通目のみ・長いプロンプトは切り捨てず次の通へ続ける〕・2026-10-27変更） | `worker/bot.js` `notifyDiscord()` `buildBlueskyPostUrl()` | 稼働中 |
 | SUZURIグッズ登録（4商品: Tシャツ・ステッカー・缶バッジ・アクキー） | `worker/suzuri.js` | 稼働中 |
 | ボット画像SUZURI登録を初回訪問者ブラウザに委譲（2048px高品質・重複防止） | `frontend/index.html` `createSuzuriFromImage()` `worker/index.js` | 稼働中 |
 | ウォーターマーク合成（Canvas、フロントエンド側） | `frontend/index.html` `applyWatermark()` | 稼働中 |

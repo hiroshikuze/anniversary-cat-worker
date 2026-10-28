@@ -651,6 +651,81 @@ export async function postStatusToMastodon(instanceUrl, accessToken, text, media
 // Discord 通知
 // ---------------------------------------------------------------------------
 
+// Discordの1通あたりの本文の上限。Webhookのcontentは2,000字上限で、先頭に`{emoji} にゃんバーサリーBot\n`
+// （絵文字が2単位でも14字）が付くため、余裕を見て16字を引く
+export const DISCORD_BODY_LIMIT = 2000 - 16;
+
+/**
+ * 長い文字列をDiscordの1通に収まる断片に分ける（2026-10-27）。切り捨てず、断片を順につなぐと
+ * 元の文字列に戻る。区切りは、改行→句点（。）→文末（`. `）→空白の順に、上限の手前の
+ * 後半（上限の半分以降）で最も後ろのものを選ぶ。見つからなければ上限で強制的に分ける。
+ * サロゲートペア（絵文字）は途中で切らない。
+ * @param {string} text
+ * @param {number} [maxLen]
+ * @returns {string[]}
+ */
+export function splitForDiscord(text, maxLen = DISCORD_BODY_LIMIT) {
+  if (text.length <= maxLen) return [text];
+  const chunks = [];
+  let rest = text;
+  while (rest.length > maxLen) {
+    const window = rest.slice(0, maxLen);
+    const minCut = Math.floor(maxLen / 2);
+    let cut = -1;
+    for (const find of [
+      () => { const i = window.lastIndexOf("\n"); return i + 1; },
+      () => { const i = window.lastIndexOf("。"); return i + 1; },
+      () => { const i = window.lastIndexOf(". "); return i < 0 ? 0 : i + 2; },
+      () => { const i = window.lastIndexOf(" "); return i + 1; },
+    ]) {
+      const c = find();
+      if (c > minCut) { cut = c; break; }
+    }
+    if (cut < 0) {
+      cut = maxLen;
+      // 上位サロゲートで終わる位置では切らない（絵文字を壊さない）
+      const last = rest.charCodeAt(cut - 1);
+      if (last >= 0xD800 && last <= 0xDBFF) cut -= 1;
+    }
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  if (rest.length > 0) chunks.push(rest);
+  return chunks;
+}
+
+/**
+ * 平日朝のBot投稿のDiscord通知（3通構成・2026-10-27）を組み立てる。
+ *   1通目: 成否（SNSの投稿結果）＋テーマ情報＋Geminiプロンプト（入るだけ）
+ *   2通目: 1通目に入りきらなかったGeminiプロンプトの続き＋Pollinationsプロンプト
+ *   3通目: 転載用テキスト（Bluesky・Mastodon）
+ * 2〜3通目にはSNSの投稿結果を書かない。どの通も切り捨てず、上限を超える分は続きの通を追加する
+ * （通常は3通。プロンプトも転載用テキストもなければ2通）。
+ * @param {{ statusAndInfo: string, statusEmoji: string, geminiBlock?: string|null,
+ *           pollinationsBlock?: string|null, textsBlock: string, limit?: number }} p
+ * @returns {{ emoji: string, body: string }[]}
+ */
+export function buildBotDiscordMessages({ statusAndInfo, statusEmoji, geminiBlock = null, pollinationsBlock = null, textsBlock, limit = DISCORD_BODY_LIMIT }) {
+  const messages = [];
+  const trim = (t) => t.replace(/\s+$/, "");
+
+  // 1通目: 成否＋テーマ情報＋Geminiプロンプト。入りきらない分は2通目の先頭へ続ける
+  const first = [statusAndInfo, geminiBlock].filter(Boolean).join("\n\n");
+  const firstChunks = splitForDiscord(first, limit);
+  messages.push({ emoji: statusEmoji, body: trim(firstChunks[0]) });
+  const carry = firstChunks.slice(1).join("");
+
+  // 2通目: Geminiプロンプトの続き＋Pollinationsプロンプト（どちらもなければ作らない）
+  const second = [carry ? `（Geminiプロンプトの続き）\n${carry}` : null, pollinationsBlock].filter(Boolean).join("\n\n");
+  if (second) {
+    for (const chunk of splitForDiscord(second, limit)) messages.push({ emoji: "📋", body: trim(chunk) });
+  }
+
+  // 3通目: 転載用テキスト
+  for (const chunk of splitForDiscord(textsBlock, limit)) messages.push({ emoji: "📣", body: trim(chunk) });
+  return messages;
+}
+
 /** Discord Webhook にメッセージを送信する。emoji省略時は❌（エラー用） */
 export async function notifyDiscord(webhookUrl, message, emoji = "❌") {
   if (!webhookUrl) return;
@@ -1160,7 +1235,7 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null, de
       const saleReplyLine = activeSale
         ? `🛍️ セールリプライ: Bluesky${saleReplyBskyOk === null ? "-" : saleReplyBskyOk ? "✅" : "❌"} / Mastodon${saleReplyMastoOk === null ? "-" : saleReplyMastoOk ? "✅" : "❌"}`
         : null;
-      const lines = [
+      const infoLines = [
         dryRun ? "🧪 テスト実行（投稿は行われていません）" : null,
         bskyLine,
         mastoLine,
@@ -1179,21 +1254,25 @@ export async function runBot(env, handleResearch, handleGenerate, ctx = null, de
         generated.guest         ? `🐾 ゲスト性格: ${generated.guest.personality}`       : null,
         kanjiLine,
         `🖼 ソース: ${generated.source}`,
-        generated.prompt ? `\n📋 Geminiプロンプト${generated.source === "gemini" ? "（採用）" : ""}:\n${generated.prompt}` : null,
       ].filter(Boolean).join("\n");
-      await notifyDiscord(env.DISCORD_WEBHOOK_URL, lines, dryRun ? "🧪" : (bskyOk ? "✅" : "❌"));
-      // 2通目: Pollinationsプロンプト + Bluesky投稿テキスト + Mastodonテキスト
-      const msg2Lines = [bskyLine, mastoLine].filter(Boolean);
-      if (generated.pollinationsPrompt) {
-        msg2Lines.push(`\n📋 Pollinationsプロンプト${generated.source === "pollinations" ? "（採用）" : ""}:\n${generated.pollinationsPrompt}`);
-      }
-      msg2Lines.push(`\n📣 Bluesky投稿テキスト（X・Instagram等に転載用）:\n${text}`);
-      if (mastoText !== text) {
-        msg2Lines.push(`\n📣 Mastodon投稿テキスト（二言語・転載用）:\n${mastoText}`);
-      } else {
-        msg2Lines.push("⚠️ themeEn未取得のためMastodon投稿テキストはBlueskyと同一（日本語のみ）");
-      }
-      await notifyDiscord(env.DISCORD_WEBHOOK_URL, msg2Lines.join("\n"), "📣");
+      // 3通構成（2026-10-27）: 1通目=成否＋情報＋Geminiプロンプト、2通目=Geminiの続き＋Pollinationsプロンプト、
+      // 3通目=転載用テキスト。2〜3通目にはSNSの投稿結果を書かない。長文は切り捨てず続きの通へ送る
+      const textsBlock = [
+        `📣 Bluesky投稿テキスト（X・Instagram等に転載用）:\n${text}`,
+        mastoText !== text
+          ? `📣 Mastodon投稿テキスト（二言語・転載用）:\n${mastoText}`
+          : "⚠️ themeEn未取得のためMastodon投稿テキストはBlueskyと同一（日本語のみ）",
+      ].join("\n\n");
+      const messages = buildBotDiscordMessages({
+        statusAndInfo: infoLines,
+        statusEmoji: dryRun ? "🧪" : (bskyOk ? "✅" : "❌"),
+        geminiBlock: generated.prompt ? `📋 Geminiプロンプト${generated.source === "gemini" ? "（採用）" : ""}:\n${generated.prompt}` : null,
+        pollinationsBlock: generated.pollinationsPrompt
+          ? `📋 Pollinationsプロンプト${generated.source === "pollinations" ? "（採用）" : ""}:\n${generated.pollinationsPrompt}`
+          : null,
+        textsBlock,
+      });
+      for (const m of messages) await notifyDiscord(env.DISCORD_WEBHOOK_URL, m.body, m.emoji);
     } catch (_) { /* 通知失敗は無視 */ }
 
     // Bug#32: 合計時間。Cloudflareダッシュボードのトリガーイベント欄のCPU時間と

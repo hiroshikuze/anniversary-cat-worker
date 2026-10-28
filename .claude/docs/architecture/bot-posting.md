@@ -245,16 +245,19 @@ CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言で
 - タイムアウト: `AbortSignal.timeout(10_000)`（10秒）
 - `webhookUrl`が未設定の場合は即座にreturnしてスキップ
 
-**2通目分割方式（2026-04追加・2026-05再編）:**
+**3通構成（2026-10-27変更。旧: 2通構成〔2026-04追加・2026-05再編〕）:**
 
-`runBot()`内で`notifyDiscord()`を2回`await`順次呼び出しすることで全文を送信する。各通の文字数が2000字上限に対して均等になるよう、Geminiプロンプトを1通目・Pollinationsプロンプトとすべての投稿テキストを2通目に振り分けている（1通目 ~1,100字・2通目 ~1,200字）。
+平日朝のBot投稿（`runBot()`）のDiscord通知は、`buildBotDiscordMessages()`（`worker/bot.js`・純粋関数）が組み立てた3通を`notifyDiscord()`で順次送信する。
 
-- **1通目** (`✅`/`❌`): 投稿成否 + テーマ情報 + Geminiプロンプト（採用/不採用いずれも表示）
-- **2通目** (`📣`): 成否再掲 + Pollinationsプロンプト + Bluesky投稿テキスト + Mastodon投稿テキストまたは注記
+- **1通目** (`✅`/`❌`。dryRun時は`🧪`): **投稿成否（SNSの投稿結果）** + テーマ情報 + Geminiプロンプト（採用/不採用いずれも表示。1通に入るだけ）
+- **2通目** (`📋`): 1通目に入りきらなかった**Geminiプロンプトの続き**（ある場合のみ。`（Geminiプロンプトの続き）`と明記）+ Pollinationsプロンプト
+- **3通目** (`📣`): 転載用テキスト（Bluesky投稿テキスト + Mastodon投稿テキストまたは注記）
   - `themeEn`あり（日英二言語）: `📣 Mastodon投稿テキスト（二言語・転載用）:\n{mastoText}`
   - `themeEn`なし（日本語のみ）: `⚠️ themeEn未取得のためMastodon投稿テキストはBlueskyと同一（日本語のみ）`
-- 2通目に成否を再掲することで、1通目が文字数で省略されても結果を確認できる
-- 2通目が失敗しても1通目は送信済みのため情報損失はBluesky部分に限られない
+- **2〜3通目にはSNSの投稿結果（✅/❌/⏭️の成否行）を書かない**。成否は1通目の先頭だけに置く
+- **文字数**: Discordの上限（1通2,000字）に収める。各通の本文は`DISCORD_BODY_LIMIT`（2,000字からヘッダー分を引いた値）以内で、超える分は文の区切り（改行→`。`/`. `→空白→強制）で分割して次の通へ送る。1通目→2通目の繰り越し以外で2,000字を超える場合（極端に長いプロンプト等）は、同じ絵文字の続きの通を追加する（通常は3通）。**どの通でも切り捨てない**（旧`notifyDiscord()`の`...`切り詰めは最後の安全網として残す）
+
+**旧方式（2通構成）を変えた理由（2026-10-27）**: (1) 旧2通構成は、1通目に成否＋テーマ情報＋Geminiプロンプトを入れていたため、Geminiプロンプトが長い日は末尾が切られていた（ポーズ軸の追加でプロンプトが約260字増え、代表的な値で約28%→約42%が切れた）。(2) 2通目に成否を再掲していた理由は「1通目が文字数で省略されても結果を確認できる」だったが、成否は1通目の先頭にあり切り捨てられるのは末尾（プロンプト）なので、実際には役に立っていなかった（月替わり壁紙の通知は、はじめから再掲しない設計）。
 
 **投稿URLの記載（2026-09追加）**: 投稿成功時、Discord通知の成否行に実際の投稿URLを付与する。目的は、テスト投稿・本番投稿を問わず、Discordを見るだけで実際に何が投稿されたか確認・削除できるようにするため（従来はCloudflare Workers Logsを検索してAT URI/ステータスIDから手動でURLを組み立てる必要があった）。
 
@@ -264,12 +267,15 @@ CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言で
 
 ### Discord成功通知フォーマット
 
-投稿完了後に`notifyDiscord()`で送信される通知（2通構成）。
+平日朝のBot投稿完了後に送る通知（3通構成・2026-10-27変更）。
+
+**1通目:**
 
 ```text
 ✅ にゃんバーサリーBot
 ✅ Bluesky投稿完了 {dateStr} {blueskyPostUrl}   ← Bluesky失敗時は ❌ Bluesky投稿失敗: {エラー}（URLなし）
 ✅ Mastodon投稿完了 {mastodonPostUrl}           ← 設定済みの場合。失敗時は ❌ Mastodon投稿失敗: {エラー}（URLなし）。未設定時は ⏭️ Mastodon未設定・スキップ
+🛍️ セールリプライ: Bluesky✅ / Mastodon✅       ← セール期間中のみ
 🎲 フォーマット: short/full       ← pickPostFormat()の選択結果（2026-10追加）
 📅 テーマ: {theme}
 📝 説明: {description}           ← descriptionがある場合のみ
@@ -278,6 +284,7 @@ CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言で
 🐱 毛柄: {persona}               ← personaがある場合のみ
 😺 性格: {personality}           ← personalityがある場合のみ（子猫ゲスト時は保護者修飾を含む）
 💭 感情: {emotion}               ← emotionがある場合のみ
+🤸 ポーズ: {pose}                ← ポーズ指定がある場合のみ（2026-10追加）
 🍴 食べ物アクション: {eatingAction} ← eatingActionがある場合のみ
 🐾 ゲスト外見: {guest.appearance}   ← ゲスト登場時のみ
 🐾 ゲスト性格: {guest.personality}  ← ゲスト登場時のみ
@@ -285,19 +292,24 @@ CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言で
 🖼 ソース: {source}
 
 📋 Geminiプロンプト（採用）:     ← Gemini採用時は「（採用）」付き
-{prompt}                         ← promptがある場合のみ
+{prompt}                         ← promptがある場合のみ。1通に入らない分は2通目へ続く
 ```
 
-**2通目フォーマット（themeEnあり）:**
+**2通目（Geminiプロンプトの続きがある場合・Pollinationsプロンプトがある場合）:**
 
 ```text
-📣 にゃんバーサリーBot
-✅ Bluesky投稿完了 {dateStr}      ← 1通目と同じ成否ステータスを再掲
-✅ Mastodon投稿完了               ← 同上（失敗/未設定時はそれぞれ表示）
+📋 にゃんバーサリーBot
+（Geminiプロンプトの続き）        ← 1通目に入りきらなかった場合のみ
+{プロンプトの続き}
 
 📋 Pollinationsプロンプト:       ← Pollinations採用時は「（採用）」付き
 {pollinationsPrompt}             ← pollinationsPromptがある場合のみ
+```
 
+**3通目（themeEnあり）:**
+
+```text
+📣 にゃんバーサリーBot
 📣 Bluesky投稿テキスト（X・Instagram等に転載用）:
 {buildPostText()の出力全文}      ← 日本語のみ・ハッシュタグ・URL含む
 
@@ -305,23 +317,17 @@ CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言で
 {buildMastodonText()の出力全文}  ← 日英二言語・ハッシュタグ・URL含む
 ```
 
-**2通目フォーマット（themeEn未取得）:**
+**3通目（themeEn未取得）:**
 
 ```text
 📣 にゃんバーサリーBot
-✅ Bluesky投稿完了 {dateStr}
-✅ Mastodon投稿完了
-
-📋 Pollinationsプロンプト:
-{pollinationsPrompt}
-
 📣 Bluesky投稿テキスト（X・Instagram等に転載用）:
 {buildPostText()の出力全文}
 
 ⚠️ themeEn未取得のためMastodon投稿テキストはBlueskyと同一（日本語のみ）
 ```
 
-**設計意図**: 1通目は「採用プロンプト確認」、2通目は「転載用テキスト一式 + フォールバックプロンプト」として役割を分離。どちらのAIが採用されたかは「（採用）」表示で確認でき、採用されなかった方のプロンプトも2通目に記載されるため手動比較検証が可能。
+**設計意図**: 1通目は「結果とテーマ情報、採用プロンプト」、2通目は「プロンプトの残りと、採用されなかった方のプロンプト（手動比較検証用）」、3通目は「X・Instagram等への転載用テキスト一式」と役割を分離した。成否は1通目だけに書き、2〜3通目はプロンプト・転載用テキストの確認と、コピーに専念する。
 
 ### Bluesky AT Protocolエンドポイント
 
