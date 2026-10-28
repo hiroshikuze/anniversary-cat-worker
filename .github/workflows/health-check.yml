@@ -40,6 +40,7 @@ jobs:
           check 'createSuzuriFromImage'
           check 'allSuzuriProductsRegistered'
           check 'resizeForSuzuri'
+          check 'suzuriInFlight'
           # 画像合成
           check 'applyWatermark'
           check 'generateKanjiTexture'

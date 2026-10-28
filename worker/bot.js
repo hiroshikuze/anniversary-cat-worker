@@ -157,6 +157,20 @@ export function pickPostFormat() {
   return POST_FORMAT_VARIANTS[0].format;
 }
 
+// 季節の花補充エントリ（「{花}の季節」）は1日限定の記念日ではないため、見出しを現在形にする
+function isSeasonTheme(theme) {
+  return theme.endsWith("の季節");
+}
+
+function buildHeaderJa(theme) {
+  if (isSeasonTheme(theme)) return `今は「${theme}」！🐱`;
+  return theme.endsWith("の日") ? `今日は「${theme}」！🐱` : `今日は「${theme}」の日！🐱`;
+}
+
+function buildHeaderEn(theme, safeThemeEn) {
+  return isSeasonTheme(theme) ? `It's "${safeThemeEn}" now!` : `Today is "${safeThemeEn}"!`;
+}
+
 /**
  * Bluesky 投稿テキストを生成する。
  * Bluesky の上限は 300 grapheme。full形式では最大 ~210 grapheme 程度に収まる。
@@ -182,9 +196,7 @@ export function buildPostText(theme, description, pageUrl = SITE_URL, guestSnsTa
     return truncateToGraphemes(`${themeHook}\n${pageUrl}` + tags, BLUESKY_MAX_GRAPHEMES);
   }
 
-  const header      = theme.endsWith("の日")
-    ? `今日は「${theme}」！🐱`
-    : `今日は「${theme}」の日！🐱`;
+  const header      = buildHeaderJa(theme);
   const artworkLine = pageUrl !== SITE_URL ? `\n\n📸 ${pageUrl}` : "";
   const ctaLine     = `\n\n${cta.ja}\n${SITE_URL}`;
   const footer      = artworkLine + ctaLine + tags;
@@ -239,19 +251,19 @@ export function buildMastodonText(theme, description, themeEn = "", descriptionE
 
   // themeEn がない場合は日本語のみ（buildPostText 相当）
   if (!safeThemeEn) {
-    const header           = theme.endsWith("の日") ? `今日は「${theme}」！🐱` : `今日は「${theme}」の日！🐱`;
-    const jpDesc           = description ? `\n${description}` : "";
+    const header           = buildHeaderJa(theme);
+    const jpDesc          = description ? `\n${description}` : "";
     const ctaLine          = `\n\n${cta.ja}\n${SITE_URL}`;
     const baseFallbackTags = themeTag ? `${themeTag} ${HASHTAGS}` : HASHTAGS;
     const fallbackTags     = guestSnsTag ? `${baseFallbackTags} ${guestSnsTag}` : baseFallbackTags;
     return truncateToGraphemes(header + jpDesc + artworkLine + ctaLine + `\n\n${fallbackTags}`, MASTODON_MAX_GRAPHEMES);
   }
 
-  const enHeader = `Today is "${safeThemeEn}"!`;
+  const enHeader = buildHeaderEn(theme, safeThemeEn);
   const enDesc   = safeDescEn ? `\n${safeDescEn}` : "";
   const enCta    = `\n\n${cta.en}`;
 
-  const jaHeader = theme.endsWith("の日") ? `今日は「${theme}」！🐱` : `今日は「${theme}」の日！🐱`;
+  const jaHeader = buildHeaderJa(theme);
   const jaDesc   = description ? `\n${description}` : "";
   const jaCta    = `\n\n${cta.ja}\n${SITE_URL}`;
 
@@ -823,9 +835,11 @@ async function findExistingMastodonPost(instanceUrl, accessToken, id) {
   }
   const headers = { "Authorization": `Bearer ${accessToken}` };
   const me = await fetchJsonOrThrow(`${instanceUrl}/api/v1/accounts/verify_credentials`, { headers }, "Mastodonアカウント確認");
+  // 投稿一覧は認証なしで取得する（Bug#50）。Botのトークンは read:statuses を持たず、
+  // 認証付きで呼ぶと403（outside the authorized scopes）になる。Botの投稿は公開のため不要
   const statuses = await fetchJsonOrThrow(
     `${instanceUrl}/api/v1/accounts/${me.id}/statuses?limit=${REPOST_CHECK_LIMIT}&exclude_replies=true`,
-    { headers }, "Mastodon投稿一覧取得"
+    {}, "Mastodon投稿一覧取得"
   );
   return (Array.isArray(statuses) ? statuses : []).some(st => containsPostMarker(st?.content, id));
 }

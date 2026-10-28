@@ -207,6 +207,7 @@ PR #121のリグレッション（マージ競合で英語機能が黙って削�
 | `createSuzuriFromImage` | SUZURI登録 | SUZURI登録フローの入口関数 |
 | `allSuzuriProductsRegistered` | SUZURI登録 | 全商品登録確認（部分登録バグ対策） |
 | `resizeForSuzuri` | SUZURI登録 | 2048px高解像度リサイズ（印刷品質） |
+| `suzuriInFlight` | SUZURI登録 | 登録中のr2Idを覚える二重起動防止（削除されても動作はするが重複登録が再発する・Bug#49） |
 | `applyWatermark` | 画像合成 | ウォーターマーク合成（著作権表示） |
 | `generateKanjiTexture` | 画像合成 | 漢字背面印刷テクスチャ生成 |
 | `loadSharedImage` | 共有URL | ボットリンク・共有URLの入口関数 |

@@ -60,7 +60,10 @@ curl -X POST "https://anniversary-cat-worker.hiroshikuze.workers.dev/bot/manual-
 | プラットフォーム | 取得方法 | 備考 |
 | --- | --- | --- |
 | Bluesky | `GET {BLUESKY_API}/com.atproto.repo.listRecords?repo={BLUESKY_IDENTIFIER}&collection=app.bsky.feed.post&limit=30`（認証不要） | 2026-10に実機で認証なしで取得できることを確認済み。PDSを直接読むためAppViewのインデックス遅延がない |
-| Mastodon | `GET /api/v1/accounts/verify_credentials`でIDを取得→`GET /api/v1/accounts/{id}/statuses?limit=30&exclude_replies=true` | 本文HTMLの`href`にページURLが含まれる |
+| Mastodon | `GET /api/v1/accounts/verify_credentials`でIDを取得（認証あり）→`GET /api/v1/accounts/{id}/statuses?limit=30&exclude_replies=true`（**認証なし**・公開投稿の取得） | 本文HTMLの`href`にページURLが含まれる。投稿一覧に`Authorization`を付けない理由は下記 |
+
+- **投稿一覧は認証なしで取得する（2026-10-29・Bug#50）**: Botのトークンのスコープは`write:statuses`＋`write:media`（＋アカウント確認の`profile`）だけで、`read:statuses`を持たない。このトークンを付けたまま`/accounts/{id}/statuses`を呼ぶと`403 This action is outside the authorized scopes`になり、確認が`unknown`（投稿しない）に倒れて再投稿できなかった。Botの投稿は公開のため、認証なしでも取得できる。トークンに`read:statuses`を足す案は、漏えい時の影響が大きくなるため採らない
+- 非公開（フォロワー限定・ダイレクト）の投稿は認証なしでは見えない。Botは公開投稿のみのため問題ない
 
 - 判定は「本文に`?id={id}`を含むか」（`containsPostMarker()`）。**`?id=bot/2026-10-21`が`?id=bot/2026-10-21-2`にも前方一致して誤判定しないよう**、直後が英数字・`_`・`-`以外であることを要求する
 - 結果は3値: `exists`（投稿済み・投稿しない）・`missing`（未投稿と確認・投稿対象）・`unknown`（確認用APIの失敗。**投稿しない**。迷ったときは二重投稿を避ける側に倒す）。Mastodon未設定は`skipped`
@@ -104,7 +107,7 @@ curl -X POST "https://anniversary-cat-worker.hiroshikuze.workers.dev/bot/manual-
 **full版:**
 
 ```text
-今日は「{theme}」の日！🐱       ← theme が「の日」で終わる場合は「の日」を省略
+今日は「{theme}」の日！🐱       ← theme が「の日」で終わる場合は「の日」を省略。「の季節」で終わる場合は「今は「{theme}」！🐱」
 {description}
 
 📸 {artworkUrl}                  ← R2保存成功時のみ挿入（?id=bot/YYYY-MM-DD）
@@ -216,6 +219,16 @@ CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言で
 - `theme.endsWith("の日")` が true の場合 → `今日は「{theme}」！🐱`（重複なし）
 - false の場合 → `今日は「{theme}」の日！🐱`（通常通り付与）
 - 例: `"大仏の日"` → `今日は「大仏の日」！🐱` / `"お花見"` → `今日は「お花見」の日！🐱`
+
+**「の季節」の見出し（`buildHeaderJa()`・`buildHeaderEn()`・2026-10-28追加）:**
+
+季節の花補充エントリ（テーマ名が`{花}の季節`）は特定の1日の記念日ではなく、季節全体を指す。「今日は〜の日！」だと1日限定に読めるため、`theme.endsWith("の季節")`のとき見出しを現在形にする。
+
+- 日本語（Bluesky full版・Mastodon日本語部分・themeEn空のフォールバック）: `今は「{theme}」！🐱`（例: `今は「秋桜の季節」！🐱`）
+- 英語（Mastodon full版）: `It's "{themeEn}" now!`（例: `It's "Cosmos Season" now!`）。判定は日本語のテーマ名で行う
+- 上記以外のテーマ（「の日」を含む）の見出しは変更しない
+- 3箇所（`buildPostText()`・`buildMastodonText()`の2経路）に重複していた見出し生成を共通関数に集約する。再投稿（`repostBot()`）も同じ関数経由のため同じ見出しになる
+- short形式（`themeHook`＋URL）は見出しを使わないため影響しない
 
 ### テーマタグ正規化（`buildThemeTag`）
 

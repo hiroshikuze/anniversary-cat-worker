@@ -1874,6 +1874,59 @@ console.log("\n[updateMetaInR2: 楽観ロック（etag）競合]");
 }
 
 // ---------------------------------------------------------------------------
+// _shouldStartSuzuriRegistration（frontend/index.html のSUZURI登録の二重起動防止・Bug#49）
+// ※ ブラウザなしで検証するため、同じ純粋関数をここで定義してテストする
+// ---------------------------------------------------------------------------
+console.log("\n[_shouldStartSuzuriRegistration]");
+
+const SUZURI_INFLIGHT_TTL_MS = 90_000;
+function shouldStartSuzuriRegistration(inflight, r2Id, now) {
+  if (!r2Id) return true;
+  const startedAt = inflight.get(r2Id);
+  return startedAt === undefined || now - startedAt >= SUZURI_INFLIGHT_TTL_MS;
+}
+
+{
+  const inflight = new Map();
+  assert("登録中でなければ開始できる", shouldStartSuzuriRegistration(inflight, "bot/2026-10-28", 1_000) === true);
+
+  inflight.set("bot/2026-10-28", 1_000);
+  assert("登録中（直後）は開始しない", shouldStartSuzuriRegistration(inflight, "bot/2026-10-28", 1_001) === false);
+  assert("登録中（25秒後・右グループの実測）は開始しない", shouldStartSuzuriRegistration(inflight, "bot/2026-10-28", 26_000) === false);
+  assert("別のr2Idは登録中でも開始できる", shouldStartSuzuriRegistration(inflight, "bot/2026-10-27", 1_001) === true);
+}
+
+{
+  // 境界: 90秒ちょうど（TTL経過）から開始できる。1ms手前はまだ開始しない
+  const inflight = new Map([["bot/2026-10-28", 0]]);
+  assert("89,999msはまだ開始しない", shouldStartSuzuriRegistration(inflight, "bot/2026-10-28", 89_999) === false);
+  assert("90,000msちょうどで開始できる（保険の期限切れ）", shouldStartSuzuriRegistration(inflight, "bot/2026-10-28", 90_000) === true);
+}
+
+{
+  // エラー系: 通信失敗時に解除（delete）すれば直後に再試行できる
+  const inflight = new Map([["bot/2026-10-28", 5_000]]);
+  inflight.delete("bot/2026-10-28");
+  assert("失敗で解除した後は再試行できる", shouldStartSuzuriRegistration(inflight, "bot/2026-10-28", 5_100) === true);
+
+  // r2Idがnull/空（R2保存失敗の手動生成）は判定しない
+  assert("r2Idがnullなら常に開始できる", shouldStartSuzuriRegistration(new Map([[null, 0]]), null, 1) === true);
+  assert("r2Idが空文字なら常に開始できる", shouldStartSuzuriRegistration(new Map(), "", 1) === true);
+}
+
+{
+  // 複製した関数が本体とずれないよう、frontend/index.html の実コードも検査する
+  const html = readFileSync(new URL("../frontend/index.html", import.meta.url), "utf8");
+  assert("frontend: 登録中のr2Idを覚えるMapがある", /const suzuriInFlight = new Map\(\)/.test(html));
+  assert("frontend: TTLが90秒", /const SUZURI_INFLIGHT_TTL_MS = 90_000;/.test(html));
+  assert("frontend: 判定関数が本体と同じ式", html.includes("startedAt === undefined || now - startedAt >= SUZURI_INFLIGHT_TTL_MS"));
+  const body = html.slice(html.indexOf("function createSuzuriFromImage("));
+  const fnBody = body.slice(0, body.indexOf("async function loadSharedImage"));
+  assert("frontend: createSuzuriFromImage の入口で判定している", /function createSuzuriFromImage\([^)]*\) \{\s*if \(!_shouldStartSuzuriRegistration\(suzuriInFlight, r2Id, Date\.now\(\)\)\) return;/.test(fnBody));
+  assert("frontend: 失敗時に登録中を解除している", (fnBody.match(/suzuriInFlight\.delete\(r2Id\)/g) ?? []).length >= 2);
+}
+
+// ---------------------------------------------------------------------------
 // _calcWatermarkLayout（frontend/index.html の applyWatermark 座標計算ロジック）
 // ※ ブラウザCanvasなしで検証するため、同じ純粋関数をここで定義してテストする
 // ---------------------------------------------------------------------------
@@ -5318,6 +5371,48 @@ console.log("\n[buildPostText: short形式]");
 }
 
 // ---------------------------------------------------------------------------
+// 「の季節」の見出し（季節の花補充エントリ・2026-10-28追加）
+// ---------------------------------------------------------------------------
+console.log("\n[見出し: 「の季節」は現在形]");
+{
+  // Bluesky full版: 「今日は〜の日！」ではなく「今は「〜」！」
+  const text = buildPostText("秋桜の季節", "今の季節を彩る秋桜");
+  assert("季節: 見出しが「今は「秋桜の季節」！🐱」で始まる", text.startsWith("今は「秋桜の季節」！🐱"));
+  assert("季節: 「今日は」を含まない", !text.includes("今日は"));
+  assert("季節: 「の日」を付けない", !text.includes("の季節」の日"));
+}
+{
+  // 通常テーマ・「の日」で終わるテーマの見出しは変わらない
+  assert("通常テーマは従来どおり", buildPostText("お花見", "説明").startsWith("今日は「お花見」の日！🐱"));
+  assert("「の日」で終わるテーマは従来どおり", buildPostText("大仏の日", "説明").startsWith("今日は「大仏の日」！🐱"));
+  // 境界: 「の季節」を途中に含むだけ（末尾でない）なら従来どおり
+  assert("「の季節」が末尾でなければ従来どおり", buildPostText("の季節外れ", "説明").startsWith("今日は「の季節外れ」の日！🐱"));
+}
+{
+  // Mastodon full版（英日）
+  const text = buildMastodonText("秋桜の季節", "今の季節を彩る秋桜", "Cosmos Season", "Cosmos in bloom");
+  assert("Mastodon季節: 英語見出しが It's \"...\" now!", text.startsWith('It\'s "Cosmos Season" now!'));
+  assert("Mastodon季節: 英語に Today is を含まない", !text.includes("Today is"));
+  assert("Mastodon季節: 日本語見出しが「今は…」", text.includes("今は「秋桜の季節」！🐱"));
+  assert("Mastodon季節: 「今日は」を含まない", !text.includes("今日は"));
+}
+{
+  // Mastodon: themeEnが空の日本語のみフォールバックも同じ見出し
+  const text = buildMastodonText("秋桜の季節", "今の季節を彩る秋桜", "", "");
+  assert("Mastodon季節（themeEn空）: 日本語見出しが「今は…」", text.startsWith("今は「秋桜の季節」！🐱"));
+}
+{
+  // Mastodon: 通常テーマの英語見出しは変わらない
+  const text = buildMastodonText("国際協力の日", "説明", "International Cooperation Day", "desc");
+  assert("Mastodon通常: 英語見出しは Today is のまま", text.startsWith('Today is "International Cooperation Day"!'));
+}
+{
+  // short形式は見出しを使わないため影響しない
+  const text = buildPostText("秋桜の季節", "説明", undefined, null, undefined, "一言テスト", "short");
+  assert("short形式: 見出しなし（themeHookが先頭）", text.startsWith("一言テスト"));
+}
+
+// ---------------------------------------------------------------------------
 // buildMastodonText: short形式（themeHookEn/themeHook＋URL＋タグのみ・2026-10追加）
 // ---------------------------------------------------------------------------
 console.log("\n[buildMastodonText: short形式]");
@@ -7581,10 +7676,12 @@ console.log("\n[repostBot] 投稿済み確認つき再投稿");
   // blueskyList / mastoList: "found" | "empty" | "502"
   function installFetch({ blueskyList = "empty", mastoList = "empty" }) {
     const calls = [];
+    const authByUrl = {};
     const orig = globalThis.fetch;
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init) => {
       const u = String(url);
       calls.push(u);
+      authByUrl[u] = init?.headers?.Authorization ?? null;
       if (u.includes("listRecords")) {
         if (blueskyList === "502") return textRes(502, "error code: 502");
         const records = blueskyList === "found"
@@ -7594,6 +7691,10 @@ console.log("\n[repostBot] 投稿済み確認つき再投稿");
       }
       if (u.includes("verify_credentials")) return textRes(200, JSON.stringify({ id: "42" }));
       if (u.includes("/accounts/42/statuses")) {
+        // 実機のBotトークンは read:statuses を持たないため、認証付きの投稿一覧取得は403になる（Bug#50）
+        if (init?.headers?.Authorization) {
+          return textRes(403, JSON.stringify({ error: "This action is outside the authorized scopes" }));
+        }
         if (mastoList === "502") return textRes(502, "error code: 502");
         const body = mastoList === "found"
           ? [{ content: `<p><a href="https://h.example/?id=${ID}">link</a></p>` }]
@@ -7607,7 +7708,7 @@ console.log("\n[repostBot] 投稿済み確認つき再投稿");
       if (u.includes("/api/v1/statuses")) return textRes(200, JSON.stringify({ id: "status1" }));
       return textRes(200, "{}");
     };
-    return { calls, restore: () => { globalThis.fetch = orig; } };
+    return { calls, authByUrl, restore: () => { globalThis.fetch = orig; } };
   }
   const posted = (calls) => ({
     bsky:  calls.some(u => u.includes("createRecord")),
@@ -7624,6 +7725,16 @@ console.log("\n[repostBot] 投稿済み確認つき再投稿");
     assert("repost dryRun: Mastodonはmissing", r.mastodon?.status === "missing");
     assert("repost dryRun: どちらにも投稿しない", !posted(f.calls).bsky && !posted(f.calls).masto);
     assert("repost dryRun: Discordに通知する", f.calls.some(u => u.includes("discord.test")));
+  }
+  {
+    // Bug#50: 投稿一覧は認証なし、アカウント確認は認証ありで呼ぶ
+    const f = installFetch({});
+    await repostBot(baseEnv(makeRepostBucket()), { date: "2026-10-21" });
+    f.restore();
+    const statusesUrl = f.calls.find(u => u.includes("/accounts/42/statuses"));
+    const verifyUrl   = f.calls.find(u => u.includes("verify_credentials"));
+    assert("repost: Mastodon投稿一覧は認証ヘッダーなしで取得する（read:statuses不要）", statusesUrl && f.authByUrl[statusesUrl] === null);
+    assert("repost: アカウント確認は従来どおり認証ありで取得する", verifyUrl && f.authByUrl[verifyUrl] === "Bearer tok");
   }
   {
     // 両方投稿済み: dryRun=falseでも投稿しない
