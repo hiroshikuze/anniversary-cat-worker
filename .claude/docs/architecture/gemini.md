@@ -50,6 +50,15 @@ export async function _resolveImageModel(kv, candidates, callModel) {
 - **このKV記憶機構が解決しないこと**: `KNOWN_IMAGE_CANDIDATES`配列自体の更新（新しいモデル名の追記）は引き続き人間が行う。Discovery API（List Models）を`tryGemini()`のホットパスに追加することは過去に廃止した設計判断であり、本機構でも再導入しない（2フェーズレースのレイテンシ予算を侵害するため）
 - 同時並行リクエストが同一の死活変化を同時に検知した場合、Discord通知が2〜3通程度重複する可能性がある。Workers KVにはCAS機構がなく、Durable Objects等の追加インフラなしには排他できないため、この程度の重複は許容している
 
+### 前払いクレジット枯渇の専用通知（`isGeminiCreditDepleted()`・`notifyGeminiCreditDepleted()`・2026-10追加）
+
+**背景**: 2026-10-28、Gemini APIの前払いクレジットが枯渇し、Botの画像生成が止まった。エラーは「画像生成に失敗しました（Your prepayment credits are depleted. … / All promises were rejected）」としかDiscordに出ず、原因（課金残高）に気づくまでログ調査が必要だった。
+
+- 判定: `callModel()`が投げたエラーのメッセージに`prepayment credits are depleted`（大文字小文字不問）を含むとき、枯渇とみなす（`isGeminiCreditDepleted(message)`・純粋関数）。モデルのカスケード対象にはしない（どのモデルでも同じ原因のため）
+- 通知: `tryGemini()`のcatchで、枯渇と判定したらDiscordに`💳 Gemini APIの前払いクレジットが枯渇しました`＋対処（Google AI Studioの請求ページで残高チャージ）を通知してからrethrowする（Pollinationsフォールバックは従来どおり機能する）
+- 重複抑制: Bot・ユーザー生成・health-checkが連続して失敗するたびに通知が溢れないよう、`RATE_KV`のキー`gemini-credit-alert`を`expirationTtl: 3600`（1時間）で書き、存在する間は再通知しない。KV未バインド時は毎回通知する。並行リクエストによる2〜3通の重複は上記と同じ理由で許容
+- 対象外: テキスト用の`/research`経路は対象にしていない（画像生成のほうが先に課金枯渇に気づく経路のため。必要になったら同じ関数を呼べばよい）
+
 ### Researchモデル（テキスト用）・コスト最適化スコアリング（2026-06更新）
 
 `selectBestModel(apiKey, kv, webhookUrl)`がスコアリングで自動選択。ログ: `[model-select] selected: gemini-xxx`

@@ -905,6 +905,27 @@ export async function _resolveImageModel(kv, candidates, callModel) {
   throw err;
 }
 
+// Bug#48: Gemini APIの前払いクレジット枯渇を示すエラー文かどうかを判定する純粋関数
+export function isGeminiCreditDepleted(message) {
+  return /prepayment credits are depleted/i.test(message ?? "");
+}
+
+const GEMINI_CREDIT_ALERT_KV_KEY = "gemini-credit-alert";
+const GEMINI_CREDIT_ALERT_TTL_SEC = 3600;
+
+// 枯渇の専用Discord通知。連続失敗で通知が溢れないよう、RATE_KVの抑制キーが
+// ある間（1時間）は再通知しない。KV未バインド時は毎回通知する
+export async function notifyGeminiCreditDepleted(env) {
+  const kv = env?.RATE_KV;
+  if (kv && await kv.get(GEMINI_CREDIT_ALERT_KV_KEY)) return;
+  await notifyDiscord(
+    env?.DISCORD_WEBHOOK_URL,
+    "Gemini APIの前払いクレジットが枯渇しました。画像生成が止まっています（Pollinationsにフォールバック中）。\nGoogle AI Studio（https://ai.studio/projects）の請求ページで残高をチャージしてください。\n※この通知は1時間に1回までです",
+    "💳"
+  );
+  if (kv) await kv.put(GEMINI_CREDIT_ALERT_KV_KEY, "1", { expirationTtl: GEMINI_CREDIT_ALERT_TTL_SEC });
+}
+
 // ---------------------------------------------------------------------------
 // Pollinations.ai フォールバック（base64 画像を返す）
 // ---------------------------------------------------------------------------
@@ -1389,6 +1410,10 @@ export async function handleGenerate(body, apiKey, env, ctx = null) {
           env?.DISCORD_WEBHOOK_URL,
           `🚨 画像生成モデル全滅: ${KNOWN_IMAGE_CANDIDATES.join(", ")}\n${e.message}\nKNOWN_IMAGE_CANDIDATESに新モデルを追加してください`
         );
+      }
+      if (isGeminiCreditDepleted(e?.message)) {
+        console.warn("[generate] Gemini prepayment credits depleted");
+        await notifyGeminiCreditDepleted(env);
       }
       throw e;
     }

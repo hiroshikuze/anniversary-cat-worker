@@ -53,6 +53,7 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 | 45 | Bluesky APIの502で片方だけ投稿に失敗し、復旧手段がなかった。同日にテーマ・構図が2日続けて酷似した（2026-10） | このファイル |
 | 46 | `npm test`がセール期間の実日付に依存し、セール期間中はrunBot系3件が失敗してCI（Health Check）が落ちる（2026-10） | このファイル |
 | 47 | Bot投稿でGeminiがタイムアウトしPollinations全モデルも失敗し、画像生成に失敗して当日の投稿が止まった（2026-10） | このファイル |
+| 48 | Gemini APIの前払いクレジットが枯渇し、画像生成が止まっても原因がDiscordに出なかった（2026-10） | このファイル |
 
 ## 過去に修正した問題（再発防止）
 
@@ -314,6 +315,16 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 - **テスト**: `scripts/test-bot.mjs`に、Pollinationsの失敗理由ログ（HTTPステータス・通信例外・成功時はログなし）と、`getRecentThemes()`の新仕様（直近3件・週末を飛ばす・最大7日・早期終了）、5日前の投稿テーマがプール選択で避けられる統合テストを追加した
 - **場所**: `worker/index.js`（`handleGenerate()`のPollinations呼び出し）、`worker/r2-storage.js`（`getRecentThemes()`）
 - **教訓**: 外部サービスへの並列呼び出しが「すべて失敗」した場合、失敗理由が記録されていないと原因（レート制限か、タイムアウトか、障害か）を後から確認できない。複数の経路を並列に試す設計では、各経路の失敗理由を個別にログへ残す。また、「直近N日」のように期間で数える仕組みは、運用がカレンダーと一致しない（平日のみ投稿）場合に効果が薄れる。数える単位は、運用の単位（投稿数）に合わせる
+
+### 48. Gemini APIの前払いクレジットが枯渇し、画像生成が止まっても原因がDiscordに出なかった（2026-10）
+
+- **症状**: 2026-10-28、health-check（Actions run 40605886001の`[W2] Worker /generate`）と手動の`/generate`が`画像生成に失敗しました（Your prepayment credits are depleted. Please go to AI Studio … billing / All promises were rejected）`で失敗。`/usage`の最新が10/26のままで、10/27以降のGemini画像生成が成功していない可能性がある（未確認）
+- **原因**: Workerに登録したGemini APIキーのプロジェクトの前払いクレジット残高が0になった。同じCIのチェック[2b]（CI側のキー）は成功しており、枯渇しているのはWorker側のキーとみられる。10/26の失敗（Bug#47）も同じ原因だった可能性があるが、当時のGemini側エラーはログに残っておらず未確認
+- **問題点**: エラー文は「画像生成に失敗しました」としかBotのDiscord通知に出ず、課金残高が原因だと気づくまでログ調査が必要だった
+- **対応**: 枯渇メッセージを検知する`isGeminiCreditDepleted()`と、専用Discord通知`notifyGeminiCreditDepleted()`を追加（1時間に1回まで・`RATE_KV`で重複抑制）。仕様は`.claude/docs/architecture/gemini.md`の「前払いクレジット枯渇の専用通知」参照
+- **テスト**: `scripts/test-bot.mjs`に判定関数（正常・境界・エラー）と通知・重複抑制のテストを追加
+- **場所**: `worker/index.js`（`tryGemini()`）
+- **教訓**: 外部APIの課金・クォータ枯渇は、コードのバグではなく運用の事象のため、エラー文の中から原因を見分けて専用の通知にする。汎用の失敗通知だけだと、復旧に必要な操作（チャージ）が伝わらない
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
 

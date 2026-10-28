@@ -27,11 +27,12 @@ import {
   buildSaleReplyTextJa, buildSaleReplyTextBilingual,
   buildMonthlyWallpaperPostText, buildMonthlyWallpaperMastodonText, runMonthlyWallpaperPost,
   containsPostMarker, repostBot,
+  splitForDiscord, buildBotDiscordMessages, DISCORD_BODY_LIMIT,
 } from "../worker/bot.js";
 import { _setSaleForTest } from "../worker/sale.js";
 import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale } from "../worker/sale-check.js";
 
-import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST, _isBotCronEvent, cleanupExpiredEntries, cleanupOrphanBackTextureMaterials, _generateFallbackThemeHook, generateResearchPool, pickPose, CAT_POSES, pickSeasonalFlowerEntry } from "../worker/index.js";
+import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST, _isBotCronEvent, cleanupExpiredEntries, cleanupOrphanBackTextureMaterials, _generateFallbackThemeHook, generateResearchPool, pickPose, CAT_POSES, pickSeasonalFlowerEntry, isGeminiCreditDepleted } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
 import { fetchWithRetry } from "../worker/http-utils.js";
 import { renderElementToPng, ensureResvg, _setSatoriForTest, _setResvgForTest } from "../worker/svg-render.js";
@@ -605,10 +606,12 @@ console.log("\n[runBot: Mastodon投稿]");
       mockGenerate
     );
     globalThis.fetch = origFetch;
-    assert("themeEnあり: Discord通知が2回送られる", discordBodies.length >= 2);
-    assert("themeEnあり: 2通目にMastodonテキストが含まれる", discordBodies[1]?.includes("Mastodon投稿テキスト"));
-    assert("themeEnあり: 2通目にMastodon英語ヘッダーが含まれる", discordBodies[1]?.includes("Today is"));
-    assert("themeEnあり: 2通目にBluesky投稿テキストが含まれる", discordBodies[1]?.includes("Bluesky投稿テキスト"));
+    // 転載用テキストの通は、プロンプトがなければ2通目・あれば3通目（2026-10-27: 3通構成）
+    const textsMsg = discordBodies.find(b => b.includes("Bluesky投稿テキスト"));
+    assert("themeEnあり: Discord通知が2回以上送られる", discordBodies.length >= 2);
+    assert("themeEnあり: 転載用の通にMastodonテキストが含まれる", textsMsg?.includes("Mastodon投稿テキスト"));
+    assert("themeEnあり: 転載用の通にMastodon英語ヘッダーが含まれる", textsMsg?.includes("Today is"));
+    assert("themeEnあり: 転載用の通にBluesky投稿テキストが含まれる", !!textsMsg);
     // 2026-09追加: Discord通知にBluesky/Mastodonの実投稿URLが記載される（makeBskyMastoFetch()の
     // createRecord→uri:"at://mock"・statuses→url:`${MASTO_INSTANCE}/@user/456`を使って検証）
     assert("1通目にBluesky投稿URLが含まれる", discordBodies[0]?.includes("https://bsky.app/profile/id/post/mock"));
@@ -637,9 +640,10 @@ console.log("\n[runBot: Mastodon投稿]");
       mockGenerate
     );
     globalThis.fetch = origFetch;
-    assert("themeEn未取得: Discord通知が2回送られる", discordBodies.length >= 2);
-    assert("themeEn未取得: 2通目に⚠️注記が含まれる", discordBodies[1]?.includes("⚠️"));
-    assert("themeEn未取得: 2通目にBlueskyとの同一説明が含まれる", discordBodies[1]?.includes("Blueskyと同一"));
+    const textsMsg = discordBodies.find(b => b.includes("Bluesky投稿テキスト"));
+    assert("themeEn未取得: Discord通知が2回以上送られる", discordBodies.length >= 2);
+    assert("themeEn未取得: 転載用の通に⚠️注記が含まれる", textsMsg?.includes("⚠️"));
+    assert("themeEn未取得: 転載用の通にBlueskyとの同一説明が含まれる", textsMsg?.includes("Blueskyと同一"));
   }
 
   // ── Discord 2通目: Pollinationsプロンプトが2通目に含まれる ──
@@ -669,6 +673,7 @@ console.log("\n[runBot: Mastodon投稿]");
     );
     globalThis.fetch = origFetch;
     assert("Pollinationsプロンプト: 2通目に含まれる", discordBodies[1]?.includes("Pollinationsプロンプト"));
+    assert("Pollinationsプロンプト: 転載用テキストは3通目", discordBodies[2]?.includes("Bluesky投稿テキスト"));
     assert("Pollinationsプロンプト: 1通目には含まれない", !discordBodies[0]?.includes("Pollinationsプロンプト"));
     assert("Geminiプロンプト: 1通目に含まれる", discordBodies[0]?.includes("Geminiプロンプト"));
   }
@@ -6957,6 +6962,87 @@ console.log("\n[handleGenerate] Pollinationsの失敗理由ログ");
   }
 }
 
+// ─── Gemini前払いクレジット枯渇の専用通知（2026-10-28追加・Bug#48） ─────
+console.log("\n[isGeminiCreditDepleted] 枯渇メッセージの判定");
+{
+  const real = "Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing.";
+  assert("枯渇判定: 実際のエラー文はtrue", isGeminiCreditDepleted(real) === true);
+  assert("枯渇判定: 大文字小文字を区別しない", isGeminiCreditDepleted("PREPAYMENT CREDITS ARE DEPLETED") === true);
+  assert("枯渇判定: 前後に別の文があってもtrue", isGeminiCreditDepleted(`x: ${real} (y)`) === true);
+  assert("枯渇判定: クォータ超過はfalse", isGeminiCreditDepleted("Resource has been exhausted (e.g. check quota).") === false);
+  assert("枯渇判定: 一部のみ一致（credits depletedの語順違い）はfalse", isGeminiCreditDepleted("credits depleted") === false);
+  assert("枯渇判定: 空文字はfalse", isGeminiCreditDepleted("") === false);
+  assert("枯渇判定: null/undefinedはfalse", isGeminiCreditDepleted(null) === false && isGeminiCreditDepleted(undefined) === false);
+}
+
+console.log("\n[handleGenerate] Gemini前払いクレジット枯渇の専用Discord通知");
+{
+  const origFetch = globalThis.fetch;
+  const origWarn  = console.warn;
+  console.warn = () => {};
+  const makeKv = () => {
+    const store = new Map();
+    const puts = [];
+    return {
+      async get(k) { return store.has(k) ? store.get(k) : null; },
+      async put(k, v, opts) { store.set(k, v); puts.push({ k, v, opts }); },
+      puts,
+    };
+  };
+  const setupFetch = (geminiMsg, discordBodies) => {
+    globalThis.fetch = async (url, init) => {
+      const u = String(url);
+      if (u.includes("discord.test")) { discordBodies.push(JSON.parse(init.body).content); return { ok: true, status: 204 }; }
+      if (u.includes("pollinations")) {
+        return { ok: true, headers: { get: () => "image/png" }, arrayBuffer: async () => Buffer.from("png") };
+      }
+      return { ok: false, status: 400, text: async () => JSON.stringify({ error: { message: geminiMsg } }) };
+    };
+  };
+  try {
+    const depleted = "Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing.";
+
+    // 正常系: 枯渇を検知 → 専用通知が1通出る。Pollinationsで画像は返る（従来どおり）
+    {
+      const kv = makeKv(); const bodies = [];
+      setupFetch(depleted, bodies);
+      const r = await handleGenerate({ theme: "テスト", description: "" }, "dummy-key", { DISCORD_WEBHOOK_URL: "https://discord.test/hook", RATE_KV: kv });
+      const credit = bodies.filter((b) => b.includes("前払いクレジット"));
+      assert("枯渇通知: Pollinationsにフォールバックして画像は返る", r.source === "pollinations");
+      assert("枯渇通知: 専用のDiscord通知が1通出る", credit.length === 1);
+      assert("枯渇通知: 対処（AI Studioでチャージ）が書かれている", credit[0].includes("AI Studio") && credit[0].includes("💳"));
+      assert("枯渇通知: 重複抑制キーが1時間のTTLで書かれる", kv.puts.some((p) => p.k === "gemini-credit-alert" && p.opts?.expirationTtl === 3600));
+    }
+
+    // 重複抑制: 抑制キーがあれば再通知しない
+    {
+      const kv = makeKv(); await kv.put("gemini-credit-alert", "1"); const bodies = [];
+      setupFetch(depleted, bodies);
+      await handleGenerate({ theme: "テスト", description: "" }, "dummy-key", { DISCORD_WEBHOOK_URL: "https://discord.test/hook", RATE_KV: kv });
+      assert("枯渇通知: 抑制キーがあれば再通知しない", bodies.filter((b) => b.includes("前払いクレジット")).length === 0);
+    }
+
+    // 境界: KV未バインドでも通知は出る（毎回通知）
+    {
+      const bodies = [];
+      setupFetch(depleted, bodies);
+      await handleGenerate({ theme: "テスト", description: "" }, "dummy-key", { DISCORD_WEBHOOK_URL: "https://discord.test/hook" });
+      assert("枯渇通知: KV未バインドでも通知は出る", bodies.filter((b) => b.includes("前払いクレジット")).length === 1);
+    }
+
+    // エラー系: 枯渇以外のGeminiエラーでは専用通知を出さない
+    {
+      const kv = makeKv(); const bodies = [];
+      setupFetch("Resource has been exhausted (e.g. check quota).", bodies);
+      await handleGenerate({ theme: "テスト", description: "" }, "dummy-key", { DISCORD_WEBHOOK_URL: "https://discord.test/hook", RATE_KV: kv });
+      assert("枯渇通知: 別のエラーでは専用通知を出さない", bodies.filter((b) => b.includes("前払いクレジット")).length === 0 && kv.puts.length === 0);
+    }
+  } finally {
+    globalThis.fetch = origFetch;
+    console.warn = origWarn;
+  }
+}
+
 // ─── 直近テーマの除外（B）: getRecentThemes / pickFromPool / 季節の花の代替 ──
 console.log("\n[直近テーマ] getRecentThemes（直近の投稿3件・最大7日・2026-10-26仕様）");
 {
@@ -7285,6 +7371,171 @@ console.log("\n[runBot] Discord通知のポーズ行");
     const b = withPose.indexOf("🤸 ポーズ");
     return a >= 0 && b > a;
   })());
+}
+
+// ─── Discord通知の3通構成（2026-10-27変更） ─────────────────────────────
+console.log("\n[splitForDiscord] 長文の分割");
+{
+  const LIMIT = 100;
+  const stripWs = (t) => t.replace(/\s+/g, "");
+
+  const short = splitForDiscord("短い文", LIMIT);
+  assert("splitForDiscord: 上限以内なら分割しない", short.length === 1 && short[0] === "短い文");
+  assert("splitForDiscord: 空文字は空の1件", splitForDiscord("", LIMIT).length === 1);
+  const exact = "a".repeat(LIMIT);
+  assert("splitForDiscord: ちょうど上限なら分割しない（境界値）", splitForDiscord(exact, LIMIT).length === 1);
+  assert("splitForDiscord: 上限+1字は2つに分かれる（境界値）", splitForDiscord("a".repeat(LIMIT + 1), LIMIT).length === 2);
+
+  // 文の区切りで分け、つなぐと元の文字列に戻る（切り捨てない）
+  const sentences = Array.from({ length: 30 }, (_, i) => `This is sentence number ${i}.`).join(" ");
+  const chunks = splitForDiscord(sentences, LIMIT);
+  assert("splitForDiscord: 長文は複数に分かれる", chunks.length >= 2);
+  assert("splitForDiscord: すべての断片が上限以内", chunks.every(c => c.length <= LIMIT));
+  assert("splitForDiscord: 断片をつなぐと元の文字列に戻る（切り捨てない）", chunks.join("") === sentences);
+  assert("splitForDiscord: 文の途中で切らず、文の区切り（. ）で終わる", chunks.slice(0, -1).every(c => /\. $/.test(c)));
+
+  // 改行を優先する
+  const lines = Array.from({ length: 20 }, (_, i) => `line ${i} of the long message text`).join("\n");
+  const lc = splitForDiscord(lines, LIMIT);
+  assert("splitForDiscord: 改行があれば改行で区切る", lc.slice(0, -1).every(c => c.endsWith("\n")) && lc.join("") === lines);
+
+  // 日本語の句点
+  const ja = Array.from({ length: 20 }, (_, i) => `これは${i}番目の長い文章です。`).join("");
+  const jc = splitForDiscord(ja, LIMIT);
+  assert("splitForDiscord: 日本語は句点（。）で区切る", jc.slice(0, -1).every(c => c.endsWith("。")) && jc.join("") === ja);
+
+  // 区切りがない長い文字列は強制的に分ける
+  const hard = "x".repeat(LIMIT * 3 + 7);
+  const hc = splitForDiscord(hard, LIMIT);
+  assert("splitForDiscord: 区切りがなければ上限で強制分割する", hc.length === 4 && hc.every(c => c.length <= LIMIT) && hc.join("") === hard);
+
+  // サロゲートペア（絵文字）を途中で切らない
+  const emoji = "😺".repeat(41); // 82 UTF-16 units
+  const ec = splitForDiscord(emoji, 11);
+  assert("splitForDiscord: 絵文字（サロゲートペア）を途中で切らない", ec.every(c => !/[\uD800-\uDBFF]$/.test(c) && !/^[\uDC00-\uDFFF]/.test(c)) && ec.join("") === emoji);
+  assert("splitForDiscord: 空白を除いても内容が欠けない", stripWs(chunks.join("")) === stripWs(sentences));
+}
+
+console.log("\n[buildBotDiscordMessages] 3通構成の組み立て");
+{
+  const HEADER_MAX = "🧪 にゃんバーサリーBot\n".length; // 絵文字が2単位の場合が最長
+  const statusInfo = [
+    "✅ Bluesky投稿完了 2026年10月27日 https://bsky.app/profile/x/post/abc",
+    "✅ Mastodon投稿完了 https://mastodon.social/@x/1",
+    "📅 テーマ: 金木犀の季節",
+  ].join("\n");
+  const mk = (n) => Array.from({ length: n }, (_, i) => `Sentence ${i} of the prompt.`).join(" ");
+  const typicalPrompt = mk(80);                 // 約2,200字（実際のGeminiプロンプトと同程度）
+  const texts = "📣 Bluesky投稿テキスト（X・Instagram等に転載用）:\n本文です\n\n📣 Mastodon投稿テキスト（二言語・転載用）:\nMastodon body";
+  const fits = (m) => `${m.emoji} にゃんバーサリーBot\n${m.body}`.length <= 2000;
+
+  {
+    const ms = buildBotDiscordMessages({
+      statusAndInfo: statusInfo, statusEmoji: "✅",
+      geminiBlock: `📋 Geminiプロンプト（採用）:\n${typicalPrompt}`,
+      pollinationsBlock: "📋 Pollinationsプロンプト:\npollinations text",
+      textsBlock: texts,
+    });
+    assert("3通構成: 通常は3通", ms.length === 3);
+    assert("3通構成: 絵文字は✅（1通目）・📋（2通目）・📣（3通目）", ms[0].emoji === "✅" && ms[1].emoji === "📋" && ms[2].emoji === "📣");
+    assert("3通構成: どの通も2,000字以内（ヘッダーを含む）", ms.every(fits));
+    assert("3通構成: 1通目に成否とテーマ情報がある", ms[0].body.includes("✅ Bluesky投稿完了") && ms[0].body.includes("📅 テーマ"));
+    assert("3通構成: 2〜3通目に投稿結果（成否）を書かない", ms.slice(1).every(m => !/投稿完了|投稿失敗|スキップ|未設定/.test(m.body)));
+    assert("3通構成: 2通目にGeminiプロンプトの続きとPollinationsプロンプトがある", ms[1].body.startsWith("（Geminiプロンプトの続き）") && ms[1].body.includes("📋 Pollinationsプロンプト"));
+    assert("3通構成: 3通目は転載用テキストだけ", ms[2].body.startsWith("📣 Bluesky投稿テキスト") && !ms[2].body.includes("Geminiプロンプト"));
+    // 切り捨てない: 1通目の末尾＋2通目の続きで、プロンプト全文がそろう
+    const joined = (ms[0].body + ms[1].body.replace("（Geminiプロンプトの続き）", "")).replace(/\s+/g, "");
+    assert("3通構成: Geminiプロンプトの全文が1〜2通目にそろう（切り捨てない）", joined.includes(typicalPrompt.replace(/\s+/g, "")));
+    assert("3通構成: 「...」の切り詰め記号が付かない", ms.every(m => !m.body.endsWith("\n...")));
+  }
+  {
+    // 短いプロンプト: 続きなし・2通目はPollinationsのみ
+    const ms = buildBotDiscordMessages({
+      statusAndInfo: statusInfo, statusEmoji: "✅",
+      geminiBlock: "📋 Geminiプロンプト（採用）:\nshort gemini",
+      pollinationsBlock: "📋 Pollinationsプロンプト:\nshort poll",
+      textsBlock: texts,
+    });
+    assert("短いプロンプト: 3通でGeminiの続きは付かない", ms.length === 3 && !ms[1].body.includes("続き") && ms[1].body.startsWith("📋 Pollinationsプロンプト"));
+    assert("短いプロンプト: Geminiプロンプトは1通目に全文ある", ms[0].body.includes("short gemini"));
+  }
+  {
+    // プロンプトなし: 2通（成否情報＋転載用）
+    const ms = buildBotDiscordMessages({ statusAndInfo: statusInfo, statusEmoji: "✅", geminiBlock: null, pollinationsBlock: null, textsBlock: texts });
+    assert("プロンプトなし: 1通目と転載用の2通", ms.length === 2 && ms[1].emoji === "📣");
+    // Pollinationsだけなし: 1通目＋転載用
+    const ms2 = buildBotDiscordMessages({ statusAndInfo: statusInfo, statusEmoji: "❌", geminiBlock: "📋 Geminiプロンプト:\nshort", pollinationsBlock: null, textsBlock: texts });
+    assert("Pollinationsなし・Geminiが収まる: 2通（1通目の絵文字は渡した値）", ms2.length === 2 && ms2[0].emoji === "❌");
+  }
+  {
+    // 極端に長いプロンプト: 通を追加し、切り捨てない
+    const huge = mk(400); // 約11,000字
+    const ms = buildBotDiscordMessages({
+      statusAndInfo: statusInfo, statusEmoji: "✅",
+      geminiBlock: `📋 Geminiプロンプト（採用）:\n${huge}`, pollinationsBlock: null, textsBlock: texts,
+    });
+    assert("極端に長いプロンプト: 3通を超えて続きの通が追加される", ms.length > 3);
+    assert("極端に長いプロンプト: どの通も2,000字以内", ms.every(fits));
+    const all = ms.filter(m => m.emoji !== "📣").map(m => m.body.replace("（Geminiプロンプトの続き）", "")).join("").replace(/\s+/g, "");
+    assert("極端に長いプロンプト: 全文が届く（切り捨てない）", all.includes(huge.replace(/\s+/g, "")));
+    assert("極端に長いプロンプト: 続きの通にも投稿結果を書かない", ms.slice(1).every(m => !/投稿完了|投稿失敗/.test(m.body)));
+  }
+  {
+    // 転載用テキストが長い場合も切り捨てない
+    const longTexts = "📣 Bluesky投稿テキスト:\n" + mk(300);
+    const ms = buildBotDiscordMessages({ statusAndInfo: statusInfo, statusEmoji: "✅", geminiBlock: null, pollinationsBlock: null, textsBlock: longTexts });
+    assert("転載用テキストが長い場合: 📣の通が追加され全文が届く", ms.filter(m => m.emoji === "📣").length >= 2 && ms.every(fits)
+      && ms.filter(m => m.emoji === "📣").map(m => m.body).join("").replace(/\s+/g, "").includes(mk(300).replace(/\s+/g, "")));
+  }
+  assert("DISCORD_BODY_LIMIT: 2,000字からヘッダー分を引いた値", DISCORD_BODY_LIMIT <= 2000 - HEADER_MAX && DISCORD_BODY_LIMIT >= 1900);
+}
+
+console.log("\n[runBot] Discord通知の3通構成（統合）");
+{
+  const MASTO = "https://mstdn-3msg.example";
+  const jsonRes = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body) });
+  const prompt = _buildGeminiPrompt("金木犀の季節", "説明", "orange tabby", "gazing warmly", "fragrant olive blossoms, tiny orange flowers", "serene", null, null, "Fragrant Olive Season", "Fragrant Olive is the highlight of this season.", "warm orange and beige tones", false, CAT_POSES[0]);
+  const pollinations = "kawaii watercolor cat, fragrant olive blossoms, Fragrant Olive Season, orange tabby, gazing warmly, serene, pastel colors, white background";
+
+  const run = async ({ dryRun = false, bskyFail = false } = {}) => {
+    const bodies = [];
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes("discord")) { bodies.push(JSON.parse(opts?.body ?? "{}").content ?? ""); return jsonRes({}, 204); }
+      if (u.includes("createSession")) return bskyFail ? jsonRes({ error: "AuthFailed" }, 401) : jsonRes({ accessJwt: "jwt", did: "did:plc:x" });
+      if (u.includes("uploadBlob"))    return jsonRes({ blob: { $type: "blob", ref: { $link: "r" }, mimeType: "image/png", size: 1 } });
+      if (u.includes("createRecord"))  return jsonRes({ uri: "at://did:plc:x/app.bsky.feed.post/abc", cid: "c" });
+      if (u.includes("/api/v2/media")) return jsonRes({ id: "m1" });
+      if (u.includes("/api/v1/statuses")) return jsonRes({ id: "s1", url: `${MASTO}/@u/1` });
+      return jsonRes({}, 204);
+    };
+    await runBot(
+      { GEMINI_API_KEY: "k", DISCORD_WEBHOOK_URL: "https://discord.example/hook", BLUESKY_IDENTIFIER: "id", BLUESKY_APP_PASSWORD: "p", MASTODON_INSTANCE_URL: MASTO, MASTODON_ACCESS_TOKEN: "t" },
+      async () => ({ theme: "金木犀の季節", description: "説明", themeEn: "Fragrant Olive Season", descriptionEn: "Fragrant Olive is the highlight of this season." }),
+      async () => ({ imageData: btoa("x"), mimeType: "image/png", source: "gemini", prompt, pollinationsPrompt: pollinations, pose: CAT_POSES[0].gemini }),
+      null, { dryRun }
+    );
+    globalThis.fetch = origFetch;
+    return bodies;
+  };
+
+  const ok = await run();
+  assert("runBot通知: 成功時は3通", ok.length === 3);
+  assert("runBot通知: 1通目に成否（✅）とURLがある", ok[0].startsWith("✅") && ok[0].includes("✅ Bluesky投稿完了") && ok[0].includes("✅ Mastodon投稿完了") && ok[0].includes(`${MASTO}/@u/1`));
+  assert("runBot通知: 2通目は📋・3通目は📣", ok[1]?.startsWith("📋") && ok[2]?.startsWith("📣"));
+  assert("runBot通知: 2〜3通目にSNSの投稿結果を書かない", ok.slice(1).every(b => !/投稿完了|投稿失敗|⏭️/.test(b)));
+  assert("runBot通知: どの通も2,000字以内", ok.every(b => b.length <= 2000));
+  assert("runBot通知: Geminiプロンプトの全文が届く（切り捨てない）", ok.slice(0, 2).map(b => b.replace(/^\S+ にゃんバーサリーBot\n/, "").replace("（Geminiプロンプトの続き）", "")).join("").replace(/\s+/g, "").includes(prompt.replace(/\s+/g, "")));
+  assert("runBot通知: プロンプトの末尾（顔の禁止指示）まで届く", ok.join("\n").includes("scenery element with a face, eyes, or anthropomorphized expression."));
+  assert("runBot通知: 3通目に転載用のBluesky・Mastodonテキストがある", ok[2].includes("Bluesky投稿テキスト") && ok[2].includes("Mastodon投稿テキスト"));
+
+  const fail = await run({ bskyFail: true });
+  assert("runBot通知: Bluesky失敗時は1通目が❌で、失敗理由が1通目にだけある", fail[0].startsWith("❌") && fail[0].includes("❌ Bluesky投稿失敗") && fail.slice(1).every(b => !b.includes("Bluesky投稿失敗")));
+
+  const dry = await run({ dryRun: true });
+  assert("runBot通知: dryRunでも3通・1通目に🧪テスト実行の表記", dry.length === 3 && dry[0].startsWith("🧪") && dry[0].includes("🧪 テスト実行"));
+  assert("runBot通知: dryRunの2〜3通目にも「投稿スキップ」の行を書かない", dry.slice(1).every(b => !b.includes("投稿スキップ")));
 }
 
 // ─── repostBot: 投稿済み確認つきの再投稿（2026-10追加） ──────────────────
