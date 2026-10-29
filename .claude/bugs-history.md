@@ -336,7 +336,7 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 - **実害**: 使われないSUZURIマテリアルが増える（14日後のクリーンアップで`materialIds`全件が削除されるため孤立はしない）、fal.aiの課金が重複する、Discordに誤解を招く通知が重なる
 - **対応（案A）**: `frontend/index.html`に登録中のr2Idを覚える`suzuriInFlight`を追加し、`createSuzuriFromImage()`の入口で開始から90秒未満なら何もせず戻る。通信失敗時は即座に解除する。仕様は`.claude/rules/architecture.md`の「ページ内の二重起動防止」参照
 - **防げないもの**: 別タブ・別端末・別の訪問者による重複（案B。下の未対応項目参照）
-- **テスト**: `scripts/test-bot.mjs`に判定関数（入れる・弾く・期限切れ・nullのr2Id）のテストを追加。ブラウザ上の実際の動作はローカルで確認できず、デプロイ後に言語ボタンを素早く連打して`suzuri-create`のログが増えないことを確認する
+- **テスト**: `scripts/test-bot.mjs`に判定関数（入れる・弾く・期限切れ・nullのr2Id）のテストを追加。ブラウザ上の実際の動作はローカルで確認できず、デプロイ後に言語ボタンを素早く連打して`suzuri-create`のログが増えないことを確認する（[Issue #219](https://github.com/hiroshikuze/anniversary-cat-worker/issues/219)で追跡）
 - **場所**: `frontend/index.html`（`createSuzuriFromImage()`・`_shouldStartSuzuriRegistration()`）
 - **教訓**: 「重複チェックは結果が記録されてから効く」設計は、記録までに時間がかかる非同期処理（`ctx.waitUntil()`）では隙間ができる。処理中であること自体を、記録される前から呼び出し側で覚えておく
 
@@ -348,7 +348,7 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 - **テスト**: `scripts/test-bot.mjs`の再投稿テストのモックを、投稿一覧に`Authorization`が付いていると403を返すよう変更（実機のスコープ不足を再現）。投稿一覧取得が認証なしで呼ばれること、アカウント確認は認証ありで呼ばれることを追加で検証
 - **場所**: `worker/bot.js`（`findExistingMastodonPost()`）
 - **教訓**: 外部APIを認証付きで呼ぶ処理は、モックが認証ヘッダーとスコープを検証しないと、実機でだけ起きる権限不足を見逃す。最小権限のトークンで動く前提で、モックにも権限の制約を持たせる。また、復旧用の機能は、障害が起きる前に実機で一度確認しておく（今回は障害の当日にはじめて実機で動かした）
-- **同時に判明した件（503）**: Mastodon本体の一時的な障害とみられる。`postStatusToMastodon()`は`Idempotency-Key`を付けているが、リトライはしていない（Bluesky投稿との非対称）。5xxのみ同じキーで最大2回リトライする案は、ユーザーの判断待ち
+- **同時に判明した件（503）とその対応**: Mastodon本体の一時的な障害とみられる（7:00:21 JSTに失敗・約2.3秒・HTMLのエラーページ）。`postStatusToMastodon()`は`Idempotency-Key`を付けていたがリトライしていなかったため、`fetchWithRetry()`で5xxとネットワーク例外を同じキーのまま最大3試行にした（2026-10-29・ユーザー承認済み）。タイムアウトと4xx/429はリトライしない。Blueskyは冪等性キーがなく対象外。仕様は`.claude/docs/architecture/bot-posting.md`の「Mastodon投稿作成のリトライ」参照。リトライの効果は、次に実際に5xxが起きるまで実機では未確認
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
 

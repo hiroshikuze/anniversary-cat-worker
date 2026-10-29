@@ -17,6 +17,7 @@ import { saveToR2, getMetaFromR2, getImageFromR2, getRecentThemes } from "./r2-s
 import { createSuzuriProducts } from "./suzuri.js";
 import { pickFromPool, recordCpuCheckpoint, _deferOrAwait, _recordAutoCropCpu, getSeasonalFlower, getSeasonalFlowerEn, getSeasonalFlowerVisual } from "./index.js";
 import { getActiveSaleInfo } from "./sale.js";
+import { fetchWithRetry } from "./http-utils.js";
 import { autoCropImage, compositeMonthlyWallpaper } from "./image-utils.js";
 import { renderElementToPng, ensureFonts, getFonts } from "./svg-render.js";
 
@@ -630,13 +631,17 @@ export async function uploadMediaToMastodon(instanceUrl, accessToken, imageBytes
  * Mastodon にステータスを投稿する。inReplyToId指定時はセール告知リプライ等のスレッド返信になる。
  * mediaIdは単一ID・ID配列（月替わり壁紙の複数画像投稿用）・nullのいずれも受け付ける。
  */
-export async function postStatusToMastodon(instanceUrl, accessToken, text, mediaId = null, inReplyToId = null) {
+export async function postStatusToMastodon(instanceUrl, accessToken, text, mediaId = null, inReplyToId = null, retryDelayMs = 1000) {
   const params = new URLSearchParams({ status: text });
   const mediaIds = mediaId == null ? [] : Array.isArray(mediaId) ? mediaId : [mediaId];
   for (const id of mediaIds) params.append("media_ids[]", id);
   if (inReplyToId) params.append("in_reply_to_id", inReplyToId);
 
-  const res = await fetch(`${instanceUrl}/api/v1/statuses`, {
+  // 5xx・ネットワーク例外は最大3試行でリトライする（Bug#50: 2026-10-29にMastodonが503を返し投稿が止まった）。
+  // Idempotency-Keyはここで1度だけ生成し、options（headers）ごと全試行で使い回す。Mastodonは同じキーの
+  // 再送に最初の投稿を返すため二重投稿にならない。Blueskyは冪等性キーがなく、リトライしない設計のまま。
+  // タイムアウト（AbortError）・4xx・429はfetchWithRetry()の既存仕様どおりリトライしない
+  const res = await fetchWithRetry(`${instanceUrl}/api/v1/statuses`, {
     method:  "POST",
     headers: {
       "Authorization":   `Bearer ${accessToken}`,
@@ -645,7 +650,7 @@ export async function postStatusToMastodon(instanceUrl, accessToken, text, media
     },
     body:   params.toString(),
     signal: AbortSignal.timeout(MASTODON_POST_TIMEOUT_MS),
-  });
+  }, 3, retryDelayMs);
   const resText = await res.text();
   let data = {};
   try {

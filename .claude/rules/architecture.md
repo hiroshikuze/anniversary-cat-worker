@@ -197,6 +197,7 @@ export function _setSaleForTest(sale) { ... } // テスト用
 | Gemini `/research`・画像生成（`worker/index.js`） | `fetchWithRetry()`使用（従来から） |
 | `worker/suzuri.js` `createSuzuriProducts()`の`POST /materials` | `fetchWithRetry()`使用（2026-07追加） |
 | `worker/index.js` `/proxy-image`ハンドラー | `fetchWithRetry()`使用（2026-07追加） |
+| `worker/bot.js` `postStatusToMastodon()`（Mastodon投稿作成） | `fetchWithRetry()`使用（2026-10-29追加・Bug#50）。同じ`Idempotency-Key`を全試行で使い、二重投稿を避ける。詳細は`.claude/docs/architecture/bot-posting.md`の「Mastodon投稿作成のリトライ」参照 |
 | フロントエンド`/research`・`/generate`・`/suzuri-create`（`apiFetch()`） | 従来からリトライあり |
 | フロントエンド`loadSharedImage()`の`/image/:id`取得 | `apiFetch()`のGET対応により2026-07追加 |
 
@@ -204,7 +205,8 @@ export function _setSaleForTest(sale) { ... } // テスト用
 
 | 箇所 | 理由 |
 | --- | --- |
-| Bluesky/Mastodon投稿（`worker/bot.js`） | 外側リトライは二重投稿のリスクがあるため意図的に非リトライ（`/generate`側の冗長化で担保）。既存コメントに明記済み |
+| Bluesky投稿（`worker/bot.js`） | 外側リトライは二重投稿のリスクがあるため意図的に非リトライ（`/generate`側の冗長化で担保）。冪等性キーの仕組みがない。既存コメントに明記済み |
+| Mastodon画像アップロード・タイムアウト（`AbortError`）・4xx/429 | 画像アップロードは失敗しても投稿は作られず、翌朝の手動復旧で足りる範囲。タイムアウトはサーバー側で作成済みの可能性があり、同じ結果にもなりやすい |
 | Discord Webhook通知全般 | 通知失敗時はログ出力のみで処理をブロックしないbest-effort設計 |
 
 ### fal.aiポーリングループの早期break修正（`_pollFalAndGetTexture()`）

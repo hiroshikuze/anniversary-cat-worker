@@ -9,7 +9,7 @@
 - Botアカウント: `@nyanmusu.bsky.social`
 - 投稿スケジュール: 月〜金 7:00 JST（UTC 22:00 前日）、Cron式: `0 22 * * 1-5`（2026-05-01より。変更前: `0 10 * * 2-6`（19:00 JST））
 - ハッシュタグ: テーマ由来の動的タグ1件を先頭に置き、固定タグ`#AIart #cat #kitten #ほのぼの #猫 #にゃんバーサリー`を後続（Instagramで末尾タグを省略しやすくするため）
-- エラー時: リトライなし（`/generate`内部にPollinationsフォールバックあり）
+- エラー時: Blueskyはリトライなし（`/generate`内部にPollinationsフォールバックあり）。Mastodonの投稿作成のみ、5xxとネットワーク例外を同じ`Idempotency-Key`で最大3試行（下記「Mastodon投稿作成のリトライ」参照）
 - Mastodon同時投稿: `Promise.allSettled`で並列実行。Mastodon失敗はBluesky投稿に影響しない。シークレット未設定時はスキップ
 - **Mastodon設定エラー検出**: `MASTODON_INSTANCE_URL`が`https://`で始まらない場合は`throw new Error(...)`でPromise.allSettledに拒否を返し、Discordの`mastoLine`に`❌ Mastodon投稿失敗: 設定エラー`として表示する（旧: `return null`でスキップしていたが、Discordに何も出ず原因不明になるため変更）。投稿後にstatus=401/403が返った場合も「設定エラー（認証失敗）」として`console.error`に分類して出力する
 - **Mastodon未設定時**: `mastoLine`に`⏭️ Mastodon未設定・スキップ`を表示し、`console.log`でCloudflareログにも記録する（旧: Discord通知から行ごと省略していたため処理状態が不明だった）
@@ -362,6 +362,18 @@ CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言で
 **画像アップロード**: `multipart/form-data`。`file`フィールドに画像、`description`フィールドにaltテキスト（最大1500文字）。
 
 **投稿作成**: `application/x-www-form-urlencoded`。`status`フィールドにテキスト、`media_ids[]`フィールドにmediaId。重複投稿防止のため`Idempotency-Key: {uuid}`ヘッダーを付与。
+
+**Mastodon投稿作成のリトライ（`postStatusToMastodon()`・2026-10-29追加・Bug#50）:**
+
+2026-10-29 7:00 JSTのBot投稿で、Mastodonの`/api/v1/statuses`が一時的に`503`（HTMLのエラーページ）を返し、その日のMastodon投稿が止まった（手動の再投稿で復旧）。Mastodonは**同じ`Idempotency-Key`で再送しても二重投稿にならない**（サーバーが一定時間キーを覚え、2回目以降は最初に作った投稿を返す）ため、投稿作成に限りリトライする。
+
+- `worker/http-utils.js`の`fetchWithRetry()`を使う。5xxとネットワーク例外を指数バックオフ（約1秒・2秒）で、最大3試行（リトライ2回）
+- **`Idempotency-Key`は1回の呼び出しで1度だけ生成し、全試行で同じ値を使う**（リトライごとに作り直すと二重投稿の恐れがある。`options`オブジェクトを使い回すことで保証する）
+- 4xx（認証・スコープ・入力エラー）と429はリトライしない。`AbortError`（10秒のタイムアウト）もリトライしない（`fetchWithRetry()`の既存仕様。タイムアウトは同じ結果になりやすく、サーバー側で作成済みの可能性もあるため）。タイムアウト時は従来どおり失敗扱いで、`mode=repost`の投稿済み確認で復旧する
+- 画像アップロード（`uploadMediaToMastodon()`）は対象外。失敗しても投稿は作られないため、翌朝の手動復旧で足りる範囲に留める
+- **Blueskyは対象外のまま**。`createRecord`に冪等性キーの仕組みがなく、5xxでも実際には作成済みの可能性があるため（2026-10-21のBluesky 502の事例）
+- **10秒のタイムアウト（`AbortSignal.timeout`）は全試行で共有する**（signalを1度だけ作るため）。503が2〜3秒で返る今回のような障害なら3試行が収まるが、応答が遅い障害では途中でタイムアウトになり、その時点で失敗扱い（リトライしない）。最悪でも合計約10秒のため、Workerのwall-clock制限を圧迫しない
+- セール告知リプライ（`inReplyToId`指定）と月替わり壁紙の投稿も同じ関数を通るため、同じリトライが効く
 
 **タイムアウト（Bluesky）**: 認証・画像アップロード・投稿作成それぞれ`AbortSignal.timeout(10_000)`（各10秒）。
 

@@ -26,7 +26,7 @@ import {
   shrinkImageIfNeeded, _setPhotonForTest, BLUESKY_MAX_IMAGE_BYTES, findAvailableR2Id, pickCta, pickPostFormat,
   buildSaleReplyTextJa, buildSaleReplyTextBilingual,
   buildMonthlyWallpaperPostText, buildMonthlyWallpaperMastodonText, runMonthlyWallpaperPost,
-  containsPostMarker, repostBot,
+  containsPostMarker, repostBot, postStatusToMastodon,
   splitForDiscord, buildBotDiscordMessages, DISCORD_BODY_LIMIT,
 } from "../worker/bot.js";
 import { _setSaleForTest } from "../worker/sale.js";
@@ -5368,6 +5368,83 @@ console.log("\n[buildPostText: short形式]");
   assert("short形式: pageUrl（?id=付き個別作品URL）が含まれる", text.includes(pageUrl));
   assert("short形式: 裸のSITE_URLは含まれない（pageUrlに置き換わっている）",
     !text.includes("https://hiroshikuze.github.io/anniversary-cat-worker/\n"));
+}
+
+// ---------------------------------------------------------------------------
+// postStatusToMastodon: 5xxのリトライ（同じIdempotency-Keyで二重投稿を避ける・2026-10-29・Bug#50）
+// ---------------------------------------------------------------------------
+console.log("\n[postStatusToMastodon: 5xxリトライ]");
+{
+  const origFetch = globalThis.fetch;
+  const textRes = (status, body) => ({ ok: status >= 200 && status < 300, status, text: async () => body });
+  // responses: 順に返す応答。"net"はネットワーク例外、"abort"はタイムアウト（AbortError）
+  const install = (responses) => {
+    const calls = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), key: init.headers["Idempotency-Key"], body: init.body });
+      const r = responses[Math.min(calls.length - 1, responses.length - 1)];
+      if (r === "net")   throw new TypeError("fetch failed");
+      if (r === "abort") { const e = new Error("timeout"); e.name = "AbortError"; throw e; }
+      return r;
+    };
+    return calls;
+  };
+  const OK = textRes(200, JSON.stringify({ id: "s1", url: "https://m.test/@x/1" }));
+  const HTML503 = textRes(503, "<!DOCTYPE html><html>503</html>");
+  const post = () => postStatusToMastodon("https://m.test", "tok", "本文", "media1", null, 1);
+  try {
+    {
+      const calls = install([OK]);
+      const d = await post();
+      assert("リトライ: 1回目で成功すれば1回だけ呼ぶ", calls.length === 1 && d.id === "s1");
+    }
+    {
+      const calls = install([HTML503, OK]);
+      const d = await post();
+      assert("リトライ: 503のあと成功すれば投稿結果を返す", d.id === "s1" && calls.length === 2);
+      assert("リトライ: 再送でも同じIdempotency-Key（二重投稿を避ける）", calls[0].key && calls[0].key === calls[1].key);
+      assert("リトライ: 再送でも同じ本文", calls[0].body === calls[1].body);
+    }
+    {
+      const calls = install([HTML503, HTML503, HTML503]);
+      let err = null;
+      try { await post(); } catch (e) { err = e; }
+      assert("リトライ: 3回とも503なら失敗する（3試行まで）", err && calls.length === 3);
+      assert("リトライ: 失敗時のメッセージにstatus=503を含む", err?.message.includes("status=503"));
+      assert("リトライ: 3試行とも同じキー", new Set(calls.map(c => c.key)).size === 1);
+    }
+    {
+      const calls = install(["net", OK]);
+      const d = await post();
+      assert("リトライ: ネットワーク例外のあと成功すれば投稿結果を返す", d.id === "s1" && calls.length === 2 && calls[0].key === calls[1].key);
+    }
+    {
+      const calls = install([textRes(422, JSON.stringify({ error: "Validation failed" }))]);
+      let err = null;
+      try { await post(); } catch (e) { err = e; }
+      assert("リトライ: 4xxはリトライしない", err && calls.length === 1 && err.message.includes("status=422"));
+    }
+    {
+      const calls = install([textRes(429, JSON.stringify({ error: "Too many requests" }))]);
+      let err = null;
+      try { await post(); } catch (e) { err = e; }
+      assert("リトライ: 429はリトライしない", err && calls.length === 1);
+    }
+    {
+      const calls = install(["abort"]);
+      let err = null;
+      try { await post(); } catch (e) { err = e; }
+      assert("リトライ: タイムアウト（AbortError）はリトライしない", err && calls.length === 1);
+    }
+    {
+      // 別の呼び出しでは別のキー（投稿ごとに固有）
+      const calls = install([OK]);
+      await post(); await post();
+      assert("リトライ: 呼び出しごとに別のIdempotency-Key", calls.length === 2 && calls[0].key !== calls[1].key);
+    }
+  } finally {
+    globalThis.fetch = origFetch;
+  }
 }
 
 // ---------------------------------------------------------------------------
