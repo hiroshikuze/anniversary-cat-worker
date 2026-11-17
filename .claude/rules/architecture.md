@@ -464,8 +464,16 @@ JSON-LDはサイト全体で内容が変わらないため固定記述にし、�
 
 ### 作らなかったもの（ホスティング制約・2026-10判明）
 
-- **`robots.txt`**: クローラーはホストのルート（`https://hiroshikuze.github.io/robots.txt`）だけを読む。本サイトは`/anniversary-cat-worker/`配下のプロジェクトサイトのため、`frontend/robots.txt`を置いても公開URLは`/anniversary-cat-worker/robots.txt`となり、クローラーに無視される。ルートの`robots.txt`はリポジトリ`hiroshikuze.github.io`（ユーザーサイト）側の管理。未設定の場合は全許可がデフォルトなので、現状で困ることはない
+- **`robots.txt`**: クローラーはホストのルート（`https://hiroshikuze.github.io/robots.txt`）だけを読む。本サイトは`/anniversary-cat-worker/`配下のプロジェクトサイトのため、`frontend/robots.txt`を置いても公開URLは`/anniversary-cat-worker/robots.txt`となり、クローラーに無視される。ルートの`robots.txt`はリポジトリ`hiroshikuze.github.io`（ユーザーサイト）側の管理。2026-11-04に確認したところ、ユーザーサイト側にはすでに`robots.txt`（全許可・AI系クローラーも明示許可・`Sitemap:`は`sitemap.xml`と`recipe_prompt_generator/sitemap.xml`の2行）・`sitemap.xml`（10サイト。にゃんバーサリーはトップ`/anniversary-cat-worker/`の1件のみ）・`llms.txt`（にゃんバーサリーの`llms.txt`へのリンクあり）がある
 - **`sitemap.xml`**: Workerの`workers.dev`に置くと、掲載するURL（`github.io`）と別ホストになり、検索エンジンに受理されない。`github.io`側に置く場合は静的ファイルとなり、掲載したい作品URL（`?id=bot/YYYY-MM-DD`）は、canonicalが常にトップ固定のため評価されない。作品URLを別ページとして扱う設計（下記「保留」）とセットで検討する
+
+### llms.txt・RSS・Search Consoleについて（2026-11-04確認）
+
+- **`llms.txt`は提案であり標準規格ではない**（`llmstxt.org`）。置き場所はサイトのルートか任意のパス。読むと明記された事業者・クローラーはない。**Search Consoleに登録する機能はない**（サイトマップとして受け付けるのはXML・RSS 2.0・Atom 1.0・テキストの形式）。Googleは使っていないという報道がある（Gary Illyes氏・John Mueller氏の発言。Googleの公式ページでの確認はできていない）。置いて損はないが、効果は未確認という位置づけ
+- **RSSだけ別ホスト（`workers.dev`）にある理由**: 中身がR2から直近14日分を動的に生成しており、静的配信のGitHub Pagesでは配信できないため、と構成からは言える。ドキュメントに当時の理由の記載はなく、推定である。静的な`rss.xml`をGitHub Pages側に置くには、Botの保存のあとにリポジトリを更新して再デプロイする仕組みが別に要る
+- トップページの`<link rel="alternate" type="application/rss+xml">`は、Worker側のURLを指す。これがGoogleのサイトマップとして扱われる、という公式の記述は確認できていない。ユーザーサイト側の`robots.txt`の`Sitemap:`にも、RSSは書かれていない
+- GoogleはRSS 2.0・Atom 1.0をサイトマップとして受け付ける（直近のURLだけを伝える形式）。別ドメインのサイトマップは、Search Consoleで送るか、`robots.txt`の`Sitemap:`に書く方法がある（2008年の古い記事には「両方のサイトの所有権の確認が必要」とある。現在の条件は公式ドキュメントで確認すること）
+- 登録の有無は、Search Console（`https://hiroshikuze.github.io/`のプロパティ）の「サイトマップ」レポートで確認できる。**ユーザーの画面での確認が必要で、未確認**。RSSの作品URL（`?id=bot/YYYY-MM-DD`）はcanonicalがトップ固定のため、載せても効果は小さい見込み
 
 ### 保留（次回以降の検討事項）
 
