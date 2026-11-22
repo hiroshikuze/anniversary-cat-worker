@@ -46,7 +46,8 @@ const BLUESKY_ACTOR  = "nyanmusu.bsky.social";
 const BLUESKY_API    = "https://public.api.bsky.app/xrpc";
 const MASTODON_BASE  = "https://mastodon.social";
 const MASTODON_ACCT  = "nyanmusu";
-const UMAMI_BASE     = "https://cloud.umami.is";
+// Umami Cloudの共有ページが使うAPIのベース。us は地域（地域が変わると gateway-eu になる可能性がある）
+const UMAMI_BASE     = "https://gateway-us.umami.is";
 const UMAMI_EVENT    = "suzuri-click";
 const FEED_LIMIT     = 15;
 const DAY_MS         = 86_400_000;

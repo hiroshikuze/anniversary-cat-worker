@@ -252,6 +252,13 @@ console.log("\n[collectMetrics]");
   const umamiCalls = seen.filter((s) => s.url.includes("/api/websites/"));
   assert("statsとmetricsにx-umami-share-tokenとx-umami-share-contextを付ける",
     umamiCalls.length === 4 && umamiCalls.every((s) => s.headers["x-umami-share-token"] === TOKEN && s.headers["x-umami-share-context"]));
+  const shareCalls = seen.filter((s) => s.url.includes("/api/share/"));
+  assert("トークンの取得先はgateway-us.umami.isの/api/share/",
+    shareCalls.length === 1 && shareCalls[0].url === `https://gateway-us.umami.is/api/share/${SHARE_ID}`);
+  assert("statsとmetricsの取得先はgateway-us.umami.isの/api/websites/{websiteId}/",
+    umamiCalls.every((s) => s.url.startsWith(`https://gateway-us.umami.is/api/websites/${WEBSITE_ID}/`)) &&
+    umamiCalls.some((s) => s.url.includes("/stats?")) && umamiCalls.some((s) => s.url.includes("/metrics?type=event&")));
+  assert("Umamiの通信にcloud.umami.isを使わない", !seen.some((s) => s.url.includes("cloud.umami.is")));
   assert("共有ID・トークン・websiteIdをマスクに登録する", [SHARE_ID, TOKEN, WEBSITE_ID].every((v) => masks.includes(v)));
   assert("ログに秘密情報を出さない", !logs2.join("\n").includes(TOKEN) && !logs2.join("\n").includes(WEBSITE_ID) && !logs2.join("\n").includes(SHARE_ID));
 
