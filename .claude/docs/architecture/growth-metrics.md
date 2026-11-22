@@ -32,13 +32,17 @@
 
 ### Umamiの取得手順（共有URLのトークン方式）
 
-1. `GET https://cloud.umami.is/api/share/{UMAMI_SHARE_ID}` → `websiteId`と`token`
+取得先（APIのベース）は`https://gateway-us.umami.is`（2026-11-23変更）。`us`はUmami Cloudの地域で、地域が変わると`gateway-eu`になる可能性がある。
+
+1. `GET https://gateway-us.umami.is/api/share/{UMAMI_SHARE_ID}` → `websiteId`と`token`
 2. **取得した直後に`::add-mask::`でトークンと`websiteId`をログで伏せる**（`UMAMI_SHARE_ID`自体はActionsのシークレットとして自動で伏せられるが、念のため同様に伏せる）
 3. 以降の`GET`に`x-umami-share-token: <token>`と`x-umami-share-context: 1`を付ける
-4. `GET https://cloud.umami.is/api/websites/{websiteId}/stats?startAt=<ミリ秒>&endAt=<ミリ秒>`（直近7日・30日）
-5. `GET https://cloud.umami.is/api/websites/{websiteId}/metrics?type=event&startAt=…&endAt=…`（直近7日・30日）
+4. `GET https://gateway-us.umami.is/api/websites/{websiteId}/stats?startAt=<ミリ秒>&endAt=<ミリ秒>`（直近7日・30日）
+5. `GET https://gateway-us.umami.is/api/websites/{websiteId}/metrics?type=event&startAt=…&endAt=…`（直近7日・30日）
 
-**確認状況（2026-11-22）**:
+**取得先を`gateway-us.umami.is`にした理由（2026-11-23）**: Umami Cloudの共有ページ（`cloud.umami.is/analytics/us/share/{ID}`に移動する）をオーナーがChromeの開発者ツールで調べたところ、データは`https://gateway-us.umami.is/api/websites/{websiteId}/stats`・`/metrics`から読まれていた。Umamiの公開ソース（`src/components/hooks/queries/useShareTokenQuery.ts`・`src/lib/api-url.ts`）では、トークンの取得も同じAPIのベースに対する`GET /share/{ID}`のため、トークンの取得先も`https://gateway-us.umami.is/api/share/{ID}`と判断した。当初の`cloud.umami.is/api/share/{ID}`はHTML（HTTP 404）を返し、APIではなかった。
+
+**確認状況（2026-11-22・取得先は2026-11-23更新）**:
 
 | 項目 | 状況 | 根拠 |
 | --- | --- | --- |
@@ -47,7 +51,7 @@
 | `metrics`は`[{ x, y }]`の配列で、`type=event`が使える | 確認済み | 公式ドキュメント（<https://docs.umami.is/docs/api-reference/get-website-metrics>） |
 | `x-umami-share-token`・`x-umami-share-context`ヘッダー | ヘッダー名は確認済み | 公式ドキュメントに必須と記載。`x-umami-share-context`は値ではなく有無だけが検査されることを、Umamiの公開ソース（`src/lib/auth.ts`）で確認 |
 | `GET /api/share/{共有ID}`が`websiteId`と`token`を返す | **公式ドキュメントでは未確認** | 公式ドキュメントに記載なし。Umamiの公開ソース（`src/app/api/share/[slug]/route.ts`）でのみ確認 |
-| Umami Cloudで上記の経路（`cloud.umami.is/api/...`）が使えること | **未確認** | 公式ドキュメントのCloud APIは`https://api.umami.is/v1`（APIキー方式）で、共有トークン方式の経路は書かれていない。このセッションには`UMAMI_SHARE_ID`がなく、実際の取得は試していない |
+| Umami Cloudで上記の経路（`gateway-us.umami.is/api/...`）が使えること | **一部確認** | 共有ページが`gateway-us.umami.is/api/websites/...`の`stats`・`metrics`を読むことは、オーナーのブラウザで確認（2026-11-23）。トークン取得（`/api/share/{ID}`）の取得先はソースからの判断で、このワークフローからの実際の取得は未確認。公式ドキュメントのCloud APIは`https://api.umami.is/v1`（APIキー方式）で、共有トークン方式の経路は書かれていない |
 | 共有URLでイベント（`suzuri-click`）が見えること | **未確認** | 共有設定でイベントが見えない場合の応答は不明 |
 
 未確認の点は、マージ後の手動実行（下記「初回確認の手順」）で確かめる。共有トークン方式は非公開APIのため、Umamiの仕様変更で止まる可能性がある。止まった場合は、Umami CloudのAPIキー（`https://api.umami.is/v1`・`Authorization: Bearer`）への切り替えを検討する。

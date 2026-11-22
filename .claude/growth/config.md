@@ -24,6 +24,7 @@
 ## データの取り方
 
 - **集計Issue方式**：GitHub Actionsのワークフロー`growth-metrics.yml`が週1回、ファネル1〜3の数字を取り、ラベル`growth:metrics`のIssueにコメントする。Claudeはそのコメントを読むだけ（Umamiの共有URLのIDはActionsのシークレット`UMAMI_SHARE_ID`にあり、Claudeからは読めない・読まない）
+- Umamiの取得先：`https://gateway-us.umami.is`（`/api/share/{ID}`でトークンを取り、`/api/websites/{websiteId}/stats`・`/metrics`を読む。Umami Cloudの共有ページが使う経路）。`us`はUmami Cloudの地域で、地域が変わると`gateway-eu`になる可能性がある。詳細は`.claude/docs/architecture/growth-metrics.md`
 - 鮮度：`measured_at`が8日より古い集計は使わない
 - コメントのJSONの項目
 
