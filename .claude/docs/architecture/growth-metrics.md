@@ -42,7 +42,7 @@
 
 **取得先を`gateway-us.umami.is`にした理由（2026-11-23）**: Umami Cloudの共有ページ（`cloud.umami.is/analytics/us/share/{ID}`に移動する）をオーナーがChromeの開発者ツールで調べたところ、データは`https://gateway-us.umami.is/api/websites/{websiteId}/stats`・`/metrics`から読まれていた。Umamiの公開ソース（`src/components/hooks/queries/useShareTokenQuery.ts`・`src/lib/api-url.ts`）では、トークンの取得も同じAPIのベースに対する`GET /share/{ID}`のため、トークンの取得先も`https://gateway-us.umami.is/api/share/{ID}`と判断した。当初の`cloud.umami.is/api/share/{ID}`はHTML（HTTP 404）を返し、APIではなかった。
 
-**確認状況（2026-11-22・取得先は2026-11-23更新）**:
+**確認状況（2026-11-22・2026-11-23の手動実行の結果で更新）**:
 
 | 項目 | 状況 | 根拠 |
 | --- | --- | --- |
@@ -50,11 +50,11 @@
 | `stats`の`visitors`は数値 | 確認済み（現行版） | 同上。古い版は`{ value, prev }`の形だったため、パーサーは両方を受け付ける |
 | `metrics`は`[{ x, y }]`の配列で、`type=event`が使える | 確認済み | 公式ドキュメント（<https://docs.umami.is/docs/api-reference/get-website-metrics>） |
 | `x-umami-share-token`・`x-umami-share-context`ヘッダー | ヘッダー名は確認済み | 公式ドキュメントに必須と記載。`x-umami-share-context`は値ではなく有無だけが検査されることを、Umamiの公開ソース（`src/lib/auth.ts`）で確認 |
-| `GET /api/share/{共有ID}`が`websiteId`と`token`を返す | **公式ドキュメントでは未確認** | 公式ドキュメントに記載なし。Umamiの公開ソース（`src/app/api/share/[slug]/route.ts`）でのみ確認 |
-| Umami Cloudで上記の経路（`gateway-us.umami.is/api/...`）が使えること | **一部確認** | 共有ページが`gateway-us.umami.is/api/websites/...`の`stats`・`metrics`を読むことは、オーナーのブラウザで確認（2026-11-23）。トークン取得（`/api/share/{ID}`）の取得先はソースからの判断で、このワークフローからの実際の取得は未確認。公式ドキュメントのCloud APIは`https://api.umami.is/v1`（APIキー方式）で、共有トークン方式の経路は書かれていない |
-| 共有URLでイベント（`suzuri-click`）が見えること | **未確認** | 共有設定でイベントが見えない場合の応答は不明 |
+| `GET /api/share/{共有ID}`が`websiteId`と`token`を返す | 確認済み（実動作） | 2026-11-23の手動実行で、このトークンを使った`stats`・`metrics`の取得に成功（Issue #225）。公式ドキュメントには記載がなく、Umamiの公開ソース（`src/app/api/share/[slug]/route.ts`）と実動作で確認 |
+| Umami Cloudで上記の経路（`gateway-us.umami.is/api/...`）が使えること | 確認済み（実動作） | 2026-11-23の手動実行（GitHub Actions）で、訪問者数（7日70・30日326）と`suzuri-click`（7日1・30日1）を取得し、`errors`は空だった（Issue #225）。公式ドキュメントのCloud APIは`https://api.umami.is/v1`（APIキー方式）で、共有トークン方式の経路は書かれていない（非公開APIである点は変わらない） |
+| 共有URLでイベント（`suzuri-click`）が見えること | 確認済み（実動作） | 同じ手動実行で`metrics?type=event`から`suzuri-click`の件数が取れた。共有設定でイベントが見えない場合の応答は引き続き不明 |
 
-未確認の点は、マージ後の手動実行（下記「初回確認の手順」）で確かめる。共有トークン方式は非公開APIのため、Umamiの仕様変更で止まる可能性がある。止まった場合は、Umami CloudのAPIキー（`https://api.umami.is/v1`・`Authorization: Bearer`）への切り替えを検討する。
+2026-11-23の手動実行で、Umamiの4項目を含む8項目すべてが取得でき、実行ログでは`UMAMI_SHARE_ID`が`***`で伏せられ、共有ID・トークン・`websiteId`はどの行にも出ていないことを確認した。共有トークン方式は非公開APIのため、Umamiの仕様変更で止まる可能性がある。止まった場合は、Umami CloudのAPIキー（`https://api.umami.is/v1`・`Authorization: Bearer`）への切り替えを検討する。
 
 ## 失敗の扱い
 
@@ -88,6 +88,18 @@
 
 - 1行目の目印`<!-- growth-metrics v1 -->`と、JSONの`measured_at`（ISO8601・UTC）・`metrics`（8キーすべて。失敗は`null`）・`errors`は、成長ループのスキルが読む前提の形なので、変えるときはスキルと`config.md`も合わせて直す
 - コメント投稿にも`fetchWithRetry()`を使う。5xxの再試行で同じコメントが2件になる可能性はあるが、スキルは最新の1件だけを使うため害はない
+
+### Umamiが「計測不可」になったときの切り分け（2026-11-23の初回確認で判明）
+
+`gateway-us.umami.is`は、存在しない経路にはHTML、存在する経路のエラーにはJSONを返す。Umamiの4項目が同じ理由で計測不可のときは、トークンの取得（`/api/share/{ID}`）で失敗している。
+
+| 理由 | 意味 | 対処 |
+| --- | --- | --- |
+| `非JSONレスポンス（HTTP 404）` | 取得先の経路が違う（HTMLが返った） | 取得先（`UMAMI_BASE`）を見直す。地域が変わって`gateway-eu`になった可能性もある |
+| `HTTP 404` | 経路は正しいが、`UMAMI_SHARE_ID`の値の共有が見つからない | シークレットに、共有ページのアドレス`…/share/○○○○`の`○○○○`の部分だけ（英数字8〜50文字。`https://`・`/`・空白・改行を含めない）が入っているか、共有が無効・作り直しになっていないかを確かめる |
+| `HTTP 401`・`HTTP 403` | トークンが拒否された | Umami側の仕様変更の可能性。APIキー方式への切り替えを検討する |
+
+2026-11-23の初回確認では、最初に`非JSONレスポンス（HTTP 404）`（取得先が`cloud.umami.is`で誤り）、取得先を直した後に`HTTP 404`（シークレットにID以外の部分が含まれていた）となり、シークレットを直して取得できた。
 
 ## 守ること
 
