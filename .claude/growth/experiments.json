@@ -1,0 +1,24 @@
+{
+  "experiments": [
+    {
+      "id": "exp-001",
+      "title": "Bluesky・Mastodonのプロフィールをにゃんバーサリー専用に一本化する",
+      "hypothesis": "猫・記念日好きがフォローする理由が伝わり、新規フォロワーが増える",
+      "metric": "Bluesky＋Mastodonのフォロワー合計（週次）",
+      "baseline": {
+        "value": 130,
+        "measured_at": "2026-09（future-ideas.mdの診断時点。初回サイクルで再計測して置き換える）"
+      },
+      "target": 145,
+      "start": null,
+      "end": null,
+      "duration_days": 21,
+      "owner": "owner",
+      "permission": "approval",
+      "issue": null,
+      "status": "proposed",
+      "result": null,
+      "learning": null
+    }
+  ]
+}
