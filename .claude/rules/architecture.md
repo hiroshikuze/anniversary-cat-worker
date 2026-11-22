@@ -22,7 +22,16 @@ anniversary-cat-worker/
 │   │   └── suzuri-api-unused-features.md ← future-ideas.mdから移動したSUZURI APIの未使用機能一覧
 │   ├── settings.json                 ← PostToolUseフック（Markdownスペース検証）
 │   ├── skills/
-│   │   └── sale-announcement/        ← スキル: SNSセール告知の作成・投稿手順と合成スクリプト（`/sale-announcement`・2026-09追加）
+│   │   ├── sale-announcement/        ← スキル: SNSセール告知の作成・投稿手順と合成スクリプト（`/sale-announcement`・2026-09追加）
+│   │   └── running-growth-loops/     ← スキル: 集客・販売の成長ループを週1回・1サイクル回す手順（`SKILL.md`・2026-11追加）
+│   ├── agents/                       ← 成長ループ用のサブエージェント定義（2026-11追加）
+│   │   ├── growth-researcher.md      ← 計測担当（読み取り専用。KPIを取得元付きの表で返す）
+│   │   └── growth-verifier.md        ← 検証担当（数字の不一致・権限外の外部送信・実験の必須項目漏れを指摘）
+│   ├── growth/                       ← 成長ループの状態（2026-11追加）
+│   │   ├── config.md                 ← 目標・ファネル・データの取り方・権限の3段階・上限（オーナーが書き換える正本）
+│   │   ├── experiments.json          ← 実験の一覧と状態（機械が読む正本）
+│   │   ├── progress.md               ← サイクルごとの記録（新しいものを先頭に追記）
+│   │   └── evals.md                  ← スキルの評価シナリオ（5件）
 │   ├── archive/
 │   │   ├── revision_log_2026-03.md   ← アーカイブ済みの旧revision_log（2026-03分）
 │   │   ├── revision_log_2026-04-07.md ← アーカイブ済みの旧revision_log（2026-04〜2026-07分・2026-09追加）
