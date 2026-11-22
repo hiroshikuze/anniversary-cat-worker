@@ -12,13 +12,14 @@ anniversary-cat-worker/
 │   ├── deploy-worker.yml             ← main push時: Cloudflare Workersデプロイ
 │   ├── deploy-pages.yml              ← main push時: GitHub Pagesデプロイ
 │   ├── query-worker-logs.yml         ← workflow_dispatch: Cloudflare Workers Logsのキーワード検索（2026-08追加）
-│   └── sale-announcement.yml         ← claude/**へのpush: tmp-sale-announcement/の告知をBluesky・Mastodonへ投稿しDiscordへ送信（2026-09追加）
+│   ├── sale-announcement.yml         ← claude/**へのpush: tmp-sale-announcement/の告知をBluesky・Mastodonへ投稿しDiscordへ送信（2026-09追加）
+│   └── growth-metrics.yml            ← 毎週月曜05:17 JST＋workflow_dispatch: 成長ループの集計値をgrowth:metricsのIssueへコメント（2026-11追加）
 ├── .claude/
 │   ├── revision_log.md               ← ミスパターン記録（毎セッション冒頭で読む）
 │   ├── bugs-history.md               ← バグ履歴 Bug#31〜と全バグの一覧表（都度参照・自動ロードなし）
 │   ├── future-ideas.md               ← 将来拡張アイデア（都度参照・自動ロードなし）
 │   ├── docs/                         ← 詳細仕様（都度参照・自動ロードなし・2026-10追加）
-│   │   ├── architecture/             ← architecture.mdから移動した大きな節（suzuri-create・sale-check-and-cleanup・gemini・bot-posting・monthly-wallpaper）
+│   │   ├── architecture/             ← architecture.mdから移動した大きな節（suzuri-create・sale-check-and-cleanup・gemini・bot-posting・monthly-wallpaper）と、成長ループの集計ワークフロー（growth-metrics・2026-11追加）
 │   │   └── suzuri-api-unused-features.md ← future-ideas.mdから移動したSUZURI APIの未使用機能一覧
 │   ├── settings.json                 ← PostToolUseフック（Markdownスペース検証）
 │   ├── skills/
@@ -73,7 +74,9 @@ anniversary-cat-worker/
     ├── preview-kana.mjs              ← かなモードのrubyふりがなをブラウザでプレビュー（引数: theme description）
     ├── query-worker-logs.mjs         ← Cloudflare Workers Logsのキーワード検索（CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID必要・2026-08追加）
     ├── post-sale-announcement.mjs    ← SNSセール告知の検証・Bluesky/Mastodon投稿・Discord送信（sale-announcement.ymlから実行・2026-09追加）
-    └── test-post-sale-announcement.mjs ← 上記の純粋関数のユニットテスト（外部API不要）← npm test（2026-09追加）
+    ├── test-post-sale-announcement.mjs ← 上記の純粋関数のユニットテスト（外部API不要）← npm test（2026-09追加）
+    ├── growth-metrics.mjs            ← 成長ループの集計（Bluesky・Mastodon・Umami）とgrowth:metricsのIssueへのコメント（growth-metrics.ymlから実行・2026-11追加。詳細は.claude/docs/architecture/growth-metrics.md）
+    └── test-growth-metrics.mjs       ← 上記の純粋関数と再試行方針のユニットテスト（外部API不要）← npm test（2026-11追加）
 ```
 
 ---
