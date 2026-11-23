@@ -30,7 +30,7 @@ import {
   splitForDiscord, buildBotDiscordMessages, DISCORD_BODY_LIMIT,
 } from "../worker/bot.js";
 import { _setSaleForTest } from "../worker/sale.js";
-import { extractLatestSaleArticleUrl, buildSaleCandidateMessage, checkForNewSale } from "../worker/sale-check.js";
+import { extractRecentArticleUrls, buildSaleCandidateMessage, checkForNewSale } from "../worker/sale-check.js";
 
 import { pickPersona, pickPersonality, pickEatingAction, pickGuestAnimal, _twoPhaseRace, normalizeKanjiChar, handleResearch, handleGenerate, getSeasonalFlower, getSeasonalFlowerVisual, getSeasonalFlowerEn, getSeasonalFlowerKana, getSeasonalStyleTone, filterAndDedupePool, pickFromPool, SEASONAL_FLOWER_SELECT_PROBABILITY, _buildPollinationsPrompt, _buildGeminiPrompt, _resolveImageModel, _selectFromCandidates, incrementUsageKv, incrementCpuTimeKv, recordCpuCheckpoint, _pollFalAndGetTexture, _recordBackTextureDecodeCpu, _recordAutoCropCpu, _deferOrAwait, selectBestModel, FALLBACK_TEXT_MODEL, _resetModelCacheForTest, _updateMetaOrRollback, isLastDayOfMonthJST, _isBotCronEvent, cleanupExpiredEntries, cleanupOrphanBackTextureMaterials, _generateFallbackThemeHook, generateResearchPool, pickPose, CAT_POSES, pickSeasonalFlowerEntry, isGeminiCreditDepleted } from "../worker/index.js";
 import { submitFalJob, getFalResult } from "../worker/fal.js";
@@ -6000,6 +6000,92 @@ console.log("\n[buildSaleReplyTextJa / buildSaleReplyTextBilingual]");
   assert("buildSaleReplyTextBilingual: 日本語割引額が含まれる", bi.includes("800円"));
   assert("buildSaleReplyTextBilingual: 英語割引額が含まれる", bi.includes("¥800"));
   assert("buildSaleReplyTextBilingual: 英語が日本語より先に来る", bi.indexOf("Sale") < bi.indexOf("今なら"));
+
+  // stickerExcluded: 「ステッカーを除く」は対象外のセール（true）のときだけ付ける（2026-11）
+  assert("stickerExcluded未定義: 日本語リプライに「ステッカーを除く」を付けない", !ja.includes("ステッカーを除く"));
+  assert("stickerExcluded未定義: 英語リプライに「stickers excluded」を付けない", !bi.includes("stickers excluded"));
+  assert("stickerExcluded未定義: バイリンガルの日本語側にも「ステッカーを除く」を付けない", !bi.includes("ステッカーを除く"));
+
+  const saleExcl = { ...sale, stickerExcluded: true };
+  const jaExcl = buildSaleReplyTextJa(saleExcl);
+  const biExcl = buildSaleReplyTextBilingual(saleExcl);
+  assert("stickerExcluded=true: 日本語リプライに「ステッカーを除く」を付ける", jaExcl.includes("ステッカーを除く"));
+  assert("stickerExcluded=true: 英語リプライに「stickers excluded」を付ける", biExcl.includes("stickers excluded"));
+  assert("stickerExcluded=true: バイリンガルの日本語側にも「ステッカーを除く」を付ける", biExcl.includes("ステッカーを除く"));
+  assert("stickerExcluded=true: 終了日・URLは保持される", jaExcl.includes("9/3(木)") && jaExcl.includes(sale.url) && biExcl.includes("Sep 3"));
+
+  const saleIncl = { ...sale, stickerExcluded: false };
+  assert("stickerExcluded=false: 日本語リプライに「ステッカーを除く」を付けない", !buildSaleReplyTextJa(saleIncl).includes("ステッカーを除く"));
+  assert("stickerExcluded=false: 英語リプライに「stickers excluded」を付けない", !buildSaleReplyTextBilingual(saleIncl).includes("stickers excluded"));
+
+  // ブラックフライデー（最大1,000円・12/8（火）・ステッカー対象）の文面
+  const bf = { ...sale, discountYen: 1000, endDisplay: { month: 12, day: 8, weekdayJa: "火" }, stickerExcluded: false };
+  const jaBf = buildSaleReplyTextJa(bf);
+  assert("BF: 日本語リプライは最大1000円・12/8(火)まで", jaBf.includes("最大1000円OFF") && jaBf.includes("12/8(火)まで"));
+  assert("BF: 英語リプライは¥1000・Dec 8", buildSaleReplyTextBilingual(bf).includes("¥1000 off until Dec 8"));
+  assert("BF: Bluesky 300字以内", [...new Intl.Segmenter("ja", { granularity: "grapheme" }).segment(jaBf)].length <= 300);
+}
+
+// ---------------------------------------------------------------------------
+// frontend: _composeSaleBanner（window公開の純粋関数と同等のロジックを検証）
+// ---------------------------------------------------------------------------
+console.log("\n[frontend: _composeSaleBanner（バナー文言の出し分け）]");
+{
+  // frontend/index.html の _composeSaleBanner と同一ロジック（_calcWatermarkLayout と同じ検証方式）
+  function composeSaleBanner(banner, note, amount, endDate, stickerExcluded) {
+    const base = banner.replace("{amount}", amount).replace("{endDate}", endDate);
+    return stickerExcluded === true ? base + note : base;
+  }
+  const BANNER = "SUZURIセール中！{endDate}まで最大{amount}円OFF";
+  const NOTE   = "（ステッカーを除く）";
+
+  assert("stickerExcluded=true: 注記が付く", composeSaleBanner(BANNER, NOTE, 800, "9/3(木)", true) === "SUZURIセール中！9/3(木)まで最大800円OFF（ステッカーを除く）");
+  assert("stickerExcluded=false: 注記が付かない", composeSaleBanner(BANNER, NOTE, 1000, "12/8(火)", false) === "SUZURIセール中！12/8(火)まで最大1000円OFF");
+  assert("stickerExcluded未定義: 注記が付かない（対象外と誤って書かない側に倒す）", composeSaleBanner(BANNER, NOTE, 1000, "12/8(火)", undefined) === "SUZURIセール中！12/8(火)まで最大1000円OFF");
+
+  // frontendの翻訳に「ステッカーを除く」が基本文言へ残っていないこと（ハードコード再発防止）
+  const html = readFileSync(new URL("../frontend/index.html", import.meta.url), "utf8");
+  const bannerLines = html.split("\n").filter(l => /^\s*saleBanner\s*:/.test(l));
+  assert("saleBanner（ja/en/kana）の3言語が存在する", bannerLines.length === 3);
+  assert("saleBanner基本文言に「ステッカーを除く」「stickers excluded」を含まない", bannerLines.every(l => !l.includes("ステッカー") && !l.includes("stickers excluded") && !l.includes("のぞ")));
+  const noteLines = html.split("\n").filter(l => /^\s*saleBannerStickerNote\s*:/.test(l));
+  assert("saleBannerStickerNote（ja/en/kana）の3言語が存在する", noteLines.length === 3);
+  assert("frontendが_composeSaleBannerを公開している", html.includes("window._composeSaleBanner"));
+}
+
+// ---------------------------------------------------------------------------
+// GET /sale-info: stickerExcludedをフロントへ渡す
+// ---------------------------------------------------------------------------
+console.log("\n[GET /sale-info: stickerExcluded]");
+{
+  const mkSale = (stickerExcluded) => ({
+    id: "test-sale", startUtcMs: Date.now() - 1000, endUtcMs: Date.now() + 1000 * 60 * 60,
+    discountYen: 1000, endDisplay: { month: 12, day: 8, weekdayJa: "火" },
+    ...(stickerExcluded === undefined ? {} : { stickerExcluded }),
+    url: "https://suzuri.jp/nyanmusu",
+  });
+  const call = async () => {
+    const res = await worker.fetch(new Request("https://x.example/sale-info"), {}, { waitUntil() {} });
+    return res.json();
+  };
+  try {
+    _setSaleForTest(mkSale(false));
+    const incl = await call();
+    assert("/sale-info: stickerExcluded=falseを返す", incl.active === true && incl.stickerExcluded === false && incl.discountYen === 1000);
+
+    _setSaleForTest(mkSale(true));
+    assert("/sale-info: stickerExcluded=trueを返す", (await call()).stickerExcluded === true);
+
+    _setSaleForTest(mkSale(undefined));
+    const undef = await call();
+    assert("/sale-info: 未定義はfalseに正規化する（frontendが厳密比較できる）", undef.stickerExcluded === false);
+
+    _setSaleForTest(null);
+    const none = await call();
+    assert("/sale-info: セールなしは{active:false}のみ", none.active === false && !("stickerExcluded" in none));
+  } finally {
+    _setSaleForTest(null);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -6125,54 +6211,67 @@ console.log("\n[runBot: セール告知リプライ]");
 }
 
 // ---------------------------------------------------------------------------
-// extractLatestSaleArticleUrl / buildSaleCandidateMessage
+// extractRecentArticleUrls / buildSaleCandidateMessage
 // ---------------------------------------------------------------------------
-console.log("\n[extractLatestSaleArticleUrl / buildSaleCandidateMessage]");
+console.log("\n[extractRecentArticleUrls / buildSaleCandidateMessage]");
 {
-  // 2026-08にSUZURIニュース一覧（https://suzuri.jp/media/category/news/）を実際に取得し、
-  // <a class="c_linkto" href="...">の並び順（新着順）をそのまま再現した実データフィクスチャ。
-  // 机上の推測パターンではなく、実際のHTML構造でテストする（testing.mdの外部API調査ルールに準拠）
-  function makeArticleLinksHtml(slugs) {
+  // 2026-11-23にSUZURIセール一覧（https://suzuri.jp/media/category/sale/）を実際に取得し、
+  // 記事リンクの並び順（新着順）・リンク形式（相対パス・同じ記事のリンクが画像とタイトルで2回出る）を
+  // そのまま再現した実データフィクスチャ。机上の推測パターンではなく、実際のHTML構造でテストする
+  // （testing.mdの外部API調査ルールに準拠）
+  const SALE_LIST_SLUGS_2026_11 = [
+    "black_friday_202611", "keyboard-keychain-campaign-202611", "ninnin-sale_202610",
+    "autumn_big_sale_202609", "ninnin-sale_202608", "gift-free-shipping-campaign-2607",
+    "tshirt-sale-campaign_202607", "t-shirts-sale_202607",
+  ];
+  function makeRelativeListHtml(slugs) {
     return slugs
-      .map(slug => `<a class="c_linkto" href="https://suzuri.jp/media/journal_${slug}/">`)
-      .join("\n");
+      .map(slug => `<a href="/media/journal_${slug}/"><img src="/x.jpg"></a>\n<a href="/media/journal_${slug}/">title</a>`)
+      .join("\n") + '\n<a href="/media/category/sale/">sale</a><a href="/media/page/2/">2</a>';
   }
-
-  const SLUGS_SALE_FIRST = [
-    "ninnin-sale_202608", "gift-feature", "gift-free-shipping-campaign-2607",
-    "price-revision-20260818", "terms-revision-20260806", "news_20260729",
-  ];
-  const SLUGS_SALE_LATER = [
-    "gift-feature", "gift-free-shipping-campaign-2607", "price-revision-20260818",
-    "terms-revision-20260806", "news_20260729", "1account_20260728",
-    "tshirt-sale-campaign_202607", "commission_20260724",
-  ];
-  const SLUGS_NO_SALE = [
-    "operation_schedule-202608", "can-badge-disposal", "silk-screen-printing", "present",
-  ];
+  function makeAbsoluteListHtml(slugs) {
+    return slugs.map(slug => `<a class="c_linkto" href="https://suzuri.jp/media/journal_${slug}/">`).join("\n");
+  }
+  const BASE = "https://suzuri.jp/media/journal_";
 
   {
-    const html = makeArticleLinksHtml(SLUGS_SALE_FIRST);
-    const url = extractLatestSaleArticleUrl(html);
-    assert("先頭がセール記事: そのURLを返す", url === "https://suzuri.jp/media/journal_ninnin-sale_202608/");
+    const urls = extractRecentArticleUrls(makeRelativeListHtml(SALE_LIST_SLUGS_2026_11));
+    assert("実データ（相対パス）: 上位3件を新着順で返す",
+      JSON.stringify(urls) === JSON.stringify([
+        `${BASE}black_friday_202611/`, `${BASE}keyboard-keychain-campaign-202611/`, `${BASE}ninnin-sale_202610/`,
+      ]));
+    assert("スラッグにsaleを含まない記事（black_friday）も先頭で拾える（2026-11の見逃しの再現）",
+      urls[0] === `${BASE}black_friday_202611/`);
+    assert("同じ記事への複数リンク（画像・タイトル）は1件にまとめる", new Set(urls).size === urls.length);
+    assert("相対パスは絶対URLに正規化される", urls.every(u => u.startsWith("https://suzuri.jp/media/journal_")));
   }
 
   {
-    const html = makeArticleLinksHtml(SLUGS_SALE_LATER);
-    const url = extractLatestSaleArticleUrl(html);
-    assert("セール記事が先頭でなくても、スラッグにsaleを含む最初の記事を返す",
-      url === "https://suzuri.jp/media/journal_tshirt-sale-campaign_202607/");
+    const urls = extractRecentArticleUrls(makeAbsoluteListHtml(["ninnin-sale_202608", "gift-feature", "price-revision-20260818", "x1"]));
+    assert("絶対URLのリンクにも対応する", urls[0] === `${BASE}ninnin-sale_202608/` && urls.length === 3);
   }
 
   {
-    const html = makeArticleLinksHtml(SLUGS_NO_SALE);
-    const url = extractLatestSaleArticleUrl(html);
-    assert("セール関連記事が存在しない場合はnullを返す", url === null);
+    const mixed = makeRelativeListHtml(["a1"]) + "\n" + makeAbsoluteListHtml(["a1", "b2"]);
+    const urls = extractRecentArticleUrls(mixed);
+    assert("相対と絶対が混在しても同じ記事は重複しない", JSON.stringify(urls) === JSON.stringify([`${BASE}a1/`, `${BASE}b2/`]));
   }
 
   {
-    const url = extractLatestSaleArticleUrl("");
-    assert("空HTMLでもクラッシュせずnullを返す", url === null);
+    const html = makeRelativeListHtml(SALE_LIST_SLUGS_2026_11);
+    assert("limit=1: 先頭の1件のみ", extractRecentArticleUrls(html, 1).length === 1);
+    assert("limit=100: 一覧の全記事（8件）", extractRecentArticleUrls(html, 100).length === 8);
+    assert("limit=0: 空配列", extractRecentArticleUrls(html, 0).length === 0);
+  }
+
+  {
+    const html = '<a href="/media/category/sale/">x</a><a href="/media/page/2/">y</a><a href="https://example.com/media/journal_evil/">z</a><a href="/media/">top</a>';
+    assert("記事以外のリンク・他ドメインのリンクは対象外", extractRecentArticleUrls(html).length === 0);
+  }
+
+  {
+    assert("空HTMLでも空配列を返す", extractRecentArticleUrls("").length === 0);
+    assert("null/undefinedでもクラッシュせず空配列を返す", extractRecentArticleUrls(null).length === 0 && extractRecentArticleUrls(undefined).length === 0);
   }
 
   const sampleSaleInfo = {
@@ -6202,103 +6301,194 @@ console.log("\n[extractLatestSaleArticleUrl / buildSaleCandidateMessage]");
 // 2026-08にgemini-2.5-flash-liteを固定文字列でハードコードしていたため、実際のCron発火で
 // モデル廃止(404)により抽出が失敗した（revision_log.md参照）。selectBestModel()による動的選択に
 // 修正したため、ここではモデル名を仮定せず「/models?key=」→「:generateContent」の順で
-// 呼ばれることを検証する（handleResearch()のテストと同じパターン）
+// 呼ばれることを検証する（handleResearch()のテストと同じパターン）。
+// 2026-11: 取得元をcategory/sale/へ変更し、スラッグのキーワード判定をやめて、未処理の記事を
+// 上位3件までGeminiのisSaleで判定する方式に変更した（ブラックフライデーの見逃し・revision_log.md参照）
 console.log("\n[checkForNewSale: 統合テスト]");
 {
-  const NEWS_HTML = `<a class="c_linkto" href="https://suzuri.jp/media/journal_ninnin-sale_202608/">`;
-  const ARTICLE_HTML = "<html><body>ニンニンSALE 開催中 Tシャツ800円引き</body></html>";
-  const GEMINI_SALE_JSON = {
-    isSale: true, saleName: "ニンニンSALE",
-    startDisplay: "2026-08-28 12:00 JST", endDisplay: "2026-09-03 23:59 JST",
-    items: [{ name: "Tシャツ", discountYen: 800, included: true }],
+  const SALE_LIST_URL = "https://suzuri.jp/media/category/sale/";
+  const BF  = "https://suzuri.jp/media/journal_black_friday_202611/";
+  const KBD = "https://suzuri.jp/media/journal_keyboard-keychain-campaign-202611/";
+  const NIN = "https://suzuri.jp/media/journal_ninnin-sale_202610/";
+  const AUT = "https://suzuri.jp/media/journal_autumn_big_sale_202609/";
+  const slugOf = (u) => u.replace("https://suzuri.jp/media/journal_", "").replace(/\/$/, "");
+  const listHtml = (urls) => urls.map(u => `<a href="/media/journal_${slugOf(u)}/">x</a>`).join("\n");
+
+  const GEMINI_BY_MARK = {
+    black_friday_202611: { isSale: true, saleName: "SUZURIのブラックフライデー", startDisplay: "2026-11-27 12:00 JST", endDisplay: "2026-12-08 23:59 JST", items: [{ name: "Tシャツ", discountYen: 1000, included: true }] },
+    "ninnin-sale_202610": { isSale: true, saleName: "ニンニンSALE", startDisplay: "2026-10-23", endDisplay: "2026-10-27", items: [{ name: "Tシャツ", discountYen: 700, included: true }] },
+    "keyboard-keychain-campaign-202611": { isSale: false, saleName: "", startDisplay: "", endDisplay: "", items: [] },
   };
 
-  function makeFetchMock({ geminiJson = GEMINI_SALE_JSON, geminiStatus = 200 } = {}) {
-    return async (url) => {
+  // fetchモック。記事本文には「MARK_<slug>」を埋め込み、generateContentのリクエスト本文からどの記事の
+  // 判定かを見分けて返す。calls[]に取得したURLを記録する
+  function makeFetchMock({ listHtml: html, geminiStatus = 200, failArticle = null, listStatus = 200 } = {}) {
+    const calls = [];
+    const fn = async (url, opts) => {
       const u = String(url);
-      if (u.includes("/media/category/news/")) {
-        return { ok: true, text: async () => NEWS_HTML };
+      calls.push(u);
+      if (u === SALE_LIST_URL || u.includes("/media/category/")) {
+        return { ok: listStatus < 400, status: listStatus, text: async () => html ?? "" };
       }
       if (u.includes("/models?key=")) {
-        // selectBestModel() 用（モデル名を固定せず動的に選択させる）
-        return {
-          ok: true,
-          text: async () => JSON.stringify({
-            models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }],
-          }),
-        };
+        return { ok: true, text: async () => JSON.stringify({ models: [{ name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] }] }) };
       }
       if (/:generateContent/.test(u)) {
+        const body = String(opts?.body ?? "");
+        const slug = Object.keys(GEMINI_BY_MARK).find(s => body.includes(`MARK_${s}`));
+        const json = GEMINI_BY_MARK[slug] ?? { isSale: false, saleName: "", startDisplay: "", endDisplay: "", items: [] };
         return {
-          ok: geminiStatus < 400,
-          status: geminiStatus,
+          ok: geminiStatus < 400, status: geminiStatus,
           text: async () => JSON.stringify(
             geminiStatus < 400
-              ? { candidates: [{ content: { parts: [{ text: JSON.stringify(geminiJson) }] } }] }
+              ? { candidates: [{ content: { parts: [{ text: JSON.stringify(json) }] } }] }
               : { error: { message: "not available" } }
           ),
         };
       }
-      if (u.includes("journal_ninnin-sale_202608")) {
-        return { ok: true, text: async () => ARTICLE_HTML };
+      if (u.includes("/media/journal_")) {
+        if (failArticle && u.includes(failArticle)) return { ok: false, status: 500, text: async () => "error" };
+        return { ok: true, text: async () => `<html><body>MARK_${slugOf(u)}</body></html>` };
       }
       return { ok: true, text: async () => "{}" };
     };
+    fn.calls = calls;
+    return fn;
   }
 
-  // ── 正常系: 新しいセール記事を検知→Gemini抽出成功→Discord通知→KV更新 ──
+  async function run(env, fetchMock) {
+    const sent = [];
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock;
+    try {
+      await checkForNewSale({ GEMINI_API_KEY: "test-key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook", ...env }, null, async (w, message) => { sent.push(message); });
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+    return sent;
+  }
+  const processedOf = (kv) => JSON.parse(kv.store["sale-check:processed"] ?? "null");
+
+  // ── 正常系: スラッグにsaleを含まない記事（ブラックフライデー）を検知→Gemini抽出→Discord通知→既読化 ──
   {
     const kv = makeKvMock();
-    let discordMsg = null;
-    const notifyFn = async (webhookUrl, message) => { discordMsg = message; };
-    const origFetch = globalThis.fetch;
-    globalThis.fetch = makeFetchMock();
-    await checkForNewSale({ RATE_KV: kv, GEMINI_API_KEY: "test-key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook" }, null, notifyFn);
-    globalThis.fetch = origFetch;
-
-    assert("動的モデル選択でも記事検知〜Gemini抽出〜Discord通知まで完走する", discordMsg?.includes("ニンニンSALE"));
-    assert("KVに通知済みURLが記録される（notify後に書き込み）",
-      kv.store["sale-check:last-notified"] === "https://suzuri.jp/media/journal_ninnin-sale_202608/");
+    const f = makeFetchMock({ listHtml: listHtml([BF, KBD, NIN]) });
+    const sent = await run({ RATE_KV: kv }, f);
+    assert("スラッグにsaleを含まないセール記事を検知して通知する", sent.some(m => m.includes("ブラックフライデー")));
+    assert("取得元はセール一覧（category/sale/）で、category/news/は見ない", f.calls[0] === SALE_LIST_URL && !f.calls.some(u => u.includes("/category/news/")));
+    assert("セール以外の記事（isSale=false）は通知しない", !sent.some(m => m.includes(KBD)));
+    const processed = processedOf(kv);
+    assert("処理済みURLに、セール記事・セール以外の記事の両方が記録される", processed?.includes(BF) && processed?.includes(KBD));
+    assert("処理済みURLは新しい順（一覧の並び）で保持される", processed?.indexOf(BF) < processed?.indexOf(KBD));
   }
 
-  // ── 境界値: 同じ記事URLが既に通知済みの場合は再通知しない ──
+  // ── セール以外の記事が先頭でも、その下のセール記事を拾う（直近1件だけ見る方式の欠陥） ──
   {
     const kv = makeKvMock();
-    kv.store["sale-check:last-notified"] = "https://suzuri.jp/media/journal_ninnin-sale_202608/";
-    let notifyCalled = false;
-    const notifyFn = async () => { notifyCalled = true; };
-    const origFetch = globalThis.fetch;
-    globalThis.fetch = makeFetchMock();
-    await checkForNewSale({ RATE_KV: kv, GEMINI_API_KEY: "test-key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook" }, null, notifyFn);
-    globalThis.fetch = origFetch;
-
-    assert("既知の記事URLは再通知しない", !notifyCalled);
+    const sent = await run({ RATE_KV: kv }, makeFetchMock({ listHtml: listHtml([KBD, BF]) }));
+    assert("セール以外の記事が先頭でも、下のセール記事を通知する", sent.some(m => m.includes("ブラックフライデー")));
   }
 
-  // ── エラー系: Geminiモデルが404等で失敗した場合は「手動確認要」を通知しKVは更新しない ──
+  // ── 上限: 上位3件までしか見ない（4件目は取得もGemini判定もしない） ──
+  {
+    const f = makeFetchMock({ listHtml: listHtml([BF, KBD, NIN, AUT]) });
+    await run({ RATE_KV: makeKvMock() }, f);
+    assert("4件目の記事は取得しない（サブリクエストの上限対策）", !f.calls.some(u => u.includes("autumn_big_sale")));
+    assert("上位3件の記事は取得する", [BF, KBD, NIN].every(u => f.calls.includes(u)));
+  }
+
+  // ── 移行: 旧キー（sale-check:last-notified）のURLは処理済みとして扱い、再通知しない ──
   {
     const kv = makeKvMock();
-    let discordMsg = null;
-    const notifyFn = async (webhookUrl, message) => { discordMsg = message; };
-    const origFetch = globalThis.fetch;
-    globalThis.fetch = makeFetchMock({ geminiStatus: 404 });
-    await checkForNewSale({ RATE_KV: kv, GEMINI_API_KEY: "test-key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook" }, null, notifyFn);
-    globalThis.fetch = origFetch;
-
-    assert("Gemini抽出失敗時は手動確認要の通知を送る", discordMsg?.includes("手動確認"));
-    assert("Gemini抽出失敗時はKVを更新しない（翌日再試行される）", kv.store["sale-check:last-notified"] === undefined);
+    kv.store["sale-check:last-notified"] = NIN;
+    const f = makeFetchMock({ listHtml: listHtml([BF, KBD, NIN]) });
+    const sent = await run({ RATE_KV: kv }, f);
+    assert("旧キーのURLは再取得も再通知もしない", !f.calls.includes(NIN) && !sent.some(m => m.includes("ニンニンSALE")));
+    assert("旧キー以外の新しい記事は通常どおり通知する", sent.some(m => m.includes("ブラックフライデー")));
   }
 
-  // ── エラー系: ニュース一覧取得自体が失敗した場合 ──
+  // ── 境界値: すべて処理済みなら、記事取得もGemini呼び出しもせずに終了する（大半の日はここで終了） ──
   {
-    let discordMsg = null;
-    const notifyFn = async (webhookUrl, message) => { discordMsg = message; };
-    const origFetch = globalThis.fetch;
-    globalThis.fetch = async () => ({ ok: false, status: 500, text: async () => "error" });
-    await checkForNewSale({ RATE_KV: makeKvMock(), GEMINI_API_KEY: "test-key", DISCORD_WEBHOOK_URL: "https://discord.example/webhook" }, null, notifyFn);
-    globalThis.fetch = origFetch;
+    const kv = makeKvMock();
+    kv.store["sale-check:processed"] = JSON.stringify([BF, KBD, NIN]);
+    const f = makeFetchMock({ listHtml: listHtml([BF, KBD, NIN]) });
+    const sent = await run({ RATE_KV: kv }, f);
+    assert("処理済みの記事は再通知しない", sent.length === 0);
+    assert("処理済みのみのときは一覧取得以外のfetchをしない（Gemini・記事取得なし）", f.calls.length === 1 && f.calls[0] === SALE_LIST_URL);
+  }
 
-    assert("ニュース一覧取得失敗時は手動確認要の通知を送る", discordMsg?.includes("ニュース一覧取得エラー"));
+  // ── 2回目の実行（実際のCronの流れ）: 初回で既読化された記事は、翌日は何もしない ──
+  {
+    const kv = makeKvMock();
+    const html = listHtml([BF, KBD, NIN]);
+    await run({ RATE_KV: kv }, makeFetchMock({ listHtml: html }));
+    const f2 = makeFetchMock({ listHtml: html });
+    const sent2 = await run({ RATE_KV: kv }, f2);
+    assert("翌日の実行では再通知しない", sent2.length === 0);
+    assert("翌日の実行は一覧取得のみで終わる", f2.calls.length === 1);
+  }
+
+  // ── 新しい記事が追加された日: 新しい記事だけを判定する ──
+  {
+    const kv = makeKvMock();
+    kv.store["sale-check:processed"] = JSON.stringify([KBD, NIN]);
+    const f = makeFetchMock({ listHtml: listHtml([BF, KBD, NIN]) });
+    const sent = await run({ RATE_KV: kv }, f);
+    assert("新しい記事（先頭）だけを取得・通知する", f.calls.includes(BF) && !f.calls.includes(KBD) && sent.some(m => m.includes("ブラックフライデー")));
+    const processed = processedOf(kv);
+    assert("新しい記事が処理済み配列の先頭に追加され、既存分も残る", processed[0] === BF && processed.includes(KBD) && processed.includes(NIN));
+  }
+
+  // ── 処理済み配列の上限（PROCESSED_MAX=20）: 古いものから捨てる ──
+  {
+    const kv = makeKvMock();
+    const old = Array.from({ length: 25 }, (_, i) => `https://suzuri.jp/media/journal_old-${i}/`);
+    kv.store["sale-check:processed"] = JSON.stringify(old);
+    await run({ RATE_KV: kv }, makeFetchMock({ listHtml: listHtml([BF]) }));
+    const processed = processedOf(kv);
+    assert("処理済み配列は最大20件に収まる", processed.length === 20);
+    assert("新しい記事は残り、最も古い記事が捨てられる", processed[0] === BF && !processed.includes(old[24]));
+  }
+
+  // ── エラー系: Geminiモデルが404等で失敗した場合は「手動確認要」を通知し、既読にしない ──
+  {
+    const kv = makeKvMock();
+    const sent = await run({ RATE_KV: kv }, makeFetchMock({ listHtml: listHtml([BF]), geminiStatus: 404 }));
+    assert("Gemini抽出失敗時は手動確認要の通知を送る", sent.some(m => m.includes("手動確認") && m.includes(BF)));
+    assert("Gemini抽出失敗時は処理済みに追加しない（翌日再試行される）", kv.store["sale-check:processed"] === undefined);
+  }
+
+  // ── エラー系: 一部の記事だけ取得に失敗しても、他の記事の処理は続ける ──
+  {
+    const kv = makeKvMock();
+    const sent = await run({ RATE_KV: kv }, makeFetchMock({ listHtml: listHtml([BF, NIN]), failArticle: "ninnin-sale_202610" }));
+    assert("取得に失敗した記事は手動確認要の通知を送る", sent.some(m => m.includes("手動確認") && m.includes(NIN)));
+    assert("他の記事（ブラックフライデー）は通常どおり通知する", sent.some(m => m.includes("ブラックフライデー")));
+    const processed = processedOf(kv);
+    assert("成功した記事だけが処理済みになり、失敗した記事は翌日再試行される", processed?.includes(BF) && !processed?.includes(NIN));
+  }
+
+  // ── エラー系: 一覧取得自体が失敗した場合 ──
+  {
+    const kv = makeKvMock();
+    const sent = await run({ RATE_KV: kv }, makeFetchMock({ listHtml: "", listStatus: 500 }));
+    assert("一覧取得失敗時は手動確認要の通知を送る", sent.some(m => m.includes("セール一覧取得エラー") && m.includes("手動確認")));
+    assert("一覧取得失敗時はKVを更新しない", kv.store["sale-check:processed"] === undefined);
+  }
+
+  // ── 境界値: 一覧に記事リンクが1件もない場合はクラッシュせず通常運用として終了 ──
+  {
+    const kv = makeKvMock();
+    const sent = await run({ RATE_KV: kv }, makeFetchMock({ listHtml: "<html>no articles</html>" }));
+    assert("記事リンクなしでも通知もKV更新もせず終了する", sent.length === 0 && kv.store["sale-check:processed"] === undefined);
+  }
+
+  // ── GEMINI_API_KEY未設定: 抽出をスキップし、既読にしない ──
+  {
+    const kv = makeKvMock();
+    const f = makeFetchMock({ listHtml: listHtml([BF]) });
+    const sent = await run({ RATE_KV: kv, GEMINI_API_KEY: "" }, f);
+    assert("GEMINI_API_KEY未設定時は記事を取得せず、既読にもしない", sent.length === 0 && !f.calls.includes(BF) && kv.store["sale-check:processed"] === undefined);
   }
 }
 

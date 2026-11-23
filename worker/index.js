@@ -1856,7 +1856,7 @@ ${itemsXml}
     if (request.method === "GET" && url.pathname === "/sale-info") {
       const sale = getActiveSaleInfo();
       const payload = sale
-        ? { active: true, endUtcMs: sale.endUtcMs, discountYen: sale.discountYen, endDisplay: sale.endDisplay }
+        ? { active: true, endUtcMs: sale.endUtcMs, discountYen: sale.discountYen, endDisplay: sale.endDisplay, stickerExcluded: sale.stickerExcluded === true }
         : { active: false };
       return Response.json(payload, { headers: { ...corsH, "Cache-Control": "public, max-age=300" } });
     }

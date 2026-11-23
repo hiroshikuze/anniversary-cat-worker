@@ -246,7 +246,7 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | 季節の花補充フォールバックのthemeHook生成（`_generateFallbackThemeHook()`。kana/en/visual/styleと異なり例外的にGemini呼び出しで生成。固定の一言だと花の繰り返し選出時に同じボケになり品質基準を満たせないため。失敗時はthemeHookがundefinedのままfullにフォールバック） | `worker/index.js` `_generateFallbackThemeHook()` `generateResearchPool()` | 実装済み・初回Cron発火での動作確認待ち |
 | SUZURIセール情報の一元管理（frontend/Bot双方が単一の情報源を参照） | `worker/sale.js` `getActiveSaleInfo()` / `worker/index.js` `GET /sale-info` | 稼働中 |
 | Bot投稿へのセール告知リプライ（セール期間中のみ、本体投稿成功時にbest-effortでスレッド返信） | `worker/bot.js` `runBot()` | 稼働中 |
-| SUZURIセール自動検知Cron（毎日1回ニュース一覧をチェック・新着セール記事をGeminiで構造化抽出しDiscord通知。本番反映は手動） | `worker/sale-check.js` `checkForNewSale()` | 稼働中 |
+| SUZURIセール自動検知Cron（毎日1回セール一覧`category/sale/`をチェック・未処理の記事を上位3件までGeminiで判定・構造化抽出しDiscord通知。本番反映は手動。2026-11に取得元を`category/news/`から変更・キーワード判定を廃止） | `worker/sale-check.js` `checkForNewSale()` | 実装済み・デプロイ後の初回Cron発火での動作確認待ち |
 | 外部通信の共通リトライ（5xx・ネットワーク例外を指数バックオフでリトライ。SUZURI登録・fal.aiポーリング・共有URL画像取得等に適用） | `worker/http-utils.js` `fetchWithRetry()` `worker/index.js` `_pollFalAndGetTexture()` | 稼働中 |
 | Workers Traces有効化・CPU時間計測チェックポイント（Cron・HTTPエンドポイント問わず重い処理に`recordCpuCheckpoint()`で計測を恒久設置。Workers Free上限10ms対策のBug#32の一環） | `wrangler.toml` `[observability.traces]` `worker/index.js` `recordCpuCheckpoint()` `worker/bot.js` | 稼働中 |
 | CPU時間のステップ別KV集計・API化（`/usage`と同パターン。`/cpu-usage`でCIログから確認可能） | `worker/index.js` `incrementCpuTimeKv()` `recordCpuCheckpoint()` `/cpu-usage` `scripts/health-check.js` | 稼働中 |

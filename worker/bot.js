@@ -286,7 +286,9 @@ function enMonthDay(month, day) {
  */
 export function buildSaleReplyTextJa(sale) {
   const { month, day, weekdayJa } = sale.endDisplay;
-  return `🛍️ 今なら${sale.url}で最大${sale.discountYen}円OFF中！（ステッカーを除く・${month}/${day}(${weekdayJa})まで）\n\n${sale.url}`;
+  // 「ステッカーを除く」は対象外のセールのときだけ付ける（未定義でも付けない・2026-11）
+  const note = sale.stickerExcluded === true ? "ステッカーを除く・" : "";
+  return `🛍️ 今なら${sale.url}で最大${sale.discountYen}円OFF中！（${note}${month}/${day}(${weekdayJa})まで）\n\n${sale.url}`;
 }
 
 /**
@@ -295,8 +297,9 @@ export function buildSaleReplyTextJa(sale) {
  */
 export function buildSaleReplyTextBilingual(sale) {
   const { month, day } = sale.endDisplay;
-  return `🛍️ SUZURI Sale! Up to ¥${sale.discountYen} off until ${enMonthDay(month, day)} (stickers excluded)\n${sale.url}\n\n` +
-         `🛍️ 今なら最大${sale.discountYen}円OFF中！（ステッカーを除く・${month}/${day}まで）\n${sale.url}`;
+  const excl = sale.stickerExcluded === true;
+  return `🛍️ SUZURI Sale! Up to ¥${sale.discountYen} off until ${enMonthDay(month, day)}${excl ? " (stickers excluded)" : ""}\n${sale.url}\n\n` +
+         `🛍️ 今なら最大${sale.discountYen}円OFF中！（${excl ? "ステッカーを除く・" : ""}${month}/${day}まで）\n${sale.url}`;
 }
 
 /**
