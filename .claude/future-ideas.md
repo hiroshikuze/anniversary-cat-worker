@@ -1480,7 +1480,7 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
   - Facebook: `https://www.facebook.com/share/p/19dQHjSkjS/`
   - mixi2: `https://mixi.social/@nyanmusu/posts/939f5f0a-44dc-4b58-8043-73e88afc61c0`
   - Discord（自動投稿の結果・転載用テキストの通知。ユーザーの非公開サーバー内のため、閲覧にはそのサーバーへの参加が必要）: `https://discordapp.com/channels/1390567808148045907/1480490867600134164/1554513631847125075`
-  - 反響の確認方法: Bluesky・Mastodonは公開APIで取得できる。X・Instagram・Facebookは認証や有料APIが必要で、Claude Codeからは取得できないため、ユーザーに各アプリの数字（いいね・リポスト等）を教えてもらう。mixi2の公開APIの有無は未確認
+  - 反響の確認方法: Bluesky・Mastodonは公開APIで取得できる。**Xは`https://api.fxtwitter.com/<ユーザー名>/status/<投稿ID>`で取得できる**（認証不要。応答の`tweet`に`likes`・`retweets`・`replies`・`quotes`・`bookmarks`・`views`。2026-11-23に確認。x.com本体はWebFetch・curlとも402で読めない）。Instagram・Facebookは認証や有料APIが必要で、Claude Codeからは取得できないため、ユーザーに各アプリの数字（いいね等）を教えてもらう。mixi2の公開APIの有無は未確認
 - 途中で起きたこと:
   - GitHub Actionsに`MASTODON_*`が未登録だった（Workerにのみ登録）。ユーザーが登録したが、`MASTODON_INSTANCE_URL`の値の誤り（最初は接続不可、次は`/@nyanmusu`付きでHTMLが返る）でHealth Checkが2回失敗し、`https://mastodon.social`に直して通過した
   - 本番の1回目のpushで、お試し用フォルダから本番用フォルダへのファイルの入れ直しをgitが「名前の変更」と判定し、「追加」だけを探すワークフローが投稿を飛ばした。`git diff --no-renames`で修正し、やり直して投稿できた
@@ -1519,7 +1519,7 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 - 実投稿（2026-11-23 22:34 JST）: Bluesky `https://bsky.app/profile/nyanmusu.bsky.social/post/3n2yanfkec427`、Mastodon `@nyanmusu/117666012256546234`。公開APIで1件ずつ・画像付きを確認
 - 途中で起きたこと: 環境のPillowが壊れていて使えず、JPEG変換はImageMagickの`convert`で行った（`SKILL.md`の「JPEG変換」参照）。お試し実行のpushで、Health Checkの`[3] Research`がJSONパースで1回だけ失敗した（告知とは無関係。`.claude/bugs-history.md`の「未対応バグ・改善項目」参照）
 - Claude Code Remoteの`send_later`で予約済み: 11/27 10:00 JSTに開催中版の準備（投稿は12:00以降）、12/9 10:00 JSTに反響確認
-- 手動の転載（2026-11-23・ユーザー）: X `https://x.com/hiroshikuze/status/2124863559914168335`、Instagram `https://www.instagram.com/p/DgFiK32P0Nd/`、mixi2 `https://mixi.social/@nyanmusu/posts/249ff37e-1d45-4ef9-b2c4-588d765ca0e7`、Facebook（URLは個人アカウントのIDを含むため記録しない）。追跡用のクエリ文字列は外した。これらの反響はClaude Codeから取得できないため、12/9の反響確認ではユーザーに数字を尋ねる
+- 手動の転載（2026-11-23・ユーザー）: X `https://x.com/hiroshikuze/status/2124863559914168335`、Instagram `https://www.instagram.com/p/DgFiK32P0Nd/`、mixi2 `https://mixi.social/@nyanmusu/posts/249ff37e-1d45-4ef9-b2c4-588d765ca0e7`、Facebook（URLは個人アカウントのIDを含むため記録しない）。追跡用のクエリ文字列は外した。12/9の反響確認では、Xは`api.fxtwitter.com`で取得し（2026-11-23時点: 表示19・いいね0・リポスト0・返信0）、Instagram・Facebook・mixi2はユーザーに数字を尋ねる
 
 **Geminiの配置情報をそのまま使えなかった点**（パターン1のSatori合成時に手動で補正した）:
 
