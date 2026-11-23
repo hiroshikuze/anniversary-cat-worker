@@ -1,0 +1,34 @@
+name: Growth Metrics
+
+# 成長ループ（.claude/growth/）が読む集計値を週1回取得し、
+# ラベル growth:metrics のIssueにコメントする。
+# 詳細は .claude/docs/architecture/growth-metrics.md。
+# schedule はデフォルトブランチ（main）上のこのファイルでだけ動く。
+
+on:
+  schedule:
+    - cron: "17 20 * * 0" # 毎週月曜 05:17 JST（日曜 20:17 UTC）
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: growth-metrics
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      # 外部パッケージを使わないため npm ci は不要
+      - name: Collect metrics and comment
+        env:
+          UMAMI_SHARE_ID: ${{ secrets.UMAMI_SHARE_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/growth-metrics.mjs

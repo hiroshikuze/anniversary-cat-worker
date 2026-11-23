@@ -86,6 +86,18 @@ UI・画像合成・座標配置など、完成物を実際に見なければ良
 
 「すでに書いたから」を理由に順序を遡及免除しない。
 
+### 例外：成長ループの週次実行（`running-growth-loops`）
+
+次の3つをすべて満たすときに限り、ルール1（計画の提示と承認待ち）とルール7（TodoWriteでのDocs→Tests→Codeとフェーズの宣言）を適用しない。
+
+1. 依頼が、スキル`running-growth-loops`の実行である（週次のスケジュールタスク、または「成長ループを回して」）
+2. 変更するファイルが、`.claude/growth/`配下と、`.claude/future-ideas.md`への追記だけである
+3. 作業ブランチが、`claude/growth-`で始まる記録用のブランチである
+
+- 上の範囲を1つでも外れる作業（コード、ほかのドキュメント、設定、ワークフローの変更）が必要になったら、例外は使わない。その作業はせず、`.claude/future-ideas.md`に提案として書く
+- この例外の実行中も、ルール2〜6、gitのルール、セッション開始時に`revision_log.md`を読むことは、通常どおり守る
+- 例外を使ったことを、記録PRの本文に1行書く
+
 ---
 
 ## プロジェクト概要
@@ -270,3 +282,4 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 - Gitワークフロー・デプロイ手順 → `.claude/rules/git-workflow.md`
 - システム設計・API仕様・将来拡張・過去バグ詳細 → `.claude/rules/architecture.md`（大きな節の本文は`.claude/docs/architecture/`。毎セッション自動では読み込まれないため、必要なときに読む）
 - SNS用のSUZURIセール告知（画像作成・Bluesky/Mastodonへの投稿・Discordへの転載用テキスト送信）を頼まれたとき → まずスキル`sale-announcement`（`.claude/skills/sale-announcement/SKILL.md`）の「手順」を読み、その順で進める（2026-09-29に一通り成功した流れ。経緯は`.claude/future-ideas.md`の「C. Gemini×Satori分業方式」、投稿の仕組みは`.claude/rules/git-workflow.md`の「SNSセール告知の自動投稿とDiscord送信」）
+- 集客・販売の成長ループ（週次の計測→分析→改善・企画→実施→検証→記録）を頼まれたとき → スキル`running-growth-loops`（`.claude/skills/running-growth-loops/SKILL.md`）。設定と状態は`.claude/growth/`、サブエージェントは`.claude/agents/`

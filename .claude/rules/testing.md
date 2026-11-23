@@ -15,6 +15,8 @@
 | `scripts/query-worker-logs.mjs` | GitHub Actions推奨（`.github/workflows/query-worker-logs.yml`をworkflow_dispatchで手動発火）。ローカル実行も可: `CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-logs.mjs --grep fal --since 6h` | Cloudflare Workers Observability API | Cloudflare Workers Logs（`console.log`の内容）をキーワード検索。詳細は次項参照 |
 | `scripts/test-sale.mjs` | `npm test`（2026-08よりCI接続） | 不要 | worker/sale.jsユニットテスト（`isSaleActive`/`getActiveSaleInfo`の正常系・境界値・エラー系） |
 | `scripts/test-post-sale-announcement.mjs` | `npm test`（2026-09よりCI接続） | 不要 | `scripts/post-sale-announcement.mjs`の純粋関数（文字数・ハッシュタグ数・Xの加重文字数の検証、Blueskyのfacet生成、Discordメッセージの組み立て）のユニットテスト |
+| `scripts/test-growth-metrics.mjs` | `npm test`（2026-11よりCI接続） | 不要 | `scripts/growth-metrics.mjs`の純粋関数（各APIのレスポンスからの値の取り出し、失敗した項目の`errors`の作り方と秘密情報の伏せ字、コメント本文の形式）と、再試行の方針が`fetchWithRetry()`と同じこと（ネットワークエラー・5xxだけ再試行し、429は再試行しない）のユニットテスト |
+| `scripts/growth-metrics.mjs` | GitHub Actionsのみ（`.github/workflows/growth-metrics.yml`。毎週月曜05:17 JSTと手動実行）。ローカル確認は`node scripts/growth-metrics.mjs --dry-run`（Issueへ投稿しない） | Bluesky・Mastodonの公開API、Umami（`UMAMI_SHARE_ID`必要）、GitHub API | 成長ループの集計値を取得し、`growth:metrics`のIssueへコメントする。詳細は`.claude/docs/architecture/growth-metrics.md` |
 
 ## ユニットテスト方針
 
