@@ -6293,6 +6293,33 @@ console.log("\n[extractRecentArticleUrls / buildSaleCandidateMessage]");
   assert("buildSaleCandidateMessage: 対象外商品が明示される", msg.includes("ステッカー 対象外"));
   assert("buildSaleCandidateMessage: 元記事URLが含まれる", msg.includes("https://suzuri.jp/media/journal_ninnin-sale_202608/"));
   assert("buildSaleCandidateMessage: _currentSale更新の案内が含まれる", msg.includes("worker/sale.js"));
+
+  // _currentSaleに入れる値の案内（2026-11・Bug#51）
+  assert("ステッカー対象外: stickerExcluded: true を案内する", msg.includes("stickerExcluded: true"));
+  assert("discountYenには対象商品の最大額（800）を案内する", msg.includes("discountYen: 800"));
+
+  const bfInfo = {
+    isSale: true, saleName: "SUZURIのブラックフライデー",
+    startDisplay: "2026-11-27 12:00 JST", endDisplay: "2026-12-08 23:59 JST",
+    items: [
+      { name: "Tシャツ", discountYen: 1000, included: true },
+      { name: "ステッカー", discountYen: 50, included: true },
+      { name: "缶バッジ", discountYen: 50, included: true },
+      { name: "アクリルキーホルダー", discountYen: 300, included: true },
+    ],
+  };
+  const bfMsg = buildSaleCandidateMessage(bfInfo, "https://suzuri.jp/media/journal_black_friday_202611/");
+  assert("ステッカー対象: stickerExcluded: false を案内する", bfMsg.includes("stickerExcluded: false") && !bfMsg.includes("stickerExcluded: true"));
+  assert("最大額は商品の並び順によらず1000円", bfMsg.includes("discountYen: 1000"));
+
+  const noStickerMsg = buildSaleCandidateMessage({ ...bfInfo, items: [{ name: "Tシャツ", discountYen: 1000, included: true }] }, "https://example.com/a");
+  assert("ステッカーが抽出結果にない: 記事での確認を促し、true/falseを断定しない",
+    noStickerMsg.includes("stickerExcluded") && noStickerMsg.includes("記事で確認") && !/stickerExcluded: (true|false)/.test(noStickerMsg));
+
+  const noItemsMsg = buildSaleCandidateMessage({ isSale: true, saleName: "X", items: [] }, "https://example.com/b");
+  assert("対象商品なし: discountYenも記事での確認を促し、0円を案内しない", !noItemsMsg.includes("discountYen: 0") && noItemsMsg.includes("discountYen"));
+  assert("items未定義でもクラッシュしない", typeof buildSaleCandidateMessage({ isSale: true }, "https://example.com/c") === "string");
+  assert("案内は人間の確認前提（記事で確認する旨を含む）", bfMsg.includes("記事で確認"));
 }
 
 // ---------------------------------------------------------------------------

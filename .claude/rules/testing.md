@@ -84,6 +84,14 @@
 | `[research] pool hit date=... theme="..."` | プールから記念日を取得（正常） |
 | `[research] pool hit date=... fallback=true` | 季節の花補充エントリを使用（プール候補不足） |
 | `[bot] research プール取得 theme="..."` | Bot CronがプールからテーマをピックアップDone |
+| `[sale-check] 新しい記事はありません（すべて処理済み）` | 正常（2026-11〜）。SUZURIセール一覧（`category/sale/`）の上位3件がすべて処理済み。大半の日はこれ |
+| `[sale-check] 未処理の記事を検知 count=N urls=...` | 新しい記事があり、Geminiでセールかどうかを判定する |
+| `[sale-check] セール記事ではないと判定 url=...` | 新商品・運営告知などのセール以外の記事。既読にして終わる |
+| `[sale-check] Discord通知完了 url=...` | セール候補をDiscordに通知した。`worker/sale.js`の`_currentSale`への反映が必要（人手） |
+| `[sale-check] 一覧に記事リンクが見つかりません（ページ構造の変更を確認）` | 一覧は取得できたが記事リンクが0件。SUZURI側のHTML変更を疑い、`curl https://suzuri.jp/media/category/sale/`で確認する |
+| `[sale-check] セール一覧取得失敗: xxx` | 一覧の取得失敗（タイムアウト等）。Discordに`⚠️ SUZURIセールチェック失敗（セール一覧取得エラー）`が届く。翌日自動で再試行される |
+| `[sale-check] 記事取得・Gemini抽出失敗 url=...: xxx` | その記事だけ失敗。Discordに手動確認の通知が届き、翌日再試行される |
+| `[sale-check] セール関連記事が見つかりませんでした（通常運用）` | 2026-11以前の旧ログ（廃止）。この文言が出ていたら旧コードのまま（Bug#51参照） |
 
 ## リサーチプールCronが未発火だった場合
 

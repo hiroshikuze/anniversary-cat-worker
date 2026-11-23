@@ -114,9 +114,30 @@ async function extractSaleInfoWithGemini(articleText, apiKey, kv, webhookUrl) {
   return JSON.parse(text);
 }
 
+/**
+ * _currentSaleに入れる値の案内文を組み立てる（純粋関数・2026-11追加・Bug#51）。
+ * Geminiの抽出結果からの提案であり、反映前に人間が記事で確認する前提は変わらない。
+ * 判定できない値は断定せず「記事で確認」と書く。
+ */
+function buildCurrentSaleHint(items) {
+  const included = items.filter(i => i.included && Number(i.discountYen) > 0);
+  const maxYen = included.length > 0 ? Math.max(...included.map(i => Number(i.discountYen))) : null;
+  const sticker = items.find(i => typeof i.name === "string" && i.name.includes("ステッカー"));
+  const discountHint = maxYen !== null
+    ? `discountYen: ${maxYen}（対象商品の最大額）`
+    : "discountYen: 対象商品の最大額を記事で確認してください";
+  const stickerHint = !sticker
+    ? "stickerExcluded: ステッカーが対象かを記事で確認してください（対象外ならtrue）"
+    : sticker.included
+      ? "stickerExcluded: false（ステッカーも対象）"
+      : "stickerExcluded: true（ステッカーは対象外。文言に「ステッカーを除く」が付く）";
+  return `入れる値の案内（記事で確認してから反映）: ${discountHint} / ${stickerHint}`;
+}
+
 /** Discord通知用メッセージを組み立てる（純粋関数） */
 export function buildSaleCandidateMessage(saleInfo, articleUrl) {
-  const itemLines = (saleInfo.items ?? [])
+  const items = Array.isArray(saleInfo.items) ? saleInfo.items : [];
+  const itemLines = items
     .map(i => (i.included ? `${i.name} ${i.discountYen}円引き` : `${i.name} 対象外`))
     .join(" / ");
   return [
@@ -127,6 +148,7 @@ export function buildSaleCandidateMessage(saleInfo, articleUrl) {
     `元記事: ${articleUrl}`,
     "",
     "worker/sale.js の _currentSale を更新してください（Claude Codeセッションで対応可）。",
+    buildCurrentSaleHint(items),
   ].filter(Boolean).join("\n");
 }
 
@@ -170,7 +192,8 @@ export async function checkForNewSale(env, ctx, notifyFn) {
 
   const recentUrls = extractRecentArticleUrls(html);
   if (recentUrls.length === 0) {
-    console.log("[sale-check] 一覧に記事リンクが見つかりませんでした（通常運用）");
+    // category/sale/には常に過去の記事が並ぶため、0件はSUZURI側のHTML変更を疑う（testing.mdのログパターン参照）
+    console.warn("[sale-check] 一覧に記事リンクが見つかりません（ページ構造の変更を確認）");
     return;
   }
 

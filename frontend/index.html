@@ -348,7 +348,7 @@
     const STORAGE_DAYS = 14;
     // SUZURIセール期間・金額の一次情報源はworker/sale.jsのみ（GET /sale-infoで取得）。
     // frontend側にセール日付・金額をハードコードしない
-    let saleInfo = null; // { active: false } または { active: true, endUtcMs, discountYen, endDisplay }
+    let saleInfo = null; // { active: false } または { active: true, endUtcMs, discountYen, endDisplay, stickerExcluded }
 
     // ----------------------------------------------------------
     // What's New

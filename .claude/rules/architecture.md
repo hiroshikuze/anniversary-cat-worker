@@ -164,10 +164,10 @@ export function _setSaleForTest(sale) { ... } // テスト用
 ### frontend側の連携（`frontend/index.html`）
 
 - `SALE_START_UTC`/`SALE_END_UTC`のハードコード定数は廃止。ページ初期化時に`loadSaleInfo()`が`/sale-info`をfetchし、結果をモジュールスコープの`saleInfo`に保持する（fetch失敗時は`null`＝バナー非表示にフォールバックし、サービス継続を優先する）
-- `renderSaleBanner()`が`saleInfo`と`currentLang`から`#g-sale-banner`の表示テキストを組み立てる。**文章の骨格（テンプレート）は言語ごとに固定文字列として保持し、日付・金額のみ動的に埋め込む**方針（機械生成の不自然な文章化を避けつつ、更新漏れが起きやすい数値部分だけを一元化する）
+- `renderSaleBanner()`が`saleInfo`と`currentLang`から`#g-sale-banner`の表示テキストを組み立てる。**文章の骨格（テンプレート）は言語ごとに固定文字列として保持し、日付・金額のみ動的に埋め込む**方針（機械生成の不自然な文章化を避けつつ、更新漏れが起きやすい数値部分だけを一元化する）。注記「（ステッカーを除く）」は本文（`saleBanner`）から切り出した`saleBannerStickerNote`（3言語）に持ち、純粋関数`_composeSaleBanner(banner, note, amount, endDate, stickerExcluded)`が`stickerExcluded === true`のときだけ末尾に付ける（2026-11・`window._composeSaleBanner`として公開し、`scripts/test-bot.mjs`で同等関数を検証）
 - かなモードの曜日ふりがなは、既存の`formatDateKana()`内の`weekdayKana`対応表（`"日曜日": "にちようび"`等）をモジュールスコープに引き上げて再利用する`kanaForWeekday1Char(char)`ヘルパー経由で参照する。**新しい変換表は作らない**（過去に曜日読み間違いのバグがあったため、対応表を二重管理しない）
 - `setLang()`（言語切り替え時）でも`renderSaleBanner()`を再呼び出しする
-- `scripts/health-check.js`（`WORKER_URL`設定時のE2Eチェック）が`GET /sale-info`の到達性・レスポンス形式をCIで検証する（`/usage`・`/cpu-usage`と同じパターン）
+- `scripts/health-check.js`（`WORKER_URL`設定時のE2Eチェック）が`GET /sale-info`の到達性・レスポンス形式をCIで検証する（`/usage`・`/cpu-usage`と同じパターン）。セール中は`stickerExcluded`が真偽値であることも検証し、値をログに出す（2026-11追加。デプロイ後に実際の値をCIログで確認できるようにするため）
 
 ---
 
