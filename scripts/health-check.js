@@ -196,8 +196,22 @@ async function checkResearch(apiKey, allModels) {
     const cleaned = rawText.replace(/```json\s*|\s*```/g, "").trim();
     const match = cleaned.match(/\{[\s\S]*?\}/);
     result = JSON.parse(match ? match[0] : cleaned);
-  } catch {
-    check("JSON パース", false, `生のテキスト: ${rawText.slice(0, 100)}`);
+  } catch (e) {
+    check("JSON パース", false, `${e.message} / 生のテキスト: ${rawText.slice(0, 100)}`);
+    // 2026-11追加: 原因を確定するための診断表示（判定は変えない。bugs-history.mdの未対応項目参照）
+    // worker/index.jsのhandleResearch()も同じくparts[0]だけを読むため、複数partへの分割が原因かを見分ける
+    const parts = data.candidates?.[0]?.content?.parts ?? [];
+    note(`part数: ${parts.length} / finishReason: ${data.candidates?.[0]?.finishReason ?? "(なし)"}`);
+    parts.forEach((p, i) => note(`part[${i}]: ${p.thought ? "thought" : "text"} ${p.text?.length ?? 0}文字`));
+    const joined = parts.filter(p => p.text && !p.thought).map(p => p.text).join("");
+    note(`全part結合（最大2000文字）: ${joined.slice(0, 2000)}`);
+    try {
+      const m = joined.replace(/```json\s*|\s*```/g, "").trim().match(/\{[\s\S]*\}/);
+      JSON.parse(m ? m[0] : joined);
+      note("→ 全partを結合すればJSONとして読める（parts[0]だけを読むことが原因の可能性が高い）");
+    } catch (e2) {
+      note(`→ 全partを結合しても読めない: ${e2.message}`);
+    }
     return;
   }
 

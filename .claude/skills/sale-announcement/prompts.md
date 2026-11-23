@@ -30,7 +30,7 @@ Please create 4 separate promotional images for a social media post (Bluesky / M
 5. A sense of "limited time / only now" (the 14-day limited designs + sale deadline)
 
 ## Quality bar
-- It should feel as cute and polished as popular character-goods brands' sale posts (e.g., mofusand's SUZURI sale announcements) — not like a plain text notice or a template.
+- It should feel as cute and polished as popular character-goods brands' sale posts — not like a plain text notice or a template. Do not imitate any existing character or brand; use only the cat from my attached illustration.
 - Use playful, characterful Japanese typography rather than a plain business-style font.
 - Strong visual hierarchy and color contrast so the discount is readable at thumbnail size on a smartphone timeline.
 - Products should look appealing and realistic enough to make people want to buy, not like flat hand-drawn outlines.
@@ -45,6 +45,14 @@ Please create 4 separate promotional images for a social media post (Bluesky / M
 ```
 
 **注意**: 2026-09はこの指示文の`Products`に4商品すべてを書いてしまった（実際の対象はTシャツとステッカーのみ）。次回は対象商品だけを書く。
+
+## 他社キャラクターの名前を指示文に書かない（2026-11追加・再発防止）
+
+2026-11のブラックフライデーでは、品質の目安として「e.g. mofusand」と書いた指示文で草案を作ったところ、添付したBot作品の猫ではなく、**mofusandによく似た猫**が左右とグッズの絵柄に描かれた。他社キャラクターに似た絵を自分の告知に載せるのは権利面で避けるべきなので、背景からは猫ごと消して使った（合成では実物のグッズ写真を使うため、最終画像には残っていない）。
+
+- 指示文に、実在のキャラクター・ブランドの名前を書かない（目安のつもりでも、絵柄をまねされる）
+- 「既存のキャラクターをまねしない・添付のイラストの猫だけを使う」と明記する（上の2つの指示文は修正済み）
+- 草案に、うちの作品と違う猫が描かれていたら、背景を作るときに猫ごと消す指示を出す
 
 ## AI Studio用（2026-09-29に使用・パターン1の方向性）
 
@@ -67,7 +75,7 @@ Products: show ONLY these two items, using the attached product photos as they a
 - Sticker (100円OFF)
 Give the two products plenty of space so they are large and clearly visible.
 
-Quality bar: as cute and polished as popular character-goods brands' sale posts (e.g. mofusand). Playful, characterful Japanese typography. Strong contrast so the discount is readable at smartphone thumbnail size.
+Quality bar: as cute and polished as popular character-goods brands' sale posts. Do not imitate any existing character or brand; use only the cat from the attached illustration. Playful, characterful Japanese typography. Strong contrast so the discount is readable at smartphone thumbnail size.
 ```
 
 背景用（同じ会話で続けて。Temperatureを0.5前後に下げてから送る）。2026-09は描き直されて文字の余白がなくなったため、次回は末尾の1文（余白の指定）を足して試す（未検証）。

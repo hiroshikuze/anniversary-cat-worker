@@ -16,6 +16,7 @@ SUZURIセール時にSNSへ載せる告知画像を、Geminiの絵とSatoriの�
 | `compose.mjs` | 合成スクリプト。2026-09「秋のビッグセール」パターン1（ポップ・賑やか。ユーザー評価「かなり魅力的になった」）の最終版をそのまま保存したもの |
 | `compose-pattern2.mjs` | 同パターン2（秋の季節感・木の板の背景）の最終版。文字の書式をGeminiの草案の画像に寄せた版 |
 | `compose-aistudio.mjs` | **2026-09-29に実際にBluesky/Mastodonへ投稿した版**。Google AI Studio（Nano Banana）の背景を使い、パターン1の方向性で組み直したもの。次回はまずこれを土台にする |
+| `compose-blackfriday.mjs` | **2026-11-23に投稿した「SUZURIのブラックフライデー」開催予告版**。黒地の背景（Geminiで文字・グッズ・猫をすべて消したもの）に、対象商品4点を2×2の白いカード＋金の値引きバッジで並べる。第2引数`kaisai`で「開催中」版（`banner-kaisai.png`）を出力。対象商品が4点のセールは、これを土台にする |
 | `fetch-assets.sh` | フォントとSUZURIグッズ画像を作業ディレクトリに集める |
 | `SKILL.md` | このファイル。手順 |
 | `reference.md` | スクリプトの書き換え箇所・配置情報の信頼度・背景の扱い・AI Studioの設定・投稿文の例・Satoriの描き方 |
@@ -73,6 +74,6 @@ SUZURIセール時にSNSへ載せる告知画像を、Geminiの絵とSatoriの�
   作業ディレクトリはClaude Codeセッションのスクラッチパッドを使う。背景がWebP形式で届いた場合は、PillowでJPEGに変換する（`pip install pillow`後、`Image.open("bg.webp").convert("RGB").save("bg.jpg", quality=95)`）。resvgはWebPを読めない
 - **書式の合わせ方（手順4）**: 文字の色・縁取り・アーチの有無は、Geminiの草案の画像をClaudeが直接見て合わせる（配置情報のJSONは頼まない。`reference.md`の「配置情報（JSON）の信頼度」参照）
 - **背景が期待どおりでない場合（手順4）**: 描き直されて文字の余白がない、不要な小物がある、などは合成側で直せる（`reference.md`の「Google AI Studioでの作り方」の「背景は同じ会話で頼んでも描き直された」「不要な小物の手動消去」参照）
-- **JPEG変換（手順5）**: PNGは約1.3MBでBlueskyの上限1MBを超える。`quality=92`で約300KBになった
-- **投稿の仕組み（手順6〜8）**: `.github/workflows/sale-announcement.yml`＋`scripts/post-sale-announcement.mjs`。フォルダ構成・検証ルール・注意点は`.claude/rules/git-workflow.md`の「SNSセール告知の自動投稿とDiscord送信」参照。**同じファイルを別フォルダへ入れ直しても「追加」として検出される**（`--no-renames`対応済み）
+- **JPEG変換（手順5）**: PNGは約1.3MBでBlueskyの上限1MBを超える。`quality=92`で約300KBになった（2026-09）。**環境のPillowが使えない場合**（2026-11は`ImportError: cannot import name '_imaging'`で壊れていた）は、ImageMagickで変換する: `convert banner.png -strip -quality 92 banner.jpg`（2026-11は約400KB）。背景のWebPも同様に`convert bg.webp -quality 95 bg.jpg`でよい（未検証）
+- **投稿の仕組み（手順6〜8）**: `.github/workflows/sale-announcement.yml`＋`scripts/post-sale-announcement.mjs`。フォルダ構成・検証ルール・注意点は`.claude/rules/git-workflow.md`の「SNSセール告知の自動投稿とDiscord送信」参照。**同じファイルを別フォルダへ入れ直しても「追加」として検出される**（`--no-renames`対応済み）。手順8で`mkdir`＋`cp`で作り直しても、`git status`・`git diff --cached`には「名前の変更（`R100`）」と表示されるが、問題ない（2026-11確認）。ワークフローと同じ条件で拾われるかは、コミット前に`git diff --cached --no-renames --name-only --diff-filter=A -- tmp-sale-announcement/`で確認できる（本番用フォルダのファイルが出ればよい）
 - **必要なシークレット**: GitHub Actionsに`BLUESKY_*`・`MASTODON_*`・`DISCORD_WEBHOOK_URL`が登録済み（2026-09-29時点）。Health CheckのMastodon認証が失敗していたら、`MASTODON_INSTANCE_URL`が`https://mastodon.social`（パスなし）になっているか確認してもらう
