@@ -20,7 +20,7 @@
 
 `.claude/future-ideas.md`に記載していた「suzuri.jpはWAFでWebFetchを403で弾く」は、Claude CodeのWebFetchツールに対する制約であり、Cloudflare Worker自身の`fetch()`が同様にブロックされるかは別問題として未検証だった。実装前にBashの`curl`から`https://suzuri.jp/media/category/news/`へ直接アクセスしたところ200 OKで取得でき、実際のHTML内に`journal_ninnin-sale_202608`（現行セールの記事URL）が一覧の最上部（＝新着順で先頭）に含まれることを確認した。
 
-ただしこれはこのセッションのサンドボックス環境からの疎通確認であり、**Cloudflare Workersのエッジネットワークからの`fetch()`が同様に成功するかは、実際にデプロイしてCronを発火させるまで確定しない**（WAFがCloudflare WorkersのIPレンジを特別扱いしている可能性は理論上残る）。そのため`checkForNewSale()`は取得失敗時にDiscordへ「⚠️ SUZURIセールチェック失敗（ニュース一覧取得エラー）」を通知する設計にしており、初回のCron発火（またはダッシュボードから`event.cron === "0 16 * * *"`に一致する手動Scheduled発火。`"0 16 * * *"`は明示的に一致する値のため投稿を伴わず、`testing.md`のBug#40対応後も引き続き使用可）で疎通の成否がDiscord通知として可視化される。ブロックされていた場合はこの通知が「自動検知不可・手動確認が必要」のシグナルとして機能する。
+ただしこれはこのセッションのサンドボックス環境からの疎通確認であり、**Cloudflare Workersのエッジネットワークからの`fetch()`が同様に成功するかは、実際にデプロイしてCronを発火させるまで確定しない**（WAFがCloudflare WorkersのIPレンジを特別扱いしている可能性は理論上残る）。そのため`checkForNewSale()`は取得失敗時にDiscordへ「⚠️ SUZURIセールチェック失敗（ニュース一覧取得エラー）」（2026-11以降は「セール一覧取得エラー」）を通知する設計にしており、初回のCron発火（またはダッシュボードから`event.cron === "0 16 * * *"`に一致する手動Scheduled発火。`"0 16 * * *"`は明示的に一致する値のため投稿を伴わず、`testing.md`のBug#40対応後も引き続き使用可）で疎通の成否がDiscord通知として可視化される。ブロックされていた場合はこの通知が「自動検知不可・手動確認が必要」のシグナルとして機能する。
 
 ### Cronトリガー
 
@@ -56,10 +56,10 @@ Tシャツの`sub_materials`がSUZURI側に作る背面画像マテリアル（�
 ### 処理フロー（`checkForNewSale(env, ctx, notifyFn)`・2026-11改訂）
 
 1. **セール一覧（`https://suzuri.jp/media/category/sale/`）**を`fetchWithRetry()`で取得。失敗時はDiscordに手動確認要の通知を送って終了（KVは更新しない＝翌日また自然にリトライされる）
-2. `extractRecentArticleUrls(html, limit)`（純粋関数）で、一覧中の`/media/journal_*`リンクを**ページ上の並び（新着順）のまま**上位`limit`件（既定3）抽出する。絶対URL（`https://suzuri.jp/media/journal_…`）と相対パス（`/media/journal_…`）の両方に対応し、絶対URLへ正規化・重複を除く。**スラッグのキーワード判定はしない**（2026-11・下記「検知漏れ（2026-11）」参照）。見つからなければ通常運用としてログのみで終了
+2. `extractRecentArticleUrls(html, limit)`（純粋関数）で、一覧中の`/media/journal_*`リンクを**ページ上の並び（新着順）のまま**上位`limit`件（既定3）抽出する。絶対URL（`https://suzuri.jp/media/journal_…`）と相対パス（`/media/journal_…`）の両方に対応し、絶対URLへ正規化・重複を除く。**スラッグのキーワード判定はしない**（2026-11・下記「検知漏れ（2026-11）」参照）。1件も見つからなければ、ページ構造の変更を疑うログ（`一覧に記事リンクが見つかりません（ページ構造の変更を確認）`）を出して終了する（`category/sale/`には常に過去の記事が並ぶため、0件は通常運用ではない。Discord通知はしない）
 3. KV（`sale-check:processed`・処理済みURLのJSON配列）と、旧キー`sale-check:last-notified`（単一URL・移行用）に含まれるURLを除き、**未処理の記事だけ**を残す。**未処理がなければ即return**（Gemini呼び出しを行わない。大半の日はここで終了しCPU時間はごく僅か）
 4. 未処理の記事それぞれについて（新着順）、記事本文を取得しGeminiへ構造化抽出を依頼（`responseMimeType: "application/json"`）。対象商品4種それぞれの`included`/`discountYen`をGeminiに判定させる（ステッカー対象外のような過去の判断パターンをプロンプトで委ねる）。**セールかどうかの判定は`isSale`でGeminiに任せる**。**使用モデルは固定文字列で書かず、`worker/index.js`の`selectBestModel()`（export済み）で動的に選択する**（2026-08追加・下記「初回Cron発火で判明した問題」参照）
-5. 抽出結果が`isSale: true`の場合、`buildSaleCandidateMessage()`（純粋関数）でDiscord通知文を組み立てて送信。**Discord通知を先に送り、その記事のURLを処理済みに追加するのはその後**（notify→mark-seenの順）。理由: 途中でCPU時間切れ・強制終了が起きても、KVが未更新なら翌日また同じURLで再試行される自己修復的な設計。逆の順序だと「検知したのに誰にも知らされない」まま次回スキップされてしまう
+5. 抽出結果が`isSale: true`の場合、`buildSaleCandidateMessage()`（純粋関数）でDiscord通知文を組み立てて送信。通知の末尾には、`_currentSale`に入れる値の案内を付ける（2026-11追加・Bug#51）: `discountYen`は対象商品の割引額の最大値、`stickerExcluded`はステッカーが対象外なら`true`・対象なら`false`。Geminiの抽出結果にステッカーがない（判定できない）場合は「記事で確認してください」と書く。案内は抽出結果からの提案で、反映前に人間が記事で確認する前提は変わらない。**Discord通知を先に送り、その記事のURLを処理済みに追加するのはその後**（notify→mark-seenの順）。理由: 途中でCPU時間切れ・強制終了が起きても、KVが未更新なら翌日また同じURLで再試行される自己修復的な設計。逆の順序だと「検知したのに誰にも知らされない」まま次回スキップされてしまう
 6. `isSale: false`と判定された記事（値上げ告知・メンテナンス等、セール以外のニュース）も処理済みに追加し、翌日以降の無駄な再抽出を防ぐ
 7. 記事の取得・Gemini抽出が失敗した記事は、Discordに手動確認要の通知を送り、**処理済みに追加しない**（翌日また再試行される）。他の記事の処理は続ける
 8. 処理済みURLの配列は、新しい順に最大`PROCESSED_MAX`件（20）まで保持し、TTL60日でKVに書き戻す（記事ごとではなく、最後に1回だけ書く）

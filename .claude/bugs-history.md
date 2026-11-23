@@ -56,6 +56,7 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 | 48 | Gemini APIの前払いクレジットが枯渇し、画像生成が止まっても原因がDiscordに出なかった（2026-10） | このファイル |
 | 49 | SUZURI登録が同じ作品に重複して走り、マテリアルとfal.aiジョブが増えた（2026-10） | このファイル |
 | 50 | 再投稿モードのMastodon投稿済み確認が403で`unknown`になり、再投稿できなかった（2026-10） | このファイル |
+| 51 | SUZURIセール検知Cronがブラックフライデーを検知できず、Discord通知が出なかった（2026-11） | このファイル |
 
 ## 過去に修正した問題（再発防止）
 
@@ -349,6 +350,16 @@ Bug#1〜30の本文は[`archive/bugs-history_01-30.md`](archive/bugs-history_01-
 - **場所**: `worker/bot.js`（`findExistingMastodonPost()`）
 - **教訓**: 外部APIを認証付きで呼ぶ処理は、モックが認証ヘッダーとスコープを検証しないと、実機でだけ起きる権限不足を見逃す。最小権限のトークンで動く前提で、モックにも権限の制約を持たせる。また、復旧用の機能は、障害が起きる前に実機で一度確認しておく（今回は障害の当日にはじめて実機で動かした）
 - **同時に判明した件（503）とその対応**: Mastodon本体の一時的な障害とみられる（7:00:21 JSTに失敗・約2.3秒・HTMLのエラーページ）。`postStatusToMastodon()`は`Idempotency-Key`を付けていたがリトライしていなかったため、`fetchWithRetry()`で5xxとネットワーク例外を同じキーのまま最大3試行にした（2026-10-29・ユーザー承認済み）。タイムアウトと4xx/429はリトライしない。Blueskyは冪等性キーがなく対象外。仕様は`.claude/docs/architecture/bot-posting.md`の「Mastodon投稿作成のリトライ」参照。リトライの効果は、次に実際に5xxが起きるまで実機では未確認
+
+### 51. SUZURIセール検知Cronがブラックフライデーを検知できず、Discord通知が出なかった（2026-11）
+
+- **症状**: 2026-11-20公開の「SUZURIのブラックフライデー」（2026-11-27〜12-08）について、Discordに「🏷️ SUZURIセール候補を検知しました」が届かなかった。11/21〜11/23のCron（`0 16 * * *`）のログは3回とも`[sale-check] セール関連記事が見つかりませんでした（通常運用）`だった。ユーザーが記事のURLを直接共有したことで発覚し、`_currentSale`は旧セール（ニンニンSALE・10/27終了）のままだった
+- **原因**: (1)取得元の`category/news/`に、ブラックフライデーも10月のニンニンSALEも載っていなかった（セール記事はセール専用の`category/sale/`に載る。8〜9月に`news/`で検知できていた理由は未確認）。(2)スラッグに`sale`を含む記事だけを拾う判定だったため、`journal_black_friday_202611`は仮に一覧にあっても拾えなかった。(3)一覧のリンクが相対パス（`/media/journal_…`）で、絶対URLだけを前提にした抽出と形が違った（サンドボックスでの取得結果。Workerからの取得結果は未確認）
+- **対応**: 取得元を`category/sale/`に変更し、キーワード判定をやめて、未処理の記事を上位3件までGeminiの`isSale`で判定する形にした。既読管理は処理済みURLの配列（最大20件）に変え、旧キー`sale-check:last-notified`も既読扱いにした。仕様は`.claude/docs/architecture/sale-check-and-cleanup.md`の「処理フロー」「検知漏れ（2026-11）」参照。あわせて、`_currentSale`へブラックフライデーを反映した。その際、「ステッカーを除く」が文言にハードコードされていた（今回はステッカーも対象）ため、`stickerExcluded`で出し分ける形にした（`.claude/rules/architecture.md`の「SUZURIセール情報の一元管理」参照）。セール候補のDiscord通知にも、`stickerExcluded`・`discountYen`に入れる値の案内を追加した
+- **テスト**: `scripts/test-bot.mjs`で、2026-11-23に取得した`category/sale/`の実データ（相対パス・同じ記事への複数リンク）からの抽出、先頭が非セール記事でも下のセール記事を拾うこと、4件目は取得しないこと、旧キーの移行、部分失敗、2回目の実行で何もしないことを検証。`scripts/test-sale.mjs`で本番設定の期間境界を検証
+- **場所**: `worker/sale-check.js`（`extractRecentArticleUrls()`・`checkForNewSale()`・`buildSaleCandidateMessage()`）、`worker/sale.js`、`worker/bot.js`、`worker/index.js`（`/sale-info`）、`frontend/index.html`（`renderSaleBanner()`）
+- **教訓**: 検知条件を「過去の記事名の特徴」で書くと、命名や掲載先が変わった時点で黙って無効になり、「通知が来ない＝セールがない」と区別できない。取得元は、サイト自身の分類（専用カテゴリ）を使う。また、文言に過去のセールの事実（「ステッカーを除く」）を書き込むと、次のセールで誤った表示になる。セールごとに変わる事実は、一次情報源（`_currentSale`）の値として持つ
+- **実機で未確認**: Workerからの`category/sale/`の取得結果（リンク形式・掲載順）。2026-11-24 1:00 JSTのCronで確認する
 
 ### 未対応バグ・改善項目（次回実装時にまとめて対応）
 

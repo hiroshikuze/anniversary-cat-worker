@@ -544,8 +544,12 @@ async function checkWorker(workerUrl, bypassToken) {
     check("HTTP 200", saleRes.status === 200, `status=${saleRes.status}`);
     if (saleRes.ok) {
       note(saleData.active
-        ? `セール中: discountYen=${saleData.discountYen} endUtcMs=${saleData.endUtcMs}`
+        ? `セール中: discountYen=${saleData.discountYen} endUtcMs=${saleData.endUtcMs} stickerExcluded=${saleData.stickerExcluded}`
         : "セール非開催中");
+      // 2026-11追加: 「ステッカーを除く」の出し分けに使う値。セール中は必ず真偽値で返る（未定義はfalseに正規化）
+      if (saleData.active) {
+        check("stickerExcludedが真偽値", typeof saleData.stickerExcluded === "boolean", `stickerExcluded=${saleData.stickerExcluded}`);
+      }
     }
   }
 
