@@ -16,6 +16,7 @@ SUZURIセール時にSNSへ載せる告知画像を、Geminiの絵とSatoriの�
 | `compose.mjs` | 合成スクリプト。2026-09「秋のビッグセール」パターン1（ポップ・賑やか。ユーザー評価「かなり魅力的になった」）の最終版をそのまま保存したもの |
 | `compose-pattern2.mjs` | 同パターン2（秋の季節感・木の板の背景）の最終版。文字の書式をGeminiの草案の画像に寄せた版 |
 | `compose-aistudio.mjs` | **2026-09-29に実際にBluesky/Mastodonへ投稿した版**。Google AI Studio（Nano Banana）の背景を使い、パターン1の方向性で組み直したもの。次回はまずこれを土台にする |
+| `compose-blackfriday.mjs` | **2026-11-23に投稿した「SUZURIのブラックフライデー」開催予告版**。黒地の背景（Geminiで文字・グッズ・猫をすべて消したもの）に、対象商品4点を2×2の白いカード＋金の値引きバッジで並べる。第2引数`kaisai`で「開催中」版（`banner-kaisai.png`）を出力。対象商品が4点のセールは、これを土台にする |
 | `fetch-assets.sh` | フォントとSUZURIグッズ画像を作業ディレクトリに集める |
 | `SKILL.md` | このファイル。手順 |
 | `reference.md` | スクリプトの書き換え箇所・配置情報の信頼度・背景の扱い・AI Studioの設定・投稿文の例・Satoriの描き方 |
