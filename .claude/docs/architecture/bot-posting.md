@@ -211,6 +211,7 @@ CTA行（Bluesky版`{cta.ja}`・Mastodon英語版`{cta.en}`）は固定文言で
 - Bluesky: `createReplyPost(accessJwt, did, text, parentRef, rootRef = parentRef)`。`com.atproto.repo.createRecord`の`record`に`reply: { root: {uri, cid}, parent: {uri, cid} }`を含める（単発リプライのためroot=parent）。本体投稿IIFEの`accessJwt`/`did`はローカルスコープに閉じているため、リプライ用に`createBlueskySession()`を再取得する
 - Mastodon: `postStatusToMastodon(instanceUrl, accessToken, text, mediaId, inReplyToId)`に第5引数`inReplyToId`を追加（省略時`null`・既存呼び出し箇所は4引数以下のままで後方互換）。指定時は`in_reply_to_id`パラメータを付与する
 - リプライ文言: `buildSaleReplyTextJa(sale)`（Bluesky・日本語のみ、`buildPostText()`と同じ方針）・`buildSaleReplyTextBilingual(sale)`（Mastodon・英語優先→日本語、`buildMastodonText()`と同じ方針）。URLのfacet化には既存の`buildUrlFacets()`を再利用する
+- 「（ステッカーを除く）」「(stickers excluded)」は`sale.stickerExcluded === true`のときだけ付ける（2026-11変更。2026-11のブラックフライデーはステッカーも対象のため、以前のハードコードでは事実と異なる文言になっていた）。`false`・未定義では付けない
 - 失敗時は`console.warn`のみで投稿全体を失敗させない
 - Discord通知（1通目）に`🛍️ セールリプライ: Bluesky✅ / Mastodon✅`のような1行を、セール対象時のみ追加する（既存の「値がなければnullを入れて`.filter(Boolean)`で除去」パターンを踏襲）
 

@@ -96,7 +96,7 @@ anniversary-cat-worker/
 | GET | `/rss.xml` | RSSフィード（直近14日のボット作品・サムネイル画像付き） |
 | GET | `/usage` | Gemini APIトークン使用量（直近30日・認証なし・`{days:[{date,textCalls,textTokens,textModel,imageCalls,imageTokens}]}`） |
 | GET | `/cpu-usage` | ステップ別CPU時間集計（直近30日・認証なし・`{days:[{date,{step}:{calls,totalMs,maxMs}}]}`） |
-| GET | `/sale-info` | 現在有効なSUZURIセール情報（認証なし・`{active:true,endUtcMs,discountYen,endDisplay}`または`{active:false}`・`Cache-Control: public, max-age=300`） |
+| GET | `/sale-info` | 現在有効なSUZURIセール情報（認証なし・`{active:true,endUtcMs,discountYen,endDisplay,stickerExcluded}`または`{active:false}`・`Cache-Control: public, max-age=300`） |
 | POST | `/suzuri-create` | ウォーターマーク済み画像を受け取りSUZURI登録・R2メタ更新 |
 | POST | `/monthly-wallpaper/regenerate` | 月替わり壁紙の手動再生成（`X-Bypass-Token`ヘッダー必須。月末Cronと同じ`runMonthlyWallpaperPost()`を呼ぶ） |
 | POST | `/bot/manual-run` | Bot Cronの手動実行・テスト（`X-Bypass-Token`ヘッダー必須。`?dryRun=false`指定時のみ実投稿。詳細は「Bluesky Bot」の「手動実行エンドポイント」参照。`?mode=repost&date=YYYY-MM-DD`で、投稿済みかを確認したうえで未投稿のSNSにだけ再投稿する） |
@@ -147,6 +147,7 @@ let _currentSale = {
   endUtcMs:    Date.UTC(2026, 8, 3, 14, 59),
   discountYen: 800,
   endDisplay:  { month: 9, day: 3, weekdayJa: "木" },
+  stickerExcluded: true, // ステッカーがセール対象外か（2026-11追加）。文言の「（ステッカーを除く）」の出し分けに使う
   url:         "https://suzuri.jp/nyanmusu",
 }; // セールがない期間はnullに書き換える
 
@@ -155,7 +156,8 @@ export function getActiveSaleInfo(now = Date.now()) { ... } // セール中はsa
 export function _setSaleForTest(sale) { ... } // テスト用
 ```
 
-- **次のセール開催が決まったら`_currentSale`を差し替えるだけでよい**。frontendのバナー表示・Bot投稿のリプライ判定の両方に自動的に反映される
+- **`stickerExcluded`（2026-11追加）**: 「ステッカーを除く」は過去のセール（ニンニンSALE）の事実で、毎回成り立つわけではない。2026-11のブラックフライデーはステッカー・缶バッジも対象（各50円引き）のため、文言のハードコードをやめてこのフィールドで出し分ける。`true`のときだけバナー（frontend 3言語）とBot投稿のセール告知リプライ（日本語・英語）に「ステッカーを除く／stickers excluded」を付ける。`false`・未定義のときは付けない（対象外と書く誤りより、書かない方が安全）。`discountYen`は商品別ではなく**最大額**を入れる（商品別の割引表は持たない。`future-ideas.md`の判断どおり）
+- **次のセール開催が決まったら`_currentSale`を差し替えるだけでよい**（ステッカーが対象外かどうかの`stickerExcluded`も忘れずに確認する）。frontendのバナー表示・Bot投稿のリプライ判定の両方に自動的に反映される
 - `worker/index.js`・`worker/bot.js`双方が`worker/sale.js`から直接importする（新規の一方向import、既存の循環importは増やさない）
 - frontendは別デプロイ（GitHub Pages・ビルドステップなしの静的HTML）のためWorkerのコードを直接import出来ない。代わりに`GET /sale-info`エンドポイント経由でJSONを取得する
 

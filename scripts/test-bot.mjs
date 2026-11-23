@@ -6000,6 +6000,92 @@ console.log("\n[buildSaleReplyTextJa / buildSaleReplyTextBilingual]");
   assert("buildSaleReplyTextBilingual: 日本語割引額が含まれる", bi.includes("800円"));
   assert("buildSaleReplyTextBilingual: 英語割引額が含まれる", bi.includes("¥800"));
   assert("buildSaleReplyTextBilingual: 英語が日本語より先に来る", bi.indexOf("Sale") < bi.indexOf("今なら"));
+
+  // stickerExcluded: 「ステッカーを除く」は対象外のセール（true）のときだけ付ける（2026-11）
+  assert("stickerExcluded未定義: 日本語リプライに「ステッカーを除く」を付けない", !ja.includes("ステッカーを除く"));
+  assert("stickerExcluded未定義: 英語リプライに「stickers excluded」を付けない", !bi.includes("stickers excluded"));
+  assert("stickerExcluded未定義: バイリンガルの日本語側にも「ステッカーを除く」を付けない", !bi.includes("ステッカーを除く"));
+
+  const saleExcl = { ...sale, stickerExcluded: true };
+  const jaExcl = buildSaleReplyTextJa(saleExcl);
+  const biExcl = buildSaleReplyTextBilingual(saleExcl);
+  assert("stickerExcluded=true: 日本語リプライに「ステッカーを除く」を付ける", jaExcl.includes("ステッカーを除く"));
+  assert("stickerExcluded=true: 英語リプライに「stickers excluded」を付ける", biExcl.includes("stickers excluded"));
+  assert("stickerExcluded=true: バイリンガルの日本語側にも「ステッカーを除く」を付ける", biExcl.includes("ステッカーを除く"));
+  assert("stickerExcluded=true: 終了日・URLは保持される", jaExcl.includes("9/3(木)") && jaExcl.includes(sale.url) && biExcl.includes("Sep 3"));
+
+  const saleIncl = { ...sale, stickerExcluded: false };
+  assert("stickerExcluded=false: 日本語リプライに「ステッカーを除く」を付けない", !buildSaleReplyTextJa(saleIncl).includes("ステッカーを除く"));
+  assert("stickerExcluded=false: 英語リプライに「stickers excluded」を付けない", !buildSaleReplyTextBilingual(saleIncl).includes("stickers excluded"));
+
+  // ブラックフライデー（最大1,000円・12/8（火）・ステッカー対象）の文面
+  const bf = { ...sale, discountYen: 1000, endDisplay: { month: 12, day: 8, weekdayJa: "火" }, stickerExcluded: false };
+  const jaBf = buildSaleReplyTextJa(bf);
+  assert("BF: 日本語リプライは最大1000円・12/8(火)まで", jaBf.includes("最大1000円OFF") && jaBf.includes("12/8(火)まで"));
+  assert("BF: 英語リプライは¥1000・Dec 8", buildSaleReplyTextBilingual(bf).includes("¥1000 off until Dec 8"));
+  assert("BF: Bluesky 300字以内", [...new Intl.Segmenter("ja", { granularity: "grapheme" }).segment(jaBf)].length <= 300);
+}
+
+// ---------------------------------------------------------------------------
+// frontend: _composeSaleBanner（window公開の純粋関数と同等のロジックを検証）
+// ---------------------------------------------------------------------------
+console.log("\n[frontend: _composeSaleBanner（バナー文言の出し分け）]");
+{
+  // frontend/index.html の _composeSaleBanner と同一ロジック（_calcWatermarkLayout と同じ検証方式）
+  function composeSaleBanner(banner, note, amount, endDate, stickerExcluded) {
+    const base = banner.replace("{amount}", amount).replace("{endDate}", endDate);
+    return stickerExcluded === true ? base + note : base;
+  }
+  const BANNER = "SUZURIセール中！{endDate}まで最大{amount}円OFF";
+  const NOTE   = "（ステッカーを除く）";
+
+  assert("stickerExcluded=true: 注記が付く", composeSaleBanner(BANNER, NOTE, 800, "9/3(木)", true) === "SUZURIセール中！9/3(木)まで最大800円OFF（ステッカーを除く）");
+  assert("stickerExcluded=false: 注記が付かない", composeSaleBanner(BANNER, NOTE, 1000, "12/8(火)", false) === "SUZURIセール中！12/8(火)まで最大1000円OFF");
+  assert("stickerExcluded未定義: 注記が付かない（対象外と誤って書かない側に倒す）", composeSaleBanner(BANNER, NOTE, 1000, "12/8(火)", undefined) === "SUZURIセール中！12/8(火)まで最大1000円OFF");
+
+  // frontendの翻訳に「ステッカーを除く」が基本文言へ残っていないこと（ハードコード再発防止）
+  const html = readFileSync(new URL("../frontend/index.html", import.meta.url), "utf8");
+  const bannerLines = html.split("\n").filter(l => /^\s*saleBanner\s*:/.test(l));
+  assert("saleBanner（ja/en/kana）の3言語が存在する", bannerLines.length === 3);
+  assert("saleBanner基本文言に「ステッカーを除く」「stickers excluded」を含まない", bannerLines.every(l => !l.includes("ステッカー") && !l.includes("stickers excluded") && !l.includes("のぞ")));
+  const noteLines = html.split("\n").filter(l => /^\s*saleBannerStickerNote\s*:/.test(l));
+  assert("saleBannerStickerNote（ja/en/kana）の3言語が存在する", noteLines.length === 3);
+  assert("frontendが_composeSaleBannerを公開している", html.includes("window._composeSaleBanner"));
+}
+
+// ---------------------------------------------------------------------------
+// GET /sale-info: stickerExcludedをフロントへ渡す
+// ---------------------------------------------------------------------------
+console.log("\n[GET /sale-info: stickerExcluded]");
+{
+  const mkSale = (stickerExcluded) => ({
+    id: "test-sale", startUtcMs: Date.now() - 1000, endUtcMs: Date.now() + 1000 * 60 * 60,
+    discountYen: 1000, endDisplay: { month: 12, day: 8, weekdayJa: "火" },
+    ...(stickerExcluded === undefined ? {} : { stickerExcluded }),
+    url: "https://suzuri.jp/nyanmusu",
+  });
+  const call = async () => {
+    const res = await worker.fetch(new Request("https://x.example/sale-info"), {}, { waitUntil() {} });
+    return res.json();
+  };
+  try {
+    _setSaleForTest(mkSale(false));
+    const incl = await call();
+    assert("/sale-info: stickerExcluded=falseを返す", incl.active === true && incl.stickerExcluded === false && incl.discountYen === 1000);
+
+    _setSaleForTest(mkSale(true));
+    assert("/sale-info: stickerExcluded=trueを返す", (await call()).stickerExcluded === true);
+
+    _setSaleForTest(mkSale(undefined));
+    const undef = await call();
+    assert("/sale-info: 未定義はfalseに正規化する（frontendが厳密比較できる）", undef.stickerExcluded === false);
+
+    _setSaleForTest(null);
+    const none = await call();
+    assert("/sale-info: セールなしは{active:false}のみ", none.active === false && !("stickerExcluded" in none));
+  } finally {
+    _setSaleForTest(null);
+  }
 }
 
 // ---------------------------------------------------------------------------
