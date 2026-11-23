@@ -1519,6 +1519,7 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 - 実投稿（2026-11-23 22:34 JST）: Bluesky `https://bsky.app/profile/nyanmusu.bsky.social/post/3n2yanfkec427`、Mastodon `@nyanmusu/117666012256546234`。公開APIで1件ずつ・画像付きを確認
 - 途中で起きたこと: 環境のPillowが壊れていて使えず、JPEG変換はImageMagickの`convert`で行った（`SKILL.md`の「JPEG変換」参照）。お試し実行のpushで、Health Checkの`[3] Research`がJSONパースで1回だけ失敗した（告知とは無関係。`.claude/bugs-history.md`の「未対応バグ・改善項目」参照）
 - Claude Code Remoteの`send_later`で予約済み: 11/27 10:00 JSTに開催中版の準備（投稿は12:00以降）、12/9 10:00 JSTに反響確認
+- 手動の転載（2026-11-23・ユーザー）: X `https://x.com/hiroshikuze/status/2124863559914168335`、Instagram `https://www.instagram.com/p/DgFiK32P0Nd/`、mixi2 `https://mixi.social/@nyanmusu/posts/249ff37e-1d45-4ef9-b2c4-588d765ca0e7`、Facebook（URLは個人アカウントのIDを含むため記録しない）。追跡用のクエリ文字列は外した。これらの反響はClaude Codeから取得できないため、12/9の反響確認ではユーザーに数字を尋ねる
 
 **Geminiの配置情報をそのまま使えなかった点**（パターン1のSatori合成時に手動で補正した）:
 
