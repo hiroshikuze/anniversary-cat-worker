@@ -1,7 +1,8 @@
 // SNSセール告知バナー: 2026-11「SUZURIのブラックフライデー」開催予告版（compose-aistudio.mjsを土台に書き換え・本番コードではない）
 // 2026-11-23にBluesky/Mastodonへ投稿した版。対象商品4点（2×2の白いカード＋金の値引きバッジ）・黒地の背景向け。
 // 作業ディレクトリに必要なもの: bg.jpg（Geminiで文字・グッズ・猫をすべて消した背景）・t-shirt.png・acrylic-keychain.png・can-badge.png・sticker.png・fonts/*.ttf
-//   node compose-bf.mjs <作業ディレクトリ> [yokoku|kaisai]
+//   node .claude/skills/sale-announcement/compose-blackfriday.mjs <作業ディレクトリ> [yokoku|kaisai]
+//   yokoku（省略時）→ banner.png（開催予告） / kaisai → banner-kaisai.png（開催中）
 // 背景: Geminiで文字・グッズ・猫をすべて消した黒地（金の筆の帯＋紅葉・星）。草案の配置・書式に合わせて文字を描き直す。
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";

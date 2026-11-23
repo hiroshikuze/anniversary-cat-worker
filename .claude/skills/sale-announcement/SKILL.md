@@ -74,6 +74,6 @@ SUZURIセール時にSNSへ載せる告知画像を、Geminiの絵とSatoriの�
   作業ディレクトリはClaude Codeセッションのスクラッチパッドを使う。背景がWebP形式で届いた場合は、PillowでJPEGに変換する（`pip install pillow`後、`Image.open("bg.webp").convert("RGB").save("bg.jpg", quality=95)`）。resvgはWebPを読めない
 - **書式の合わせ方（手順4）**: 文字の色・縁取り・アーチの有無は、Geminiの草案の画像をClaudeが直接見て合わせる（配置情報のJSONは頼まない。`reference.md`の「配置情報（JSON）の信頼度」参照）
 - **背景が期待どおりでない場合（手順4）**: 描き直されて文字の余白がない、不要な小物がある、などは合成側で直せる（`reference.md`の「Google AI Studioでの作り方」の「背景は同じ会話で頼んでも描き直された」「不要な小物の手動消去」参照）
-- **JPEG変換（手順5）**: PNGは約1.3MBでBlueskyの上限1MBを超える。`quality=92`で約300KBになった
-- **投稿の仕組み（手順6〜8）**: `.github/workflows/sale-announcement.yml`＋`scripts/post-sale-announcement.mjs`。フォルダ構成・検証ルール・注意点は`.claude/rules/git-workflow.md`の「SNSセール告知の自動投稿とDiscord送信」参照。**同じファイルを別フォルダへ入れ直しても「追加」として検出される**（`--no-renames`対応済み）
+- **JPEG変換（手順5）**: PNGは約1.3MBでBlueskyの上限1MBを超える。`quality=92`で約300KBになった（2026-09）。**環境のPillowが使えない場合**（2026-11は`ImportError: cannot import name '_imaging'`で壊れていた）は、ImageMagickで変換する: `convert banner.png -strip -quality 92 banner.jpg`（2026-11は約400KB）。背景のWebPも同様に`convert bg.webp -quality 95 bg.jpg`でよい（未検証）
+- **投稿の仕組み（手順6〜8）**: `.github/workflows/sale-announcement.yml`＋`scripts/post-sale-announcement.mjs`。フォルダ構成・検証ルール・注意点は`.claude/rules/git-workflow.md`の「SNSセール告知の自動投稿とDiscord送信」参照。**同じファイルを別フォルダへ入れ直しても「追加」として検出される**（`--no-renames`対応済み）。手順8で`mkdir`＋`cp`で作り直しても、`git status`・`git diff --cached`には「名前の変更（`R100`）」と表示されるが、問題ない（2026-11確認）。ワークフローと同じ条件で拾われるかは、コミット前に`git diff --cached --no-renames --name-only --diff-filter=A -- tmp-sale-announcement/`で確認できる（本番用フォルダのファイルが出ればよい）
 - **必要なシークレット**: GitHub Actionsに`BLUESKY_*`・`MASTODON_*`・`DISCORD_WEBHOOK_URL`が登録済み（2026-09-29時点）。Health CheckのMastodon認証が失敗していたら、`MASTODON_INSTANCE_URL`が`https://mastodon.social`（パスなし）になっているか確認してもらう
