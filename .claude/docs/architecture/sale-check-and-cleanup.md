@@ -6,7 +6,7 @@
 
 ### 背景
 
-`worker/sale.js`の`_currentSale`は「セール開催をユーザーがClaudeに伝える」→Claude Codeセッションが手動で編集、という運用だった。SUZURIはニュース一覧（<https://suzuri.jp/media/category/news/>）にセール告知記事を掲載するため、これを1日1回自動チェックし、新しいセール記事を検知したらDiscordに通知することで、ユーザーからの都度の指示を待たずに準備を始められるようにした。
+`worker/sale.js`の`_currentSale`は「セール開催をユーザーがClaudeに伝える」→Claude Codeセッションが手動で編集、という運用だった。SUZURIはセール一覧（<https://suzuri.jp/media/category/sale/>。当初はニュース一覧`category/news/`を見ていたが、2026-11に変更した。下記「検知漏れ（2026-11）」参照）にセール告知記事を掲載するため、これを1日1回自動チェックし、新しいセール記事を検知したらDiscordに通知することで、ユーザーからの都度の指示を待たずに準備を始められるようにした。
 
 ### 方針: 自動検知はするが「本番反映は自動化しない」
 
@@ -53,18 +53,34 @@ Tシャツの`sub_materials`がSUZURI側に作る背面画像マテリアル（�
 - **未検証の前提**: `GET /api/v1/materials`（`user_id`指定なし）が認証ユーザー自身の素材を新しい順に返すことを前提にしている（公式ドキュメントPDFからの抜粋〔`.claude/docs/suzuri-api-unused-features.md`の「`GET /api/v1/materials`」〕に「自分のマテリアル一覧」とある。並び順は未確認。`scripts/audit-suzuri-materials.mjs`も同じ前提）。他ユーザーの素材が返る場合は`user.name`の一致判定で何も削除されず安全側に倒れる。初回Cron発火後に`query-worker-logs.mjs --grep "cleanup-backtexture"`で取得件数・削除件数を確認する
 - 失敗（一覧取得・個別削除）は`console.warn`のみで、`cleanupExpiredEntries()`本体（R2/メイン素材の削除）には影響させない
 
-### 処理フロー（`checkForNewSale(env, ctx, notifyFn)`）
+### 処理フロー（`checkForNewSale(env, ctx, notifyFn)`・2026-11改訂）
 
-1. ニュース一覧を`fetchWithRetry()`で取得。失敗時はDiscordに手動確認要の通知を送って終了（KVは更新しない＝翌日また自然にリトライされる）
-2. `extractLatestSaleArticleUrl(html)`（純粋関数）で、一覧中の`/media/journal_*`リンクのうちスラッグに`sale`を含む最初の1件（＝新着順で最初に見つかったセール関連記事）のURLを抽出。見つからなければ通常運用としてログのみで終了
-3. KV（`sale-check:last-notified`）に保存済みのURLと比較。**同一なら即return**（Gemini呼び出しを行わない。大半の日はここで終了しCPU時間はごく僅か）
-4. 新しい記事の場合のみ、記事本文を取得しGeminiへ構造化抽出を依頼（`responseMimeType: "application/json"`）。対象商品4種それぞれの`included`/`discountYen`をGeminiに判定させる（ステッカー対象外のような過去の判断パターンをプロンプトで委ねる）。**使用モデルは固定文字列で書かず、`worker/index.js`の`selectBestModel()`（export済み）で動的に選択する**（2026-08追加・下記「初回Cron発火で判明した問題」参照）
-5. 抽出結果が`isSale: true`の場合、`buildSaleCandidateMessage()`（純粋関数）でDiscord通知文を組み立てて送信。**Discord通知を先に送り、KVへの「通知済みURL」書き込みはその後**（notify→mark-seenの順）。理由: 途中でCPU時間切れ・強制終了が起きても、KVが未更新なら翌日また同じURLで再試行される自己修復的な設計。逆の順序だと「検知したのに誰にも知らされない」まま次回スキップされてしまう
-6. `isSale: false`と判定された記事（値上げ告知等、セール以外のニュース）もKVに記録し、翌日以降の無駄な再抽出を防ぐ
+1. **セール一覧（`https://suzuri.jp/media/category/sale/`）**を`fetchWithRetry()`で取得。失敗時はDiscordに手動確認要の通知を送って終了（KVは更新しない＝翌日また自然にリトライされる）
+2. `extractRecentArticleUrls(html, limit)`（純粋関数）で、一覧中の`/media/journal_*`リンクを**ページ上の並び（新着順）のまま**上位`limit`件（既定3）抽出する。絶対URL（`https://suzuri.jp/media/journal_…`）と相対パス（`/media/journal_…`）の両方に対応し、絶対URLへ正規化・重複を除く。**スラッグのキーワード判定はしない**（2026-11・下記「検知漏れ（2026-11）」参照）。見つからなければ通常運用としてログのみで終了
+3. KV（`sale-check:processed`・処理済みURLのJSON配列）と、旧キー`sale-check:last-notified`（単一URL・移行用）に含まれるURLを除き、**未処理の記事だけ**を残す。**未処理がなければ即return**（Gemini呼び出しを行わない。大半の日はここで終了しCPU時間はごく僅か）
+4. 未処理の記事それぞれについて（新着順）、記事本文を取得しGeminiへ構造化抽出を依頼（`responseMimeType: "application/json"`）。対象商品4種それぞれの`included`/`discountYen`をGeminiに判定させる（ステッカー対象外のような過去の判断パターンをプロンプトで委ねる）。**セールかどうかの判定は`isSale`でGeminiに任せる**。**使用モデルは固定文字列で書かず、`worker/index.js`の`selectBestModel()`（export済み）で動的に選択する**（2026-08追加・下記「初回Cron発火で判明した問題」参照）
+5. 抽出結果が`isSale: true`の場合、`buildSaleCandidateMessage()`（純粋関数）でDiscord通知文を組み立てて送信。**Discord通知を先に送り、その記事のURLを処理済みに追加するのはその後**（notify→mark-seenの順）。理由: 途中でCPU時間切れ・強制終了が起きても、KVが未更新なら翌日また同じURLで再試行される自己修復的な設計。逆の順序だと「検知したのに誰にも知らされない」まま次回スキップされてしまう
+6. `isSale: false`と判定された記事（値上げ告知・メンテナンス等、セール以外のニュース）も処理済みに追加し、翌日以降の無駄な再抽出を防ぐ
+7. 記事の取得・Gemini抽出が失敗した記事は、Discordに手動確認要の通知を送り、**処理済みに追加しない**（翌日また再試行される）。他の記事の処理は続ける
+8. 処理済みURLの配列は、新しい順に最大`PROCESSED_MAX`件（20）まで保持し、TTL60日でKVに書き戻す（記事ごとではなく、最後に1回だけ書く）
+
+### 検知漏れ（2026-11・2回目の「セールを見逃しかけた」事案）
+
+2026-11-20公開の「SUZURIのブラックフライデー」（スラッグ`journal_black_friday_202611`）が、11/21〜11/23のCron（`0 16 * * *`）で検知されなかった（ログは3回とも`セール関連記事が見つかりませんでした（通常運用）`）。原因は2つあり、**単語リストの追加では直らない**。
+
+- **取得元の誤り（主因）**: SUZURIには`category/news/`のほかに、セール専用の**`category/sale/`**がある。2026-11-23時点で`category/news/`にはブラックフライデーも10月のニンニンSALEも載っておらず（運営告知のみ）、`category/sale/`には7月以降のセール記事がすべて載っていた。8月・9月に検知できていた理由（当時は`news/`に載っていたか）は未確認
+- **キーワード判定の脆さ**: スラッグに`sale`を含む記事だけを拾う判定だったため、`black_friday`のように含まない命名は、一覧に載っていても拾えなかった
+- **リンク形式（未確認）**: 2026-11-23にサンドボックスの`curl`で取得した一覧のリンクは相対パス（`href="/media/journal_…"`）だった。旧コードは絶対URLだけを前提にしていた。Worker側の取得結果が同じ形かは未確認のため、両方に対応する
+
+**対応（方針B＋C）**: 取得元を`category/sale/`に変更（B）。スラッグのキーワード判定をやめ、未処理の記事を上位3件までGeminiの`isSale`で判定する（C）。`category/sale/`にはセール以外の記事（新商品・キャンペーン・メンテナンス等）も混在するため、「直近1件だけ見る」方式では、セール以外の記事が先頭に来たときにその下のセール記事が永久に見られなくなる。そのため既読管理を単一URLから配列に変えた。
+
+**移行**: 旧キー`sale-check:last-notified`のURLも処理済みとして扱う（デプロイ直後に、すでに通知済みの記事を再通知しないため）。旧キーは書き込まず、自然にTTLで消える。
+
+**確認できていないこと**: Cloudflare Workersのエッジからの取得結果（リンク形式・掲載順）。デプロイ後の最初のCron（毎日1:00 JST）のログ（`--grep "sale-check"`）で確認する。**デプロイ後の最初のCronで、直近の未処理記事（ブラックフライデー・キーボードキーホルダーのキャンペーン等）が候補としてDiscordに通知される想定**。これは正常な初回動作で、`_currentSale`は反映済みのため追加の対応は要らない。
 
 ### テスト・実装上の注意
 
-- `extractLatestSaleArticleUrl()`・`buildSaleCandidateMessage()`はhandleResearch()と同じ「fetchモック・純粋関数切り出し」パターンでテスト（`scripts/test-bot.mjs`）。`extractLatestSaleArticleUrl()`のテストには実際に取得したニュース一覧HTMLの実データ（記事URLパターン）を使用し、机上の推測パターンでテストしない
+- `extractRecentArticleUrls()`・`buildSaleCandidateMessage()`はhandleResearch()と同じ「fetchモック・純粋関数切り出し」パターンでテスト（`scripts/test-bot.mjs`）。`extractRecentArticleUrls()`のテストには実際に取得した一覧HTMLの実データ（2026-11-23の`category/sale/`・相対パスのリンク形式）を使用し、机上の推測パターンでテストしない。旧`extractLatestSaleArticleUrl()`（スラッグに`sale`を含む記事だけを拾う）は2026-11に廃止した
 - `worker/sale-check.js`は`worker/index.js`から`recordCpuCheckpoint`・`_deferOrAwait`をimportする（既存の循環import許容パターン）。`notifyDiscord`は`worker/bot.js`が持つため、`worker/index.js`の`scheduled()`から関数として注入する形にし、`sale-check.js`が`bot.js`への新規importを持たないようにしている（循環importを増やさない設計判断）
 - Gemini抽出フェーズ（記事取得〜構造化抽出）の所要時間は`recordCpuCheckpoint("sale-check-extract", ms, env.RATE_KV)`で計測する。この区間はfetch・KV操作というI/Oを挟むため、`performance.now()`の「I/Oがない同期区間では進まない」制約（自動トリミング機能の計測時に判明・`.claude/archive/revision_log_2026-08.md`参照）には該当せず、ある程度実測可能と見込んでいるが、正確な値になるかは`/cpu-usage`の実測で確認する
 

@@ -1,5 +1,5 @@
 /**
- * worker/sale-check.js - SUZURIニュース一覧からセール記事を自動検知（2026-08追加）
+ * worker/sale-check.js - SUZURIセール一覧からセール記事を自動検知（2026-08追加・2026-11に取得元を変更）
  *
  * 毎日1回Cronで実行し、新しいセール関連記事を検知したらGeminiで構造化抽出し、
  * Discordに通知する。worker/sale.jsの_currentSaleへの反映は自動化せず、
@@ -11,21 +11,51 @@
 import { fetchWithRetry } from "./http-utils.js";
 import { recordCpuCheckpoint, _deferOrAwait, selectBestModel, GEMINI_BASE } from "./index.js";
 
-const NEWS_URL             = "https://suzuri.jp/media/category/news/";
-const LAST_NOTIFIED_KV_KEY = "sale-check:last-notified";
-const LAST_NOTIFIED_TTL    = 60 * 24 * 60 * 60; // 60日
+// 2026-11: 取得元をニュース一覧（category/news/）からセール一覧（category/sale/）へ変更した。
+// category/news/には運営告知しか載らず、ブラックフライデー等のセール記事が一覧に出ていなかった。
+// 詳細は.claude/docs/architecture/sale-check-and-cleanup.mdの「検知漏れ（2026-11）」参照
+const SALE_LIST_URL        = "https://suzuri.jp/media/category/sale/";
+const SITE_ORIGIN          = "https://suzuri.jp";
+const PROCESSED_KV_KEY     = "sale-check:processed";     // 処理済み記事URLのJSON配列（新しい順）
+const LEGACY_KV_KEY        = "sale-check:last-notified"; // 旧方式（直近1件のURL）。移行用に読むだけで書かない
+const PROCESSED_TTL        = 60 * 24 * 60 * 60;          // 60日
+const PROCESSED_MAX        = 20;                         // 処理済みURLの保持件数
+const ARTICLES_PER_RUN     = 3;                          // 1回のCronで見る記事数（サブリクエスト・Gemini呼び出しの上限対策）
 
 /**
- * ニュース一覧HTMLから、直近のセール関連記事URLを抽出する（純粋関数）。
- * 一覧は新着順（上から新しい順）に並んでいる前提で、スラッグに"sale"を含む
- * 最初の記事を返す。見つからない場合はnull。
+ * セール一覧HTMLから、記事URLを一覧上の並び（新着順）のまま上位limit件抽出する（純粋関数）。
+ * 絶対URL（https://suzuri.jp/media/journal_…）と相対パス（/media/journal_…）の両方に対応し、
+ * 絶対URLへ正規化して重複を除く。スラッグのキーワード判定はしない（セールかどうかはGeminiのisSaleで判定する。
+ * `black_friday`のように`sale`を含まない命名を見逃さないため・2026-11）。
+ * @param {string|null|undefined} html
+ * @param {number} [limit]
+ * @returns {string[]}
  */
-export function extractLatestSaleArticleUrl(html) {
-  const matches = [...(html ?? "").matchAll(/href="(https:\/\/suzuri\.jp\/media\/journal_[^"]+)"/g)];
-  for (const [, url] of matches) {
-    if (/sale/i.test(url)) return url;
+export function extractRecentArticleUrls(html, limit = ARTICLES_PER_RUN) {
+  if (!(limit > 0)) return [];
+  const urls = [];
+  for (const [, slug] of (html ?? "").matchAll(/href="(?:https:\/\/suzuri\.jp)?\/media\/(journal_[^"\/?#]+)/g)) {
+    const url = `${SITE_ORIGIN}/media/${slug}/`;
+    if (!urls.includes(url)) urls.push(url);
+    if (urls.length >= limit) break;
   }
-  return null;
+  return urls;
+}
+
+/** KVから処理済みURLの一覧を読む（新配列キー＋旧キーの単一URL。旧キーは移行用に既読として扱う） */
+async function loadProcessedUrls(kv) {
+  if (!kv) return [];
+  const urls = [];
+  try {
+    const raw = await kv.get(PROCESSED_KV_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(arr)) urls.push(...arr.filter(u => typeof u === "string"));
+  } catch {
+    // 壊れたJSONは空として扱う（再判定されるだけで実害は小さい）
+  }
+  const legacy = await kv.get(LEGACY_KV_KEY);
+  if (legacy) urls.push(legacy);
+  return urls;
 }
 
 /** Gemini構造化抽出用プロンプト構築（純粋関数） */
@@ -111,9 +141,9 @@ function htmlToPlainText(html) {
 }
 
 /**
- * SUZURIニュース一覧を1日1回チェックし、新しいセール関連記事を検知したら
- * Gemini構造化抽出→Discord通知を行う。既存のBot Cronとは別のscheduled()
- * invocationとして呼ばれる（独立したCPU時間予算を持つ）。
+ * SUZURIセール一覧を1日1回チェックし、未処理の記事（上位ARTICLES_PER_RUN件まで）をGeminiで
+ * セールかどうか判定・構造化抽出し、セール記事ならDiscordへ通知する。既存のBot Cronとは別の
+ * scheduled() invocationとして呼ばれる（独立したCPU時間予算を持つ）。
  * @param {object} env
  * @param {object|null} ctx - Workers ExecutionContext（recordCpuCheckpointの背景化用）
  * @param {(webhookUrl: string, message: string, emoji?: string) => Promise<void>} notifyFn
@@ -125,66 +155,77 @@ export async function checkForNewSale(env, ctx, notifyFn) {
 
   let html;
   try {
-    const res = await fetchWithRetry(NEWS_URL, { signal: AbortSignal.timeout(10_000) });
+    const res = await fetchWithRetry(SALE_LIST_URL, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) throw new Error(`status=${res.status}`);
     html = await res.text();
   } catch (e) {
-    console.warn(`[sale-check] ニュース一覧取得失敗: ${e.message}`);
+    console.warn(`[sale-check] セール一覧取得失敗: ${e.message}`);
     await notifyFn?.(
       env.DISCORD_WEBHOOK_URL,
-      `⚠️ SUZURIセールチェック失敗（ニュース一覧取得エラー）: ${e.message}\n手動確認をお願いします: ${NEWS_URL}`,
+      `⚠️ SUZURIセールチェック失敗（セール一覧取得エラー）: ${e.message}\n手動確認をお願いします: ${SALE_LIST_URL}`,
       "⚠️"
     );
     return;
   }
 
-  const articleUrl = extractLatestSaleArticleUrl(html);
-  if (!articleUrl) {
-    console.log("[sale-check] セール関連記事が見つかりませんでした（通常運用）");
+  const recentUrls = extractRecentArticleUrls(html);
+  if (recentUrls.length === 0) {
+    console.log("[sale-check] 一覧に記事リンクが見つかりませんでした（通常運用）");
     return;
   }
 
-  const lastNotified = kv ? await kv.get(LAST_NOTIFIED_KV_KEY) : null;
-  if (articleUrl === lastNotified) {
-    console.log(`[sale-check] 既知の記事のためスキップ url=${articleUrl}`);
+  const processed = await loadProcessedUrls(kv);
+  const unprocessed = recentUrls.filter(u => !processed.includes(u));
+  if (unprocessed.length === 0) {
+    console.log("[sale-check] 新しい記事はありません（すべて処理済み）");
     return;
   }
 
-  console.log(`[sale-check] 新しい記事を検知 url=${articleUrl}`);
+  console.log(`[sale-check] 未処理の記事を検知 count=${unprocessed.length} urls=${unprocessed.join(",")}`);
 
   if (!env.GEMINI_API_KEY) {
     console.warn("[sale-check] GEMINI_API_KEY未設定のため抽出をスキップ");
     return;
   }
 
-  const tExtractStart = performance.now();
-  let saleInfo;
-  try {
-    const res = await fetchWithRetry(articleUrl, { signal: AbortSignal.timeout(10_000) });
-    if (!res.ok) throw new Error(`status=${res.status}`);
-    const articleHtml = await res.text();
-    saleInfo = await extractSaleInfoWithGemini(htmlToPlainText(articleHtml), env.GEMINI_API_KEY, kv, env.DISCORD_WEBHOOK_URL);
-  } catch (e) {
-    console.warn(`[sale-check] 記事取得・Gemini抽出失敗: ${e.message}`);
-    await notifyFn?.(
-      env.DISCORD_WEBHOOK_URL,
-      `⚠️ SUZURIセール候補を検知しましたが構造化抽出に失敗しました。手動確認をお願いします: ${articleUrl}`,
-      "⚠️"
-    );
-    return;
-  } finally {
-    await _deferOrAwait(recordCpuCheckpoint("sale-check-extract", performance.now() - tExtractStart, kv), ctx);
+  // 新しい記事から順に判定する。記事ごとの失敗は他の記事の処理を止めない
+  const newlyProcessed = [];
+  for (const articleUrl of unprocessed) {
+    const tExtractStart = performance.now();
+    let saleInfo;
+    try {
+      const res = await fetchWithRetry(articleUrl, { signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) throw new Error(`status=${res.status}`);
+      const articleHtml = await res.text();
+      saleInfo = await extractSaleInfoWithGemini(htmlToPlainText(articleHtml), env.GEMINI_API_KEY, kv, env.DISCORD_WEBHOOK_URL);
+    } catch (e) {
+      // 処理済みにしない＝翌日また再試行される
+      console.warn(`[sale-check] 記事取得・Gemini抽出失敗 url=${articleUrl}: ${e.message}`);
+      await notifyFn?.(
+        env.DISCORD_WEBHOOK_URL,
+        `⚠️ SUZURIセール候補を検知しましたが構造化抽出に失敗しました。手動確認をお願いします: ${articleUrl}`,
+        "⚠️"
+      );
+      continue;
+    } finally {
+      await _deferOrAwait(recordCpuCheckpoint("sale-check-extract", performance.now() - tExtractStart, kv), ctx);
+    }
+
+    if (!saleInfo.isSale) {
+      console.log(`[sale-check] セール記事ではないと判定 url=${articleUrl}`);
+      // セール以外の記事（新商品・運営告知等）も処理済みにし、翌日以降の無駄な再抽出を防ぐ
+      newlyProcessed.push(articleUrl);
+      continue;
+    }
+
+    // Discord通知を先に送り、処理済みへの追加（KV書き込み）はその後（自己修復的リトライのため。詳細はarchitecture.md参照）
+    await notifyFn?.(env.DISCORD_WEBHOOK_URL, buildSaleCandidateMessage(saleInfo, articleUrl), "🏷️");
+    newlyProcessed.push(articleUrl);
+    console.log(`[sale-check] Discord通知完了 url=${articleUrl}`);
   }
 
-  if (!saleInfo.isSale) {
-    console.log(`[sale-check] セール記事ではないと判定 url=${articleUrl}`);
-    // セール以外のニュース記事もKVに記録し、翌日以降の無駄な再抽出を防ぐ
-    if (kv) await kv.put(LAST_NOTIFIED_KV_KEY, articleUrl, { expirationTtl: LAST_NOTIFIED_TTL });
-    return;
+  if (kv && newlyProcessed.length > 0) {
+    const merged = [...newlyProcessed, ...processed.filter(u => !newlyProcessed.includes(u))].slice(0, PROCESSED_MAX);
+    await kv.put(PROCESSED_KV_KEY, JSON.stringify(merged), { expirationTtl: PROCESSED_TTL });
   }
-
-  // Discord通知を先に送り、KV書き込みはその後（自己修復的リトライのため。詳細はarchitecture.md参照）
-  await notifyFn?.(env.DISCORD_WEBHOOK_URL, buildSaleCandidateMessage(saleInfo, articleUrl), "🏷️");
-  if (kv) await kv.put(LAST_NOTIFIED_KV_KEY, articleUrl, { expirationTtl: LAST_NOTIFIED_TTL });
-  console.log(`[sale-check] Discord通知完了 url=${articleUrl}`);
 }
