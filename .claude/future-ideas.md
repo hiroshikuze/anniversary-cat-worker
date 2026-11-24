@@ -1480,11 +1480,23 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
   - Facebook: `https://www.facebook.com/share/p/19dQHjSkjS/`
   - mixi2: `https://mixi.social/@nyanmusu/posts/939f5f0a-44dc-4b58-8043-73e88afc61c0`
   - Discord（自動投稿の結果・転載用テキストの通知。ユーザーの非公開サーバー内のため、閲覧にはそのサーバーへの参加が必要）: `https://discordapp.com/channels/1390567808148045907/1480490867600134164/1554513631847125075`
-  - 反響の確認方法: Bluesky・Mastodonは公開APIで取得できる。X・Instagram・Facebookは認証や有料APIが必要で、Claude Codeからは取得できないため、ユーザーに各アプリの数字（いいね・リポスト等）を教えてもらう。mixi2の公開APIの有無は未確認
+  - 反響の確認方法: Bluesky・Mastodonは公開APIで取得できる。**Xは`https://api.fxtwitter.com/<ユーザー名>/status/<投稿ID>`で取得できる**（認証不要。応答の`tweet`に`likes`・`retweets`・`replies`・`quotes`・`bookmarks`・`views`。2026-11-23に確認。x.com本体はWebFetch・curlとも402で読めない）。Instagram・Facebookは認証や有料APIが必要で、Claude Codeからは取得できないため、ユーザーに各アプリの数字（いいね等）を教えてもらう。mixi2の公開APIの有無は未確認
 - 途中で起きたこと:
   - GitHub Actionsに`MASTODON_*`が未登録だった（Workerにのみ登録）。ユーザーが登録したが、`MASTODON_INSTANCE_URL`の値の誤り（最初は接続不可、次は`/@nyanmusu`付きでHTMLが返る）でHealth Checkが2回失敗し、`https://mastodon.social`に直して通過した
   - 本番の1回目のpushで、お試し用フォルダから本番用フォルダへのファイルの入れ直しをgitが「名前の変更」と判定し、「追加」だけを探すワークフローが投稿を飛ばした。`git diff --no-renames`で修正し、やり直して投稿できた
 - 手順全体（誰が何をするか）はスキル`sale-announcement`（`.claude/skills/sale-announcement/SKILL.md`）の「手順」にまとめた。次回はそこから始める
+
+**秋のビッグセールの反響（2026-11-23に後から取得・10/5に予定していた確認の結果は記録されていなかった）**:
+
+| 投稿 | いいね | リポスト | 返信 | その他 |
+| --- | --- | --- | --- | --- |
+| Bluesky（`3mwnyup3ahd2n`） | 1 | 0 | 1 | 引用0 |
+| Mastodon（`117354716984838537`） | 0（お気に入り） | 0（ブースト） | 1 | - |
+| X（`hiroshikuze/status/2104949230502809603`・`api.fxtwitter.com`で取得） | 1 | 0 | 1 | 引用0・ブックマーク0・**表示69** |
+
+- 数字は2026-11-23時点の累計（セール終了翌日の10/5時点ではない）。セールから約2か月たっており、その後の増加はほぼないとみられる
+- Xだけ表示回数が取れる。今後のセールでも、Xの表示回数を「どれだけ見られたか」の指標に使える
+- Instagram・Facebook・mixi2は取得できず未確認
 
 **ニンニンSALE（2026-10-23〜10-27）の予告投稿（2026-10-17・予告/開催中の2段階告知で初実施）**:
 
@@ -1493,6 +1505,7 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 - 開始前のため「開催中」ではなく「開催予告」として先に認知を広げる案をユーザーが選択。`SKILL.md`「予告と開催中の2段階告知」として手順化した
 - イラストは`bot/2026-10-14`（コスモス畑で微笑む白黒猫）。対象商品が3点のため、Bot作品の猫も含めて消した「花畑のみ」の背景に変更（商品が目立つ・`SKILL.md`「商品点数が多いときの背景」参照）。商品には白いカード台座＋影を付けて背景に埋もれないようにした
 - 実投稿（2026-10-17 9:00 JST）: Bluesky `https://bsky.app/profile/nyanmusu.bsky.social/post/3mxzrxoux6g2g`、Mastodon `@nyanmusu/117453310174407671`
+- 手動転載（予告・2026-10-17 12:04 JST）: X `https://x.com/hiroshikuze/status/2111292245806928170`（2026-11-23にユーザーが共有）。開催中版（10/23）のXは、ユーザーによると当時転載し忘れた可能性があり、記録も見つからないため、**Xには未転載（または不明）として扱う**（2026-11-23確認）。Bluesky・Mastodonへは投稿済み
 - 途中で起きたこと: `git mv`＋`git reset`の組み合わせで誤って旧文言のままお試しプレビューをDiscordへ送ってしまった（`SKILL.md`「`git mv`は使わない」参照）
 - 10/23 9:00 JSTに「開催中」版への差し替え・本番投稿のリマインダー、10/28 10:00 JSTに反響確認のリマインダーをClaude Code Remoteの`send_later`で予約済み
 - 開催中版の実投稿（2026-10-23 20:20 JST）: Bluesky `https://bsky.app/profile/nyanmusu.bsky.social/post/3myk2pzn7uk2k`、Mastodon `@nyanmusu/117489955499829817`
@@ -1507,7 +1520,8 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 
 - **通常のBot投稿との比較**（2026-10-14〜10-27のBot投稿10件）: Blueskyのいいねは0〜4件（合計18件・平均1.8件）、リポストは1件のみ。Mastodonは全投稿が0件。つまり、セール告知（予告3件・開催中0件）は通常投稿の範囲内に収まる
 - **考察**: 2段階告知（予告→開催中）に、Bluesky/Mastodonの反響として測れる効果は見えない。ただしフォロワーが少なく、通常投稿でも反応が0〜数件のため、差が出るほどの母数がない。この数字だけで「効果なし」とは言えず、「測れなかった」が正確。SUZURIの売上（管理画面）は、このセッションからは取得できず未確認
-- 未確認: X・Instagram・Facebook・mixi2への転載分の反響は、Claude Codeから取得できない。ユーザーに数字を尋ねる
+- **Xの反響（2026-11-23に`api.fxtwitter.com`で後から取得）**: 予告（10/17）は表示44・いいね0・リポスト0・返信0・引用0・ブックマーク0。開催中版（10/23）のXは未転載の可能性があり取得できない（上記）
+- 未確認: Instagram・Facebook・mixi2への転載分の反響は、Claude Codeから取得できない。ユーザーに数字を尋ねる
 
 **SUZURIのブラックフライデー（2026-11-27 12:00〜12-08 23:59）の予告投稿（2026-11-23・予告/開催中の2段階告知の2回目）**:
 
@@ -1519,6 +1533,7 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 - 実投稿（2026-11-23 22:34 JST）: Bluesky `https://bsky.app/profile/nyanmusu.bsky.social/post/3n2yanfkec427`、Mastodon `@nyanmusu/117666012256546234`。公開APIで1件ずつ・画像付きを確認
 - 途中で起きたこと: 環境のPillowが壊れていて使えず、JPEG変換はImageMagickの`convert`で行った（`SKILL.md`の「JPEG変換」参照）。お試し実行のpushで、Health Checkの`[3] Research`がJSONパースで1回だけ失敗した（告知とは無関係。`.claude/bugs-history.md`の「未対応バグ・改善項目」参照）
 - Claude Code Remoteの`send_later`で予約済み: 11/27 10:00 JSTに開催中版の準備（投稿は12:00以降）、12/9 10:00 JSTに反響確認
+- 手動の転載（2026-11-23・ユーザー）: X `https://x.com/hiroshikuze/status/2124863559914168335`、Instagram `https://www.instagram.com/p/DgFiK32P0Nd/`、mixi2 `https://mixi.social/@nyanmusu/posts/249ff37e-1d45-4ef9-b2c4-588d765ca0e7`、Facebook（URLは個人アカウントのIDを含むため記録しない）。追跡用のクエリ文字列は外した。12/9の反響確認では、Xは`api.fxtwitter.com`で取得し（2026-11-23時点: 表示19・いいね0・リポスト0・返信0）、Instagram・Facebook・mixi2はユーザーに数字を尋ねる
 
 **Geminiの配置情報をそのまま使えなかった点**（パターン1のSatori合成時に手動で補正した）:
 
