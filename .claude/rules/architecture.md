@@ -68,6 +68,8 @@ anniversary-cat-worker/
     ├── test-suzuri-api.mjs           ← SUZURI API動作確認（実商品が生成される）
     ├── test-fal-models.mjs           ← fal.aiモデル比較（FAL_KEY必要）
     ├── test-gemini-image-timing.mjs  ← Gemini画像生成の所要時間計測（GEMINI_API_KEY必要）
+    ├── compare-image-models.mjs      ← Gemini画像生成モデルの比較（GEMINI_API_KEY必要・課金あり・2026-11追加。詳細は.claude/docs/architecture/gemini.md）
+    ├── test-compare-image-models.mjs ← 上記の純粋関数のユニットテスト（外部API不要）← npm test（2026-11追加）
     ├── test-gemini-research-batch.mjs ← バッチ vs シングル精度比較（GEMINI_API_KEY必要）
     ├── test-pool-30days.mjs          ← 事前リサーチプール方式シミュレーション（GEMINI_API_KEY必要）
     ├── generate-kana-translations.mjs ← translations.kanaブランチのruby HTML一括生成（kuroshiro使用・一回限りユーティリティ）
