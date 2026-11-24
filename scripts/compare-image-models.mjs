@@ -6,8 +6,10 @@
  *   node scripts/compare-image-models.mjs --dry-run      # 条件の確認だけ（APIを呼ばない）
  *   GEMINI_API_KEY=xxx node scripts/compare-image-models.mjs
  *   GEMINI_API_KEY=xxx node scripts/compare-image-models.mjs --models gemini-2.5-flash-image,gemini-3.1-flash-image --trials 3
+ *   GEMINI_API_KEY=xxx node scripts/compare-image-models.mjs --models gemini-3.1-flash-lite-image --variants A,B,C --trials 1
  *
- * 外部APIを呼び、GEMINI_API_KEYの課金対象になる（既定は 2モデル × 3ケース × 2試行 = 12回）。
+ * 外部APIを呼び、GEMINI_API_KEYの課金対象になる（既定は 2モデル × 1変種 × 3ケース × 2試行 = 12回）。
+ * --variants で、プロンプトの変種（A=現行 / B=「画面を埋める」系を外して白背景のスポットイラスト / C=B+縦横比1:1）も比べられる。
  * プロンプトは本番と同じ _buildGeminiPrompt() で作る。生成画像と index.html（モデルを並べた一覧）・
  * results.json を tmp/image-model-compare/<日時>/ に保存する（tmp/ は .gitignore 対象）。
  * 詳細・比較の基準は .claude/docs/architecture/gemini.md の「画像モデルの見直し（2026-11-24）」。
@@ -53,6 +55,36 @@ function makeCase(id, theme, themeEn, description, visualHint, eatingAction = nu
   };
 }
 
+/**
+ * プロンプトの変種。本番の_buildGeminiPrompt()は変えず、ここで文字列を差し替えて作る。
+ * 3.1が背景まで描き込む原因の仮説（「白背景」と「画面を埋める・没入感」の指示の矛盾）を試すためのもの。
+ * imageConfig は generationConfig に入れる（公式ドキュメントの要約によるキー名。拒否されれば400等で分かる）。
+ */
+export const VARIANTS = {
+  A: { label: "現行のプロンプト", edit: false, imageConfig: null },
+  B: { label: "「画面を埋める」系を外し、白背景のスポットイラストを指定", edit: true, imageConfig: null },
+  C: { label: "B＋縦横比1:1（imageConfig）", edit: true, imageConfig: { aspectRatio: "1:1" } },
+};
+
+// 本番のプロンプト（worker/index.js _buildGeminiPrompt）にある、変種Bで差し替え・削除する文
+const FILL_FRAME_SENTENCE =
+  "Composition: fill the frame with the cat and scene elements, leaving only a small, even margin around the edges. Avoid large empty corners or a distant, isolated subject floating in excess white space — the illustration should feel full and immersive, not small or shrunken. ";
+const NO_BLANK_MARGIN_SENTENCE = "Do not leave large blank margins or empty corners around the subject. ";
+const SPOT_ILLUSTRATION_SENTENCE = "Composition: a spot illustration isolated on a pure white background. Do not draw a full scenery background. ";
+
+export const columnKey = (model, variant) => `${model}__${variant}`;
+
+/** 変種に合わせてプロンプトを作る。想定の文が本番のプロンプトに無ければ例外（黙って何もしない事故を防ぐ） */
+export function applyVariant(prompt, variant) {
+  const v = VARIANTS[variant];
+  if (!v) throw new Error(`未知の変種: ${variant}`);
+  if (!v.edit) return prompt;
+  for (const sentence of [FILL_FRAME_SENTENCE, NO_BLANK_MARGIN_SENTENCE]) {
+    if (!prompt.includes(sentence)) throw new Error("本番のプロンプトに、差し替え対象の文が見つかりません（worker/index.js の _buildGeminiPrompt が変わった可能性）");
+  }
+  return prompt.replace(FILL_FRAME_SENTENCE, SPOT_ILLUSTRATION_SENTENCE).replace(NO_BLANK_MARGIN_SENTENCE, "");
+}
+
 export const CASES = [
   makeCase(
     "flower-festival", "花まつり", "Flower Festival (Hanamatsuri)",
@@ -77,7 +109,7 @@ export const CASES = [
 // ---------------------------------------------------------------------------
 
 export function parseArgs(argv) {
-  const opts = { models: [...DEFAULT_MODELS], trials: DEFAULT_TRIALS, out: DEFAULT_OUT, dryRun: false };
+  const opts = { models: [...DEFAULT_MODELS], variants: ["A"], trials: DEFAULT_TRIALS, out: DEFAULT_OUT, dryRun: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = () => {
@@ -87,6 +119,12 @@ export function parseArgs(argv) {
     if (a === "--models") {
       opts.models = value().split(",").map((m) => m.trim()).filter(Boolean);
       if (opts.models.length === 0) throw new Error("--models にモデル名が必要です");
+    } else if (a === "--variants") {
+      const names = [...new Set(value().split(",").map((v) => v.trim()).filter(Boolean))];
+      if (names.length === 0) throw new Error("--variants に変種が必要です");
+      const unknown = names.filter((n) => !VARIANTS[n]);
+      if (unknown.length) throw new Error(`未知の変種: ${unknown.join(", ")}（${Object.keys(VARIANTS).join("・")}から選んでください）`);
+      opts.variants = names;
     } else if (a === "--trials") {
       const n = Number(value());
       if (!Number.isInteger(n) || n < 1 || n > MAX_TRIALS) throw new Error(`--trials は1〜${MAX_TRIALS}の整数にしてください`);
@@ -103,11 +141,30 @@ export function parseArgs(argv) {
 }
 
 /** 本番（worker/index.js tryGemini）と同じリクエスト本文 */
-export function buildRequestBody(prompt) {
-  return {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
-  };
+export function buildRequestBody(prompt, imageConfig = null) {
+  const generationConfig = { responseModalities: ["IMAGE", "TEXT"] };
+  if (imageConfig) generationConfig.imageConfig = imageConfig;
+  return { contents: [{ parts: [{ text: prompt }] }], generationConfig };
+}
+
+/** PNG・JPEGのヘッダーから幅と高さを読む（画像を保存せずに出力サイズを知るため）。読めなければnull */
+export function parseImageSize(buf) {
+  if (!buf || buf.length < 24) return null;
+  if (buf.readUInt32BE(0) === 0x89504e47 && buf.readUInt32BE(4) === 0x0d0a1a0a) {
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  }
+  if (buf.readUInt16BE(0) === 0xffd8) {
+    let i = 2;
+    while (i + 9 < buf.length) {
+      if (buf[i] !== 0xff) { i++; continue; }
+      const marker = buf[i + 1];
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+        return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+      }
+      i += 2 + buf.readUInt16BE(i + 2);
+    }
+  }
+  return null;
 }
 
 export function extractImage(data) {
@@ -160,6 +217,7 @@ export function summarize(trials) {
     avgBytes: avg(ok.map((t) => t.bytes)),
     avgTokens: avg(ok.map((t) => t.usage?.total ?? 0)),
     avgCostUsd: ok.length && costs.every((c) => typeof c === "number") ? avg(costs) : null,
+    sizes: [...new Set(ok.map((t) => t.size).filter(Boolean))],
   };
 }
 
@@ -178,21 +236,22 @@ const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 const fmt = (v, digits = 0, unit = "") => (v === null || v === undefined ? "—" : `${Number(v).toFixed(digits)}${unit}`);
 
 export function buildReportHtml(report) {
-  const { models, cases, trials, summaries } = report;
-  const summaryRows = models.map((m) => {
-    const s = summaries[m];
-    return `<tr><th>${esc(m)}</th><td>${s.successes}/${s.trials}</td><td>${fmt(s.avgMs, 0, "ms")}</td><td>${fmt(s.minMs, 0, "ms")}〜${fmt(s.maxMs, 0, "ms")}</td>` +
-      `<td>${s.within12s}/${s.successes}</td><td>${fmt(s.avgBytes === null ? null : s.avgBytes / 1024, 0, "KB")}</td><td>${fmt(s.avgTokens, 0)}</td>` +
+  const { columns, cases, trials, summaries } = report;
+  const colName = (c) => `${c.model}（案${c.variant}）`;
+  const summaryRows = columns.map((c) => {
+    const s = summaries[c.key];
+    return `<tr><th>${esc(colName(c))}<br><small>${esc(c.label)}</small></th><td>${s.successes}/${s.trials}</td><td>${fmt(s.avgMs, 0, "ms")}</td><td>${fmt(s.minMs, 0, "ms")}〜${fmt(s.maxMs, 0, "ms")}</td>` +
+      `<td>${s.within12s}/${s.successes}</td><td>${s.sizes.length ? esc(s.sizes.join(", ")) : "—"}</td><td>${fmt(s.avgBytes === null ? null : s.avgBytes / 1024, 0, "KB")}</td><td>${fmt(s.avgTokens, 0)}</td>` +
       `<td>${s.avgCostUsd === null ? "不明" : `$${s.avgCostUsd.toFixed(4)}`}</td></tr>`;
   }).join("\n");
 
   const caseSections = cases.map((c) => {
-    const cols = models.map((m) => {
-      const cells = trials.filter((t) => t.model === m && t.caseId === c.id).map((t) =>
+    const cols = columns.map((col) => {
+      const cells = trials.filter((t) => t.column === col.key && t.caseId === c.id).map((t) =>
         t.success
-          ? `<figure><img src="${esc(t.file)}" alt="${esc(m)} ${esc(c.id)} ${t.n}" loading="lazy"><figcaption>#${t.n} ${fmt(t.elapsedMs, 0, "ms")} / ${fmt(t.bytes / 1024, 0, "KB")} / ${fmt(t.usage?.total, 0)}トークン / ${t.costUsd === null ? "コスト不明" : `$${t.costUsd.toFixed(4)}`}</figcaption></figure>`
+          ? `<figure><img src="${esc(t.file)}" alt="${esc(colName(col))} ${esc(c.id)} ${t.n}" loading="lazy"><figcaption>#${t.n} ${esc(t.size ?? "")} ${fmt(t.elapsedMs, 0, "ms")} / ${fmt(t.bytes / 1024, 0, "KB")} / ${fmt(t.usage?.total, 0)}トークン / ${t.costUsd === null ? "コスト不明" : `$${t.costUsd.toFixed(4)}`}</figcaption></figure>`
           : `<figure class="ng"><figcaption>#${t.n} 失敗（${fmt(t.elapsedMs, 0, "ms")}）: ${esc(t.error ?? "不明")}</figcaption></figure>`).join("\n");
-      return `<td><h4>${esc(m)}</h4>${cells}</td>`;
+      return `<td><h4>${esc(colName(col))}</h4>${cells}</td>`;
     }).join("\n");
     return `<section><h3>${esc(c.theme)}（${esc(c.id)}）</h3><table class="grid"><tr>${cols}</tr></table></section>`;
   }).join("\n");
@@ -209,10 +268,10 @@ figure{margin:0 0 12px}figcaption{font-size:12px;color:#555}.ng figcaption{color
 <h1>画像モデルの比較</h1>
 <p>実行: ${esc(report.startedAt)}。推定コストは価格表（2026-11-24の料金ページの要約）による参考値で、<b>要確認</b>です。</p>
 <h2>集計</h2>
-<table><tr><th>モデル</th><th>成功</th><th>平均</th><th>最小〜最大</th><th>12秒以内</th><th>平均サイズ</th><th>平均トークン</th><th>推定コスト／枚</th></tr>
+<table><tr><th>モデル（変種）</th><th>成功</th><th>平均</th><th>最小〜最大</th><th>12秒以内</th><th>出力サイズ</th><th>平均サイズ</th><th>平均トークン</th><th>推定コスト／枚</th></tr>
 ${summaryRows}</table>
 <h2>目視のチェック項目</h2>
-<ul><li>文字の混入（看板・ラベル・文字化け）</li><li>猫以外の顔（食べ物・植物に目や口がないか。Bug#33）</li><li>桜の誤生成（テーマにない花びら。Bug#26）</li><li>余白（被写体が小さく浮いていないか）</li><li>水彩・パステルの雰囲気、猫のかわいさ</li></ul>
+<ul><li>文字の混入（看板・ラベル・文字化け）</li><li>猫以外の顔（食べ物・植物に目や口がないか。Bug#33）</li><li>桜の誤生成（テーマにない花びら。Bug#26）</li><li>余白（被写体が小さく浮いていないか）</li><li>白背景か（背景まで描き込んでいないか。枠・ビネットがないか）</li><li>水彩・パステルの雰囲気、猫のかわいさ</li></ul>
 <h2>画像</h2>
 ${caseSections}
 </body></html>
@@ -226,13 +285,13 @@ ${caseSections}
 /**
  * 1回生成する。計測のため fetchWithRetry は使わない（再試行すると所要時間が歪むため意図的に非リトライ）。
  */
-async function generateOnce(model, prompt, apiKey) {
+async function generateOnce(model, prompt, imageConfig, apiKey) {
   const start = Date.now();
   try {
     const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-      body: JSON.stringify(buildRequestBody(prompt)),
+      body: JSON.stringify(buildRequestBody(prompt, imageConfig)),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     const text = await res.text();
@@ -255,15 +314,23 @@ const EXT = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const calls = opts.models.length * CASES.length * opts.trials;
+  const columns = opts.models.flatMap((model) => opts.variants.map((variant) => ({ key: columnKey(model, variant), model, variant, label: VARIANTS[variant].label })));
+  const calls = columns.length * CASES.length * opts.trials;
   console.log(`モデル: ${opts.models.join(", ")}`);
+  console.log(`変種: ${opts.variants.map((v) => `${v}（${VARIANTS[v].label}）`).join(" / ")}`);
   console.log(`ケース: ${CASES.map((c) => c.id).join(", ")} / 試行: ${opts.trials}回ずつ / API呼び出し: ${calls}回（課金対象）`);
   const unpriced = opts.models.filter((m) => !PRICES[m]);
   if (unpriced.length) console.log(`価格表にないモデル（コストは「不明」になる）: ${unpriced.join(", ")}`);
 
   if (opts.dryRun) {
-    console.log("\n--dry-run: APIは呼びません。プロンプト（先頭200文字）:");
-    for (const c of CASES) console.log(`\n[${c.id}] ${c.prompt.slice(0, 200)}…`);
+    console.log("\n--dry-run: APIは呼びません。");
+    for (const v of opts.variants) {
+      const prompt = applyVariant(CASES[0].prompt, v);
+      const i = prompt.indexOf("Composition:");
+      console.log(`\n[変種${v}] ${VARIANTS[v].label} / imageConfig=${JSON.stringify(VARIANTS[v].imageConfig)}`);
+      console.log(`  Composition行: ${i >= 0 ? prompt.slice(i, i + 160) : "（なし）"}…`);
+      console.log(`  プロンプトの長さ: ${prompt.length}文字`);
+    }
     return;
   }
 
@@ -278,37 +345,40 @@ async function main() {
   mkdirSync(dir, { recursive: true });
 
   const trials = [];
-  // 時間帯の偏りを避けるため、モデルを交互に回す（ケース → 試行 → モデルの順）
+  // 時間帯の偏りを避けるため、列（モデル×変種）を交互に回す（ケース → 試行 → 列の順）
   for (const c of CASES) {
     for (let n = 1; n <= opts.trials; n++) {
-      for (const model of opts.models) {
-        const r = await generateOnce(model, c.prompt, apiKey);
-        const trial = { model, caseId: c.id, n, success: r.success, elapsedMs: r.elapsedMs, usage: r.usage, costUsd: r.costUsd ?? null, error: r.error };
+      for (const col of columns) {
+        const prompt = applyVariant(c.prompt, col.variant);
+        const r = await generateOnce(col.model, prompt, VARIANTS[col.variant].imageConfig, apiKey);
+        const trial = { column: col.key, model: col.model, variant: col.variant, caseId: c.id, n, success: r.success, elapsedMs: r.elapsedMs, usage: r.usage, costUsd: r.costUsd ?? null, error: r.error };
         if (r.success) {
           const buf = Buffer.from(r.image.data, "base64");
+          const dim = parseImageSize(buf);
           trial.bytes = buf.length;
-          trial.file = `${safeFileName(model)}__${safeFileName(c.id)}__${n}.${EXT[r.image.mimeType] ?? "png"}`;
+          trial.size = dim ? `${dim.width}x${dim.height}` : null;
+          trial.file = `${safeFileName(col.model)}__${col.variant}__${safeFileName(c.id)}__${n}.${EXT[r.image.mimeType] ?? "png"}`;
           writeFileSync(join(dir, trial.file), buf);
         }
         trials.push(trial);
-        console.log(`${r.success ? "✅" : "❌"} ${model} / ${c.id} #${n}: ${r.elapsedMs}ms ${r.success ? `${Math.round(trial.bytes / 1024)}KB ${r.usage.total}トークン` : r.error}`);
+        console.log(`${r.success ? "✅" : "❌"} ${col.model} 案${col.variant} / ${c.id} #${n}: ${r.elapsedMs}ms ${r.success ? `${trial.size ?? "サイズ不明"} ${Math.round(trial.bytes / 1024)}KB ${r.usage.total}トークン` : r.error}`);
         await new Promise((res) => setTimeout(res, PAUSE_MS));
       }
     }
   }
 
-  const summaries = Object.fromEntries(opts.models.map((m) => [m, summarize(trials.filter((t) => t.model === m))]));
-  const report = { startedAt, models: opts.models, cases: CASES.map(({ id, theme }) => ({ id, theme })), trials, summaries };
+  const summaries = Object.fromEntries(columns.map((col) => [col.key, summarize(trials.filter((t) => t.column === col.key))]));
+  const report = { startedAt, columns, cases: CASES.map(({ id, theme }) => ({ id, theme })), trials, summaries };
   writeFileSync(join(dir, "results.json"), JSON.stringify(report, null, 2));
   writeFileSync(join(dir, "index.html"), buildReportHtml(report));
 
   console.log("\n========== 集計 ==========");
-  for (const m of opts.models) {
-    const s = summaries[m];
-    console.log(`${m}: 成功 ${s.successes}/${s.trials}、平均 ${fmt(s.avgMs, 0, "ms")}（最小〜最大 ${fmt(s.minMs, 0, "ms")}〜${fmt(s.maxMs, 0, "ms")}）、12秒以内 ${s.within12s}/${s.successes}、` +
-      `平均トークン ${fmt(s.avgTokens, 0)}、推定コスト／枚 ${s.avgCostUsd === null ? "不明" : `$${s.avgCostUsd.toFixed(4)}`}`);
+  for (const col of columns) {
+    const s = summaries[col.key];
+    console.log(`${col.model} 案${col.variant}: 成功 ${s.successes}/${s.trials}、平均 ${fmt(s.avgMs, 0, "ms")}（最小〜最大 ${fmt(s.minMs, 0, "ms")}〜${fmt(s.maxMs, 0, "ms")}）、12秒以内 ${s.within12s}/${s.successes}、` +
+      `出力 ${s.sizes.length ? s.sizes.join(", ") : "—"}、平均トークン ${fmt(s.avgTokens, 0)}、推定コスト／枚 ${s.avgCostUsd === null ? "不明" : `$${s.avgCostUsd.toFixed(4)}`}`);
   }
-  console.log(`\n画像と一覧: ${join(dir, "index.html")}（ブラウザで開いてモデルを並べて見比べてください）`);
+  console.log(`\n画像と一覧: ${join(dir, "index.html")}（ブラウザで開いてモデルと変種を並べて見比べてください）`);
   if (trials.every((t) => !t.success)) process.exit(1);
 }
 

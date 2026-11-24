@@ -11,9 +11,13 @@
 
 import {
   DEFAULT_MODELS,
+  VARIANTS,
   CASES,
   PRICES,
   parseArgs,
+  applyVariant,
+  columnKey,
+  parseImageSize,
   buildRequestBody,
   extractImage,
   parseUsage,
@@ -63,6 +67,69 @@ console.log("\n[parseArgs]");
   assert("未知の引数は例外", throws(() => parseArgs(["--unknown"])));
   assert("値のない--modelsは例外", throws(() => parseArgs(["--models"])));
   assert("DEFAULT_MODELSと一致", d.models.join() === DEFAULT_MODELS.join());
+
+  assert("既定の変種はA（現行のプロンプトだけ）", d.variants.join() === "A");
+  assert("--variantsはカンマ区切り", parseArgs(["--variants", "A, B,C"]).variants.join() === "A,B,C");
+  assert("--variantsは重複を除く", parseArgs(["--variants", "B,B,A"]).variants.join() === "B,A");
+  assert("未知の変種は例外", throws(() => parseArgs(["--variants", "A,Z"])));
+  assert("--variantsが空なら例外", throws(() => parseArgs(["--variants", ""])));
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n[変種（applyVariant）]");
+{
+  const base = CASES[0].prompt;
+  assert("A（現行）はプロンプトを変えない", applyVariant(base, "A") === base);
+
+  const b = applyVariant(base, "B");
+  assert("Bは「画面を埋める」の構図の行を外す", !b.includes("fill the frame") && !b.includes("full and immersive"));
+  assert("Bは「余白を残さない」の念押しを外す", !b.includes("Do not leave large blank margins"));
+  assert("Bは白背景のスポットイラストを指定する", b.includes("a spot illustration isolated on a pure white background"));
+  assert("Bは全面の風景背景を描かない指示を入れる", b.includes("Do not draw a full scenery background"));
+  assert("Bでも文字禁止の指示は残る", b.includes("Do not include any text"));
+  assert("Bでも猫以外に顔をつけない指示は残る（Bug#33）", b.includes("Only the cat(s) described above should have a face"));
+  assert("Bでも円形フレーム禁止は残る（Bug#27）", b.includes("do not add a circular frame, border, or vignette"));
+  assert("Bは葉の枚数や絵本風の指定を足さない", !/5 to 7|children's book/i.test(b));
+  assert("BはStyle行（白背景）を残す", b.includes("white background, Japanese illustration style"));
+  assert("Cのプロンプトは本文がBと同じ", applyVariant(base, "C") === b);
+
+  assert("本番のプロンプトに想定の文が無ければ例外（黙って何もしない事故を防ぐ）", throws(() => applyVariant("Create a cat.", "B")));
+  assert("未知の変種は例外", throws(() => applyVariant(base, "Z")));
+
+  assert("変種はA・B・C", Object.keys(VARIANTS).join() === "A,B,C");
+  assert("AとBはimageConfigを送らない", VARIANTS.A.imageConfig === null && VARIANTS.B.imageConfig === null);
+  assert("Cは縦横比1:1だけをimageConfigで指定する", JSON.stringify(VARIANTS.C.imageConfig) === JSON.stringify({ aspectRatio: "1:1" }));
+  assert("全ケースでBが成立する（想定の文が本番のプロンプトにある）", CASES.every((c) => !throws(() => applyVariant(c.prompt, "B"))));
+  assert("列のキーはモデルと変種から作る", columnKey("m1", "B") === "m1__B");
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n[parseImageSize]");
+{
+  const png = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0);
+  png.write("IHDR", 12, "ascii");
+  png.writeUInt32BE(1024, 16);
+  png.writeUInt32BE(768, 20);
+  const p = parseImageSize(png);
+  assert("PNGの幅と高さ", p && p.width === 1024 && p.height === 768);
+
+  // JPEG: SOI + APP0（長さ16）+ SOF0（高さ768・幅1408）
+  const jpg = Buffer.alloc(2 + 18 + 19);
+  jpg.writeUInt16BE(0xffd8, 0);
+  jpg.writeUInt16BE(0xffe0, 2);
+  jpg.writeUInt16BE(16, 4);
+  jpg.writeUInt16BE(0xffc0, 20);
+  jpg.writeUInt16BE(17, 22);
+  jpg.writeUInt8(8, 24);
+  jpg.writeUInt16BE(768, 25);
+  jpg.writeUInt16BE(1408, 27);
+  const j = parseImageSize(jpg);
+  assert("JPEGの幅と高さ（SOFを探す）", j && j.width === 1408 && j.height === 768);
+
+  assert("未知の形式はnull", parseImageSize(Buffer.from("hello world, not an image")) === null);
+  assert("短すぎる入力はnull", parseImageSize(Buffer.alloc(4)) === null);
+  assert("空はnull", parseImageSize(Buffer.alloc(0)) === null);
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +149,10 @@ console.log("\n[buildRequestBody / extractImage]");
   const body = buildRequestBody("hello");
   assert("本番と同じresponseModalities", JSON.stringify(body.generationConfig.responseModalities) === JSON.stringify(["IMAGE", "TEXT"]));
   assert("プロンプトがpartsに入る", body.contents[0].parts[0].text === "hello");
+  assert("imageConfigが無ければgenerationConfigに入れない", !("imageConfig" in body.generationConfig));
+  const withCfg = buildRequestBody("hello", { aspectRatio: "1:1" });
+  assert("imageConfigはgenerationConfigに入る", withCfg.generationConfig.imageConfig.aspectRatio === "1:1");
+  assert("imageConfigを足してもresponseModalitiesは残る", withCfg.generationConfig.responseModalities.length === 2);
 
   const ok = extractImage({ candidates: [{ content: { parts: [{ text: "t" }, { inlineData: { mimeType: "image/png", data: "QUJD" } }] } }] });
   assert("画像パートを取り出す", ok.mimeType === "image/png" && ok.data === "QUJD");
@@ -152,6 +223,13 @@ console.log("\n[summarize]");
   assert("12秒を超えた成功は12秒以内に数えない", slow.within12s === 0);
   assert("コストが不明なら平均コストもnull", slow.avgCostUsd === null);
 
+  const sz = summarize([
+    { success: true, elapsedMs: 1, bytes: 1, usage: { total: 1 }, costUsd: 0, size: "1024x1024" },
+    { success: true, elapsedMs: 1, bytes: 1, usage: { total: 1 }, costUsd: 0, size: "1408x768" },
+    { success: true, elapsedMs: 1, bytes: 1, usage: { total: 1 }, costUsd: 0, size: "1024x1024" },
+  ]);
+  assert("出力サイズは重複を除いて集める", sz.sizes.join() === "1024x1024,1408x768");
+
   const none = summarize([{ success: false, elapsedMs: 1, error: "e" }]);
   assert("全失敗なら集計値はnull", none.successes === 0 && none.avgMs === null && none.minMs === null && none.avgBytes === null && none.avgCostUsd === null);
   const empty = summarize([]);
@@ -171,25 +249,33 @@ console.log("\n[redactKey / safeFileName]");
 // ---------------------------------------------------------------------------
 console.log("\n[buildReportHtml]");
 {
+  const k1 = columnKey("m<1>", "A");
+  const k2 = columnKey("m2", "B");
   const report = {
     startedAt: "2026-11-24T00:00:00.000Z",
-    models: ["m<1>", "m2"],
+    columns: [
+      { key: k1, model: "m<1>", variant: "A", label: "現行<のプロンプト" },
+      { key: k2, model: "m2", variant: "B", label: "B案" },
+    ],
     cases: [{ id: "case1", theme: "<script>alert(1)</script>" }],
     trials: [
-      { model: "m<1>", caseId: "case1", n: 1, success: true, elapsedMs: 9000, bytes: 2048, usage: { total: 1500 }, costUsd: 0.04, file: "m_1___case1__1.png" },
-      { model: "m2", caseId: "case1", n: 1, success: false, elapsedMs: 100, error: "boom <b>" },
+      { column: k1, model: "m<1>", variant: "A", caseId: "case1", n: 1, success: true, elapsedMs: 9000, bytes: 2048, size: "1408x768", usage: { total: 1500 }, costUsd: 0.04, file: "m_1___A__case1__1.png" },
+      { column: k2, model: "m2", variant: "B", caseId: "case1", n: 1, success: false, elapsedMs: 100, error: "boom <b>" },
     ],
     summaries: {
-      "m<1>": summarize([{ success: true, elapsedMs: 9000, bytes: 2048, usage: { total: 1500 }, costUsd: 0.04 }]),
-      m2: summarize([{ success: false, elapsedMs: 100, error: "boom" }]),
+      [k1]: summarize([{ success: true, elapsedMs: 9000, bytes: 2048, usage: { total: 1500 }, costUsd: 0.04, size: "1408x768" }]),
+      [k2]: summarize([{ success: false, elapsedMs: 100, error: "boom" }]),
     },
   };
   const html = buildReportHtml(report);
   assert("HTMLの文書になっている", html.startsWith("<!doctype html>") && html.includes("<title>"));
   assert("モデル名の<をエスケープ", !html.includes("m<1>") && html.includes("m&lt;1&gt;"));
+  assert("変種のラベルの<もエスケープ", !html.includes("現行<のプロンプト") && html.includes("現行&lt;のプロンプト"));
+  assert("変種の記号を表示する", html.includes("案A") && html.includes("案B"));
   assert("テーマ名のスクリプトをエスケープ", !html.includes("<script>alert(1)</script>"));
   assert("失敗の理由もエスケープして載せる", html.includes("boom &lt;b&gt;"));
-  assert("画像を相対パスで参照する", html.includes('src="m_1___case1__1.png"'));
+  assert("画像を相対パスで参照する", html.includes('src="m_1___A__case1__1.png"'));
+  assert("出力サイズを載せる", html.includes("1408x768"));
   assert("目視のチェック項目を載せる", html.includes("文字の混入") && html.includes("猫以外の顔"));
   assert("価格は要確認の注記がある", html.includes("要確認"));
   assert("APIキーらしい文字列（key=）を含まない", !/key=/i.test(html));
