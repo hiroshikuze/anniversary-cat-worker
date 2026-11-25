@@ -6,8 +6,8 @@
       "hypothesis": "猫・記念日好きがフォローする理由が伝わり、新規フォロワーが増える",
       "metric": "Bluesky＋Mastodonのフォロワー合計（週次）",
       "baseline": {
-        "value": 130,
-        "measured_at": "2026-09（future-ideas.mdの診断時点。初回サイクルで再計測して置き換える）"
+        "value": 138,
+        "measured_at": "2026-11-23（Bluesky 113＋Mastodon 25。Issue #225の集計）"
       },
       "target": 145,
       "start": null,
@@ -15,7 +15,7 @@
       "duration_days": 21,
       "owner": "owner",
       "permission": "approval",
-      "issue": null,
+      "issue": 233,
       "status": "proposed",
       "result": null,
       "learning": null

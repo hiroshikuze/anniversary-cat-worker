@@ -1674,3 +1674,19 @@ Playwright（Chromium）で、375×667・倍率2・モバイル端末・タッ�
 - 本番Workerの実データでの再計測
 - iPhone実機での確認
 
+
+## 成長ループからの提案: SUZURIへの導線の計測漏れ（2026-11-25・未承認）
+
+成長ループの初回サイクル（`.claude/growth/progress.md`の2026-11-25）で、ファネル3「グッズ興味」の指標`suzuri-click`が、直近30日で1件だった（訪問者347人。Issue #225の2026-11-23の集計）。コードを読んで分かった計測の漏れを記録する。成長ループはアプリのコードを変更しないため、提案にとどめる。
+
+### 分かったこと
+
+- `suzuri-click`は、結果画面の商品カード（`showGoods()`）のリンクにだけ付いている（`frontend/index.html`の`data-umami-event="suzuri-click"`）
+- 同じ結果画面のセールバナー（`#g-sale-banner`の`https://suzuri.jp/nyanmusu`へのリンク）には、Umamiのイベントが付いていない。2026-11のブラックフライデーのように、セール中はこのバナーが商品より上に出るため、そこからSUZURIへ行った人は数えられていない
+- Bot投稿・プロフィールからSUZURIへ直接行く人は、サイトを通らないためUmamiでは数えられない（これは仕組み上の限界で、直す対象ではない）
+
+### 提案
+
+1. セールバナーのリンクに`data-umami-event="suzuri-click"`と`data-umami-event-slug="sale-banner"`を付ける（slugで商品カードと区別できる）。変更は小さいが、`frontend/index.html`の変更のため、CLAUDE.mdの手順（Plan→Docs→Tests→Code）で行う
+2. 30日で1件という値が、本当に興味の低さなのか計測の漏れなのかを分けるため、1の実施後に2〜3週分の`suzuri-click`を見比べる
+3. 関連: 前の節の「SUZURIの導線が最初の画面の外にある」（改善案2）も、この段階の数字に効く可能性がある
