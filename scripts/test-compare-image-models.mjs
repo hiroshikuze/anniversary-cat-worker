@@ -26,6 +26,7 @@ import {
   redactKey,
   safeFileName,
   buildReportHtml,
+  generateOnce,
 } from "./compare-image-models.mjs";
 
 let passed = 0;
@@ -279,6 +280,67 @@ console.log("\n[buildReportHtml]");
   assert("目視のチェック項目を載せる", html.includes("文字の混入") && html.includes("猫以外の顔"));
   assert("価格は要確認の注記がある", html.includes("要確認"));
   assert("APIキーらしい文字列（key=）を含まない", !/key=/i.test(html));
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n[generateOnce（通信・fetchをモック）]");
+{
+  const originalFetch = globalThis.fetch;
+  const KEY = "AIzaSyDUMMY-key-value-1234";
+  const MODEL = "gemini-3.1-flash-lite-image";
+  const resp = (status, data) => ({ status, ok: status >= 200 && status < 300, text: async () => (typeof data === "string" ? data : JSON.stringify(data)) });
+  const okBody = {
+    candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/jpeg", data: "QUJD" } }] } }],
+    usageMetadata: { promptTokenCount: 400, candidatesTokenCount: 1500, totalTokenCount: 1900, candidatesTokensDetails: [{ modality: "IMAGE", tokenCount: 1120 }, { modality: "TEXT", tokenCount: 380 }] },
+  };
+  let last = null;
+  const mock = (impl) => { last = null; globalThis.fetch = async (url, opts) => { last = { url: String(url), opts }; return impl(url, opts); }; };
+  try {
+    mock(() => resp(200, okBody));
+    const ok = await generateOnce(MODEL, "PROMPT", { aspectRatio: "1:1" }, KEY);
+    assert("成功: 画像とmimeTypeを返す", ok.success === true && ok.image.data === "QUJD" && ok.image.mimeType === "image/jpeg");
+    assert("成功: usageを解析し、推定コストを出す", ok.usage.image === 1120 && ok.usage.text === 380 && typeof ok.costUsd === "number");
+    assert("成功: 所要時間を記録する", typeof ok.elapsedMs === "number" && ok.elapsedMs >= 0);
+    assert("URLはモデルのgenerateContent", last.url === `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`);
+    assert("APIキーはURLに載せない（key=を含まない）", !last.url.includes("key=") && !last.url.includes(KEY));
+    assert("APIキーはx-goog-api-keyヘッダーで送る", last.opts.headers["x-goog-api-key"] === KEY);
+    assert("メソッドはPOST", last.opts.method === "POST");
+    const sent = JSON.parse(last.opts.body);
+    assert("プロンプトとimageConfigを本文に入れる", sent.contents[0].parts[0].text === "PROMPT" && sent.generationConfig.imageConfig.aspectRatio === "1:1");
+    assert("タイムアウトのシグナルを付ける", last.opts.signal instanceof AbortSignal);
+
+    await generateOnce(MODEL, "PROMPT", null, KEY);
+    assert("imageConfigがnullなら本文に入れない", !("imageConfig" in JSON.parse(last.opts.body).generationConfig));
+
+    mock(() => resp(400, { error: { message: `API key ${KEY} is invalid` } }));
+    const e400 = await generateOnce(MODEL, "P", null, KEY);
+    assert("HTTPエラー: 失敗として返す", e400.success === false && typeof e400.elapsedMs === "number");
+    assert("HTTPエラー: メッセージのAPIキーを***に伏せる", !e400.error.includes(KEY) && e400.error.includes("***"));
+
+    mock(() => resp(502, "<html>Bad Gateway</html>"));
+    const e502 = await generateOnce(MODEL, "P", null, KEY);
+    assert("非JSONは、ステータス付きの定型文", e502.success === false && e502.error === "非JSONレスポンス（HTTP 502）");
+
+    mock(() => resp(200, { candidates: [{ content: { parts: [{ text: "画像を作れません" }] } }], usageMetadata: { promptTokenCount: 10, totalTokenCount: 10 } }));
+    const noImg = await generateOnce(MODEL, "P", null, KEY);
+    assert("画像パートが無ければ失敗（理由は定型文・usageは残す）", noImg.success === false && noImg.error === "画像パートなし" && noImg.usage.prompt === 10);
+
+    mock(() => { throw new TypeError(`fetch failed for https://x/?key=${KEY}`); });
+    const eNet = await generateOnce(MODEL, "P", null, KEY);
+    assert("通信例外: キー（keyパラメーターを含む）を出力に出さない", eNet.success === false && !eNet.error.includes(KEY) && !/key=AIza/.test(eNet.error));
+
+    mock(() => { const e = new Error(`The operation was aborted ${KEY}`); e.name = "TimeoutError"; throw e; });
+    const eTime = await generateOnce(MODEL, "P", null, KEY);
+    assert("タイムアウトは定型文", eTime.success === false && eTime.error === "タイムアウト");
+
+    mock(() => resp(200, okBody));
+    const unpriced = await generateOnce("gemini-unknown-model", "P", null, KEY);
+    assert("価格表にないモデルは、コストをnullにする", unpriced.success === true && unpriced.costUsd === null);
+  } catch (e) {
+    assert(`generateOnceのテストが予期しない例外で止まった: ${e.message}`, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 console.log(`\n結果: ${passed} 件成功 / ${failed} 件失敗`);

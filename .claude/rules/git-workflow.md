@@ -90,6 +90,7 @@ Cron Trigger（`0 15 * * *`・`0 16 * * *`・`0 22 * * 1-5`）は`wrangler.toml`
 - `SUZURI_API_KEY`
 - `MASTODON_INSTANCE_URL`（任意・設定時はhealth-check.jsがMastodon認証も検証する。セール告知の自動投稿にも使う。2026-09-29登録。値は`https://mastodon.social`のようにサーバーの住所だけにする）
 - `MASTODON_ACCESS_TOKEN`（任意・同上）
+- `UMAMI_SHARE_ID`（任意・`growth-metrics.yml`が成長ループの週次の集計でUmamiの訪問者数・`suzuri-click`を取るために使う。2026-11-22登録。値はUmamiの共有ページのアドレス`…/share/○○○○`の`○○○○`の部分**だけ**（英数字8〜50文字。`https://`・`/`・空白・改行を含めない）。ID以外の部分が入っていると、UmamiのAPIが`HTTP 404`を返して「計測不可」になる〔2026-11-23に実際に起きた〕。値は読み戻せない。Claudeのセッションからは読めず、集計ワークフローだけが使う。詳細は`.claude/docs/architecture/growth-metrics.md`）
 - `WORKER_URL`（任意・`https://anniversary-cat-worker.hiroshikuze.workers.dev`・設定時はhealth-check.jsがWorker E2Eチェック〔/research・/generate・/usage〕を実行する）
 - `BYPASS_TOKEN`（任意・`WORKER_URL`と併用・レート制限をスキップしてE2Eテストを実行）
   - 2026-10-21時点では未登録（Cloudflare Workerのシークレットのみ）。Cloudflareのシークレットは登録後に値を確認できないため、紛失時は新しい値に上書きする。手順は`.claude/rules/testing.md`の「`BYPASS_TOKEN`の所在・再設定」参照

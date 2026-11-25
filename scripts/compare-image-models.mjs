@@ -285,7 +285,7 @@ ${caseSections}
 /**
  * 1回生成する。計測のため fetchWithRetry は使わない（再試行すると所要時間が歪むため意図的に非リトライ）。
  */
-async function generateOnce(model, prompt, imageConfig, apiKey) {
+export async function generateOnce(model, prompt, imageConfig, apiKey) {
   const start = Date.now();
   try {
     const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {

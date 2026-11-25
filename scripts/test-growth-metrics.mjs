@@ -24,6 +24,9 @@ import {
   HttpError,
   fetchJson,
   collectMetrics,
+  postToIssue,
+  ISSUE_TITLE,
+  ISSUE_LABEL,
   buildCommentBody,
 } from "./growth-metrics.mjs";
 
@@ -314,5 +317,116 @@ console.log("\n[buildCommentBody]");
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// postToIssue（Issueの検索・作成・コメント。fetchをモックして検証）
+// ---------------------------------------------------------------------------
+console.log("\n[postToIssue]");
+{
+  const originalFetch = globalThis.fetch;
+  const TOKEN_GH = "ghs_secretTokenValue123";
+  const REPO = "owner/repo";
+  const resp = (status, data) => ({ status, ok: status >= 200 && status < 300, text: async () => (typeof data === "string" ? data : JSON.stringify(data)) });
+
+  /** routes: { "METHOD 部分一致するURL": 応答（または関数） }。呼び出しを calls に記録する */
+  function mockGitHub(routes) {
+    const calls = [];
+    globalThis.fetch = async (url, opts = {}) => {
+      const method = opts.method ?? "GET";
+      const body = opts.body ? JSON.parse(opts.body) : undefined;
+      calls.push({ method, url: String(url), headers: opts.headers, body });
+      for (const [key, value] of Object.entries(routes)) {
+        const [m, part] = [key.split(" ")[0], key.slice(key.indexOf(" ") + 1)];
+        if (m === method && String(url).includes(part)) return typeof value === "function" ? value(body) : value;
+      }
+      throw new Error(`想定外の呼び出し: ${method} ${url}`);
+    };
+    return calls;
+  }
+  const quiet = [];
+  const log = (m) => quiet.push(m);
+
+  try {
+    // 1) 既存の開いているIssueにコメントだけする
+    let calls = mockGitHub({
+      "GET /issues?labels=": resp(200, [{ number: 225, title: ISSUE_TITLE }]),
+      "POST /issues/225/comments": resp(201, { html_url: "https://github.com/owner/repo/issues/225#c1" }),
+    });
+    let n = await postToIssue("本文A", { token: TOKEN_GH, repo: REPO, log });
+    assert("既存のIssueの番号を返す", n === 225);
+    assert("検索→コメントの2回だけ呼ぶ（ラベル・Issueは作らない）", calls.length === 2 && calls[0].method === "GET" && calls[1].method === "POST");
+    assert("検索はラベルと開いているIssueで絞る", calls[0].url.includes("labels=growth%3Ametrics") && calls[0].url.includes("state=open"));
+    assert("対象はリポジトリのGitHub API", calls[0].url.startsWith(`https://api.github.com/repos/${REPO}/issues`));
+    assert("コメント本文をそのまま送る", calls[1].body.body === "本文A");
+    assert("認証はBearerトークン", calls.every((c) => c.headers.Authorization === `Bearer ${TOKEN_GH}`));
+    assert("ログにトークンを出さない", !quiet.join("\n").includes(TOKEN_GH));
+
+    // 2) 一覧にPRが混ざっていても、PRではなくIssueを選ぶ
+    calls = mockGitHub({
+      "GET /issues?labels=": resp(200, [{ number: 7, pull_request: {} }, { number: 8 }]),
+      "POST /issues/8/comments": resp(201, {}),
+    });
+    n = await postToIssue("本文B", { token: TOKEN_GH, repo: REPO, log });
+    assert("PR（pull_request付き）は飛ばしてIssueを選ぶ", n === 8 && calls[1].url.includes("/issues/8/comments"));
+
+    // 3) Issueが無ければ、ラベルとIssueを作ってからコメントする
+    calls = mockGitHub({
+      "GET /issues?labels=": resp(200, []),
+      "POST /labels": resp(201, {}),
+      "POST /issues/300/comments": resp(201, {}),
+      "POST /issues": resp(201, { number: 300 }),
+    });
+    n = await postToIssue("本文C", { token: TOKEN_GH, repo: REPO, log });
+    assert("作成したIssueの番号を返す", n === 300);
+    assert("検索→ラベル→Issue→コメントの順", calls.map((c) => `${c.method} ${c.url.split("/").slice(-1)[0].split("?")[0]}`).join(",") === "GET issues,POST labels,POST issues,POST comments");
+    assert("ラベルは growth:metrics", calls[1].body.name === ISSUE_LABEL);
+    assert("Issueのタイトルとラベル", calls[2].body.title === ISSUE_TITLE && calls[2].body.labels[0] === ISSUE_LABEL);
+    assert("作ったIssueにコメントする", calls[3].url.includes("/issues/300/comments") && calls[3].body.body === "本文C");
+
+    // 4) ラベルがすでにある（422）なら無視して続ける
+    calls = mockGitHub({
+      "GET /issues?labels=": resp(200, []),
+      "POST /labels": resp(422, { message: "Validation Failed" }),
+      "POST /issues/301/comments": resp(201, {}),
+      "POST /issues": resp(201, { number: 301 }),
+    });
+    n = await postToIssue("本文D", { token: TOKEN_GH, repo: REPO, log });
+    assert("ラベルが422（すでにある）でも続けてIssueを作る", n === 301 && calls.length === 4);
+
+    // 5) 一覧が配列でない応答でも、作成の経路に進む（例外にしない）
+    calls = mockGitHub({
+      "GET /issues?labels=": resp(200, { message: "unexpected" }),
+      "POST /labels": resp(201, {}),
+      "POST /issues/302/comments": resp(201, {}),
+      "POST /issues": resp(201, { number: 302 }),
+    });
+    n = await postToIssue("本文E", { token: TOKEN_GH, repo: REPO, log });
+    assert("配列でない一覧は「Issueなし」として扱う", n === 302);
+
+    // 6) エラー系
+    calls = mockGitHub({
+      "GET /issues?labels=": resp(200, []),
+      "POST /labels": resp(403, { message: "Forbidden" }),
+    });
+    await assertRejects("ラベル作成が403なら例外（422以外は無視しない）", () => postToIssue("本文F", { token: TOKEN_GH, repo: REPO, log }),
+      (e) => e instanceof HttpError && e.status === 403);
+    assert("403のあとはIssueを作らない", calls.length === 2);
+
+    mockGitHub({
+      "GET /issues?labels=": resp(200, [{ number: 9 }]),
+      "POST /issues/9/comments": resp(404, { message: "Not Found" }),
+    });
+    await assertRejects("コメントの投稿に失敗したら例外（ワークフローを失敗にするため）", () => postToIssue("本文G", { token: TOKEN_GH, repo: REPO, log }),
+      (e) => e instanceof HttpError && e.status === 404);
+
+    mockGitHub({ "GET /issues?labels=": resp(401, { message: "Bad credentials" }) });
+    await assertRejects("認証エラー（401）は例外", () => postToIssue("本文H", { token: "bad", repo: REPO, log }),
+      (e) => e instanceof HttpError && e.status === 401 && !String(e.message).includes("bad"));
+  } catch (e) {
+    assert(`postToIssueのテストが予期しない例外で止まった: ${e.message}`, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 console.log(`\n結果: ${passed} 件成功 / ${failed} 件失敗`);
 process.exit(failed > 0 ? 1 : 0);
