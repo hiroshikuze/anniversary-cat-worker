@@ -9,6 +9,8 @@
 | `scripts/test-suzuri-api.mjs` | `node scripts/test-suzuri-api.mjs` | SUZURI API | SUZURI API動作確認（実商品が生成される） |
 | `scripts/health-check.js` | GitHub Actionsのみ | 必要 | 本番Worker・Gemini APIのE2Eチェック |
 | `scripts/test-gemini-image-timing.mjs` | `GEMINI_API_KEY=xxx node scripts/test-gemini-image-timing.mjs` | Gemini API | Gemini画像生成の所要時間計測（競合設計の根拠取得用） |
+| `scripts/compare-image-models.mjs` | `GEMINI_API_KEY=xxx node scripts/compare-image-models.mjs`（`--dry-run`で条件だけ確認） | Gemini API（課金あり） | 画像生成モデルの比較（所要時間・トークン・推定コスト・出力サイズ・生成画像の並べ表示）。`--variants A,B,C`でプロンプトの変種も比べられる。詳細は`.claude/docs/architecture/gemini.md`の「画像モデルの見直し（2026-11-24）」 |
+| `scripts/test-compare-image-models.mjs` | `npm test` | 不要 | `scripts/compare-image-models.mjs`の純粋関数（引数解析・usage解析・推定コスト・集計・HTMLレポート）のユニットテスト |
 | `scripts/test-theme-hook.mjs` | `GEMINI_API_KEY=xxx node scripts/test-theme-hook.mjs` | Gemini API | themeHook（テーマ連動のウィットに富んだ一言）のプロンプト品質検証（実装前の事前検証用・2026-10追加。[Issue #203](https://github.com/hiroshikuze/anniversary-cat-worker/issues/203)参照） |
 | `scripts/test-fal-models.mjs` | `FAL_KEY=xxx node scripts/test-fal-models.mjs` | fal.ai API | fal.aiモデル比較（解像度・サイズ・速度の実測） |
 | `scripts/audit-suzuri-materials.mjs` | `SUZURI_API_KEY=xxx node scripts/audit-suzuri-materials.mjs [--delete]` | SUZURI API | 孤立SUZURIマテリアルの棚卸し・削除（デフォルトはdry-run・`--delete`時のみ実削除） |
