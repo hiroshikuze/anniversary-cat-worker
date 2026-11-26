@@ -151,6 +151,7 @@ wrangler dev                                          # ローカル開発サー
 wrangler deploy                                       # 手動デプロイ（通常はCIが自動実行）
 node scripts/test-suzuri-api.mjs                      # SUZURI API動作確認（実商品が生成される）
 GEMINI_API_KEY=xxx node scripts/test-gemini-image-timing.mjs   # Gemini所要時間計測
+GEMINI_API_KEY=xxx node scripts/compare-image-models.mjs   # 画像生成モデルの比較（外部API・課金あり。--dry-runで条件だけ確認）
 GEMINI_API_KEY=xxx node scripts/test-theme-hook.mjs   # themeHook（テーマ連動の一言）の品質検証
 FAL_KEY=xxx node scripts/test-fal-models.mjs          # fal.aiモデル比較
 SUZURI_API_KEY=xxx node scripts/audit-suzuri-materials.mjs           # 孤立SUZURIマテリアルの棚卸し（dry-run）
@@ -251,6 +252,8 @@ CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-log
 | Workers Traces有効化・CPU時間計測チェックポイント（Cron・HTTPエンドポイント問わず重い処理に`recordCpuCheckpoint()`で計測を恒久設置。Workers Free上限10ms対策のBug#32の一環） | `wrangler.toml` `[observability.traces]` `worker/index.js` `recordCpuCheckpoint()` `worker/bot.js` | 稼働中 |
 | CPU時間のステップ別KV集計・API化（`/usage`と同パターン。`/cpu-usage`でCIログから確認可能） | `worker/index.js` `incrementCpuTimeKv()` `recordCpuCheckpoint()` `/cpu-usage` `scripts/health-check.js` | 稼働中 |
 | 月替わり壁紙プレゼント（Bluesky/Mastodon限定・カレンダー付き/なし2版・月末Cron＋手動再生成エンドポイント） | `worker/bot.js` `runMonthlyWallpaperPost()` `worker/image-utils.js` `compositeMonthlyWallpaper()` `worker/svg-render.js` `POST /monthly-wallpaper/regenerate` | 実装済み・実機再検証待ち（`npm test`は全件成功。実機検証で(1)resvg.wasm関連障害2件（Bug#36本体・追記）、(2)月名バッジの月番号欠落・カレンダーなし版の被写体センタリング不足（Bug#37）、(3)カレンダーなし版センタリングの重量化によるCloudflare error 1102（CPU/メモリ上限超過・Bug#37追記×2）を順に検知・修正し、5ラウンド目でPR #184デプロイ後に`composited: true`完走を確認。ただしerror 1102は断続的再発のため6ラウンド目としてカレンダーなし版のSatori/resvg排除（PR #185）を実施済みだが本ドキュメント執筆時点で未デプロイ・未検証。さらにその後の実機（iPhone 17 Pro）目視確認で月名バッジ・カレンダー帯・署名が画面の曲面/システムUIに隠れて見切れる問題を検知（Bug#38）・セーフエリア比率での配置修正済みだが同じくPR #185に含めてpush済みで未デプロイ・未検証。デプロイ後の実機再検証はユーザーが実施する。詳細は`.claude/rules/architecture.md`の「月替わり壁紙プレゼント機能」の「実装状況」「実機検証の結果」参照） |
+| 成長ループの集計ワークフロー（Bluesky・Mastodonの公開APIとUmami共有URLの8項目を週1回取得し、`growth:metrics`のIssueへコメント） | `.github/workflows/growth-metrics.yml` `scripts/growth-metrics.mjs` | 稼働中（2026-11-23の手動実行でUmamiを含む8項目を取得し、ログの秘密情報の伏せ字も確認。取得先は`gateway-us.umami.is`。詳細は`.claude/docs/architecture/growth-metrics.md`） |
+| 成長ループの週次実行（スキル`running-growth-loops`＋スケジュールタスク「にゃんバーサリー成長ループ」毎週月曜9:46 JST・毎回新しいセッション。例外の範囲で記録PR・承認依頼Issueを作る） | `.claude/skills/running-growth-loops/` `.claude/growth/` `.claude/agents/` | 稼働中（初回の定期実行〔2026-11-23〕はリポジトリ未指定で何もできず失敗。リポジトリを指定し、2026-11-25の手動実行で記録PR・Issueが作られることを確認。定期実行での動作は2026-11-30の回で確認する。詳細は`.claude/docs/architecture/growth-metrics.md`の「成長ループの定期実行」） |
 
 ### 主要な定数値・APIエンドポイント一覧
 

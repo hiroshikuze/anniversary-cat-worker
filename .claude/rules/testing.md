@@ -10,14 +10,14 @@
 | `scripts/health-check.js` | GitHub Actionsのみ | 必要 | 本番Worker・Gemini APIのE2Eチェック |
 | `scripts/test-gemini-image-timing.mjs` | `GEMINI_API_KEY=xxx node scripts/test-gemini-image-timing.mjs` | Gemini API | Gemini画像生成の所要時間計測（競合設計の根拠取得用） |
 | `scripts/compare-image-models.mjs` | `GEMINI_API_KEY=xxx node scripts/compare-image-models.mjs`（`--dry-run`で条件だけ確認） | Gemini API（課金あり） | 画像生成モデルの比較（所要時間・トークン・推定コスト・出力サイズ・生成画像の並べ表示）。`--variants A,B,C`でプロンプトの変種も比べられる。詳細は`.claude/docs/architecture/gemini.md`の「画像モデルの見直し（2026-11-24）」 |
-| `scripts/test-compare-image-models.mjs` | `npm test` | 不要 | `scripts/compare-image-models.mjs`の純粋関数（引数解析・usage解析・推定コスト・集計・HTMLレポート）のユニットテスト |
+| `scripts/test-compare-image-models.mjs` | `npm test`・CI（`health-check.yml`。2026-11-25に接続） | 不要 | `scripts/compare-image-models.mjs`の純粋関数（引数解析・usage解析・推定コスト・集計・HTMLレポート）と、通信（`generateOnce`・リクエストの形・APIキーを出力に出さないこと）のユニットテスト |
 | `scripts/test-theme-hook.mjs` | `GEMINI_API_KEY=xxx node scripts/test-theme-hook.mjs` | Gemini API | themeHook（テーマ連動のウィットに富んだ一言）のプロンプト品質検証（実装前の事前検証用・2026-10追加。[Issue #203](https://github.com/hiroshikuze/anniversary-cat-worker/issues/203)参照） |
 | `scripts/test-fal-models.mjs` | `FAL_KEY=xxx node scripts/test-fal-models.mjs` | fal.ai API | fal.aiモデル比較（解像度・サイズ・速度の実測） |
 | `scripts/audit-suzuri-materials.mjs` | `SUZURI_API_KEY=xxx node scripts/audit-suzuri-materials.mjs [--delete]` | SUZURI API | 孤立SUZURIマテリアルの棚卸し・削除（デフォルトはdry-run・`--delete`時のみ実削除） |
 | `scripts/query-worker-logs.mjs` | GitHub Actions推奨（`.github/workflows/query-worker-logs.yml`をworkflow_dispatchで手動発火）。ローカル実行も可: `CLOUDFLARE_API_TOKEN=xxx CLOUDFLARE_ACCOUNT_ID=xxx node scripts/query-worker-logs.mjs --grep fal --since 6h` | Cloudflare Workers Observability API | Cloudflare Workers Logs（`console.log`の内容）をキーワード検索。詳細は次項参照 |
 | `scripts/test-sale.mjs` | `npm test`（2026-08よりCI接続） | 不要 | worker/sale.jsユニットテスト（`isSaleActive`/`getActiveSaleInfo`の正常系・境界値・エラー系） |
 | `scripts/test-post-sale-announcement.mjs` | `npm test`（2026-09よりCI接続） | 不要 | `scripts/post-sale-announcement.mjs`の純粋関数（文字数・ハッシュタグ数・Xの加重文字数の検証、Blueskyのfacet生成、Discordメッセージの組み立て）のユニットテスト |
-| `scripts/test-growth-metrics.mjs` | `npm test`（2026-11よりCI接続） | 不要 | `scripts/growth-metrics.mjs`の純粋関数（各APIのレスポンスからの値の取り出し、失敗した項目の`errors`の作り方と秘密情報の伏せ字、コメント本文の形式）と、再試行の方針が`fetchWithRetry()`と同じこと（ネットワークエラー・5xxだけ再試行し、429は再試行しない）のユニットテスト |
+| `scripts/test-growth-metrics.mjs` | `npm test`・CI（`health-check.yml`。2026-11-25に接続） | 不要 | `scripts/growth-metrics.mjs`の純粋関数（各APIのレスポンスからの値の取り出し、失敗した項目の`errors`の作り方と秘密情報の伏せ字、コメント本文の形式）と、再試行の方針が`fetchWithRetry()`と同じこと（ネットワークエラー・5xxだけ再試行し、429は再試行しない）、Issueへの投稿（`postToIssue`・検索・作成・422の無視・失敗の伝播）のユニットテスト |
 | `scripts/growth-metrics.mjs` | GitHub Actionsのみ（`.github/workflows/growth-metrics.yml`。毎週月曜05:17 JSTと手動実行）。ローカル確認は`node scripts/growth-metrics.mjs --dry-run`（Issueへ投稿しない） | Bluesky・Mastodonの公開API、Umami（`UMAMI_SHARE_ID`必要）、GitHub API | 成長ループの集計値を取得し、`growth:metrics`のIssueへコメントする。詳細は`.claude/docs/architecture/growth-metrics.md` |
 
 ## ユニットテスト方針
@@ -34,6 +34,7 @@
 - **現在日時に依存する状態はテストで固定する**: セール期間（`worker/sale.js`の`_currentSale`・`scripts/test-bot.mjs`の冒頭で`_setSaleForTest(null)`）や、季節の花・`new Date()`に依存する結果は、実日付のままにしない。セール期間中にだけ`runBot()`系のテストが失敗した事故がある（Bug#46）。セールを使うテストは`_setSaleForTest(SALE)`で自分で設定し、終わったら`null`に戻す
 - テストケースは「正常系」「境界値」「エラー系」の3パターンを書く
 - 新しい関数を追加したら対応するテストを`scripts/test-bot.mjs`に追加する
+- **新しいテストファイルは、`package.json`の`test`と`.github/workflows/health-check.yml`の両方に追加する**。CIは`npm test`ではなく、ファイルごとの手順で実行するため、`package.json`だけに足してもCIでは走らない（2026-11に`test-growth-metrics.mjs`が`package.json`にだけあり、CIで実行されていなかった。ドキュメントに「CI接続」と書く前に、ワークフローのYAMLに実行の手順があることを確かめる）
 
 ## health-check.jsのシークレット検証項目（2026-06追加）
 

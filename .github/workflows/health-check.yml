@@ -24,6 +24,10 @@ jobs:
         run: node scripts/test-sale.mjs
       - name: Run sale announcement unit tests
         run: node scripts/test-post-sale-announcement.mjs
+      - name: Run growth metrics unit tests
+        run: node scripts/test-growth-metrics.mjs
+      - name: Run image model comparison unit tests
+        run: node scripts/test-compare-image-models.mjs
       - name: Frontend feature presence check
         run: |
           check() { grep -q "$1" frontend/index.html || { echo "❌ Missing: $1"; exit 1; }; }

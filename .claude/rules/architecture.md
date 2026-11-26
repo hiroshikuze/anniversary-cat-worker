@@ -19,7 +19,7 @@ anniversary-cat-worker/
 │   ├── bugs-history.md               ← バグ履歴 Bug#31〜と全バグの一覧表（都度参照・自動ロードなし）
 │   ├── future-ideas.md               ← 将来拡張アイデア（都度参照・自動ロードなし）
 │   ├── docs/                         ← 詳細仕様（都度参照・自動ロードなし・2026-10追加）
-│   │   ├── architecture/             ← architecture.mdから移動した大きな節（suzuri-create・sale-check-and-cleanup・gemini・bot-posting・monthly-wallpaper）と、成長ループの集計ワークフロー（growth-metrics・2026-11追加）
+│   │   ├── architecture/             ← architecture.mdから移動した大きな節（suzuri-create・sale-check-and-cleanup・gemini・bot-posting・monthly-wallpaper）と、成長ループの集計ワークフローと定期実行（スケジュールタスク）の記録（growth-metrics・2026-11追加）
 │   │   └── suzuri-api-unused-features.md ← future-ideas.mdから移動したSUZURI APIの未使用機能一覧
 │   ├── settings.json                 ← PostToolUseフック（Markdownスペース検証）
 │   ├── skills/
