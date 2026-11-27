@@ -1533,6 +1533,9 @@ PR #175〜#177（etagバグ修正・SUZURI削除ロールバック）完了後�
 - 実投稿（2026-11-23 22:34 JST）: Bluesky `https://bsky.app/profile/nyanmusu.bsky.social/post/3n2yanfkec427`、Mastodon `@nyanmusu/117666012256546234`。公開APIで1件ずつ・画像付きを確認
 - 途中で起きたこと: 環境のPillowが壊れていて使えず、JPEG変換はImageMagickの`convert`で行った（`SKILL.md`の「JPEG変換」参照）。お試し実行のpushで、Health Checkの`[3] Research`がJSONパースで1回だけ失敗した（告知とは無関係。`.claude/bugs-history.md`の「未対応バグ・改善項目」参照）
 - Claude Code Remoteの`send_later`で予約済み: 11/27 10:00 JSTに開催中版の準備（投稿は12:00以降）、12/9 10:00 JSTに反響確認
+- **開催中版の実投稿（2026-11-27 20:29 JST・ユーザー承認後）**: Bluesky `https://bsky.app/profile/nyanmusu.bsky.social/post/3n3c3jp6kiq2l`、Mastodon `@nyanmusu/117688170289064338`。公開APIで1件ずつ・画像付きを確認。予約の準備は10:00 JSTに行い、お試し実行は午前、本番はユーザーの承認が20:00台になったため、セール開始の約8時間半後の投稿になった
+- 開催中版は、**11/24「和食の日」**の作品（グレーの猫・紅葉の背景）のグッズ画像とTシャツのリンク（`https://suzuri.jp/nyanmusu/21466844/t-shirt/s/white`）にした。11/23の作品は12/6〜7頃に販売終了しセール終了（12/8）より早いため、ユーザーが選んだ。販売は12/7〜8頃までの見込みで、セール終了の直前までリンクが有効
+- 開催中版の手動転載（X・Instagram・Facebook・mixi2）: 未確認（URLが共有されたら追記する）
 - 手動の転載（2026-11-23・ユーザー）: X `https://x.com/hiroshikuze/status/2124863559914168335`、Instagram `https://www.instagram.com/p/DgFiK32P0Nd/`、mixi2 `https://mixi.social/@nyanmusu/posts/249ff37e-1d45-4ef9-b2c4-588d765ca0e7`、Facebook（URLは個人アカウントのIDを含むため記録しない）。追跡用のクエリ文字列は外した。12/9の反響確認では、Xは`api.fxtwitter.com`で取得し（2026-11-23時点: 表示19・いいね0・リポスト0・返信0）、Instagram・Facebook・mixi2はユーザーに数字を尋ねる
 
 **Geminiの配置情報をそのまま使えなかった点**（パターン1のSatori合成時に手動で補正した）:
